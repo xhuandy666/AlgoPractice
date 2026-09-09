@@ -1,0 +1,54 @@
+# Dependencies and generated files
+node_modules/
+dist/
+release/
+.runtime/
+.local/
+evidence/
+coverage/
+playwright-report/
+test-results/
+*.log
+.DS_Store
+
+# Local planning, design, development reports and agent state
+/docs/
+/.hallmark/
+/.agents/
+/.codex/
+/AGENTS.md
+/design.md
+/design-dna.md
+/tests/**/*.md
+/scripts/p*-validation-*.mjs
+/scripts/p5-install-dmg.py
+/scripts/p5-installed-acceptance.mjs
+/scripts/p5-reproducible-build.mjs
+/tests/p5-desktop-smoke.mjs
+/tests/p5-storage-scale.ts
+/tests/p5-storage-note-search.ts
+/tests/p5-ai-settings-visual.mjs
+/tests/p2-media-live.mjs
+
+# Local learning data and credentials
+.env
+.env.*
+!.env.example
+*.sqlite
+*.sqlite-*
+*.db
+*.db-*
+*.algobak
+credentials/
+ai-provider.json
+settings.json
+
+# Historical acceptance runners remain local; public checks are npm scripts
+/scripts/p5-runtime-acceptance.mjs
+/scripts/runtime-stability.ts
+/scripts/source-probe.ts
+/scripts/storage-probe.ts
+/tests/electron-smoke.mjs
+/tests/p2-*.mjs
+/tests/p3-*.mjs
+/tests/p4-*.mjs

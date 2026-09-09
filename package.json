@@ -1,0 +1,96 @@
+{
+  "name": "algopractice",
+  "productName": "AlgoPractice",
+  "version": "0.5.1",
+  "private": true,
+  "description": "题序：离线算法练习、分级 AI 辅导、间隔复习与模拟面试",
+  "author": "xhuandy666",
+  "license": "MIT",
+  "type": "module",
+  "main": "dist/main.cjs",
+  "scripts": {
+    "postinstall": "node node_modules/electron/install.js",
+    "build": "node scripts/build.mjs",
+    "typecheck": "tsc --noEmit",
+    "start": "npm run build && electron .",
+    "dev:web": "vite --host 127.0.0.1",
+    "runtime:install": "node --import tsx scripts/runtime-install.ts",
+    "pretest": "node scripts/prepare-tests.mjs",
+    "test": "tsx --test tests/runner/*.test.ts tests/storage/*.test.ts tests/source/*.test.ts tests/desktop/*.test.ts tests/learning/*.test.ts tests/ai/*.test.ts tests/interview/*.test.ts",
+    "test:desktop": "node tests/public-desktop-smoke.mjs",
+    "test:ai": "node tests/p5-ai-protocol-smoke.mjs",
+    "dist:mac": "npm run build && electron-builder --mac --arm64 --publish never",
+    "dist:mac:intel": "npm run build && electron-builder --mac --x64 --publish never",
+    "dist:win": "npm run build && electron-builder --win --x64 --publish never"
+  },
+  "devDependencies": {
+    "@fontsource/inter": "5.3.0",
+    "@fontsource/jetbrains-mono": "5.3.0",
+    "@fontsource/space-grotesk": "5.3.0",
+    "@types/node": "24.3.0",
+    "@types/react": "19.2.18",
+    "@types/react-dom": "19.2.7",
+    "dompurify": "3.4.15",
+    "electron": "44.2.0",
+    "electron-builder": "26.15.3",
+    "esbuild": "0.28.2",
+    "marked": "18.0.12",
+    "monaco-editor": "0.56.0",
+    "playwright": "1.63.0",
+    "react": "19.2.8",
+    "react-dom": "19.2.8",
+    "ts-fsrs": "5.4.2",
+    "tsx": "4.23.13",
+    "typescript": "5.9.3",
+    "vite": "8.2.2"
+  },
+  "build": {
+    "appId": "local.algopractice.desktop",
+    "artifactName": "AlgoPractice-${version}-${os}-${arch}.${ext}",
+    "directories": {
+      "output": "release"
+    },
+    "files": [
+      "dist/**/*",
+      "package.json",
+      "LICENSE"
+    ],
+    "asar": true,
+    "mac": {
+      "target": [
+        "dmg",
+        "zip"
+      ],
+      "category": "public.app-category.education",
+      "identity": null,
+      "minimumSystemVersion": "14.0"
+    },
+    "win": {
+      "target": [
+        "nsis",
+        "zip"
+      ]
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "perMachine": false
+    }
+  },
+  "overrides": {
+    "monaco-editor": {
+      "dompurify": "3.4.15"
+    }
+  },
+  "engines": {
+    "node": ">=24.17.0 <25"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/xhuandy666/AlgoPractice.git"
+  },
+  "homepage": "https://github.com/xhuandy666/AlgoPractice",
+  "bugs": {
+    "url": "https://github.com/xhuandy666/AlgoPractice/issues"
+  }
+}

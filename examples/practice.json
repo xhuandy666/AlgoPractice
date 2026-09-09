@@ -1,0 +1,35 @@
+{
+  "schemaVersion": 1,
+  "title": "自建练习示例",
+  "problems": [
+    {
+      "id": "example-array-total",
+      "title": "数组求和",
+      "description": "返回数组中所有整数的和。本题及期望值为本地自建示例。",
+      "difficulty": "简单",
+      "tags": ["数组"],
+      "chapter": "函数题",
+      "mode": "function",
+      "adapter": { "method": "solve", "params": [{ "array": "int" }], "returns": "int" },
+      "cases": [{ "args": [[1, 2, 3]], "expected": 6 }, { "args": [[]], "expected": 0 }],
+      "starter": {
+        "python": "class Solution:\n    def solve(self, nums):\n        return sum(nums)\n",
+        "java": "class Solution {\n    public int solve(int[] nums) {\n        int total = 0;\n        for (int num : nums) total += num;\n        return total;\n    }\n}\n"
+      }
+    },
+    {
+      "id": "example-acm-echo",
+      "title": "ACM 输入输出",
+      "description": "读取标准输入直到 EOF，然后原样输出。自建 Unicode 用例，采用精确比较。",
+      "tags": ["ACM"],
+      "chapter": "ACM",
+      "mode": "acm",
+      "acmCompare": "exact",
+      "cases": [{ "stdin": "你好\n第二行\n", "expected": "你好\n第二行\n" }, { "stdin": "", "expected": "" }],
+      "starter": {
+        "python": "import sys\nsys.stdout.write(sys.stdin.read())\n",
+        "java": "class Main {\n    public static void main(String[] args) throws Exception {\n        System.in.transferTo(System.out);\n    }\n}\n"
+      }
+    }
+  ]
+}

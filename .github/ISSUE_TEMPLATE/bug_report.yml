@@ -1,0 +1,27 @@
+name: 问题反馈
+description: 报告安装、练习或数据保存的问题
+title: "[问题] "
+body:
+  - type: input
+    id: version
+    attributes:
+      label: 应用版本与系统
+      placeholder: 例如 0.5.1 / macOS 15 / Apple Silicon
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: 复现步骤
+      description: 请说明你做了什么，以及看到的结果。不要提交 API Key、登录信息或私人备份。
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: 预期结果
+  - type: textarea
+    id: screenshot
+    attributes:
+      label: 截图或错误提示
+      description: 请先隐藏个人信息。

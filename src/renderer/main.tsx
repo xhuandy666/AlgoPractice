@@ -1,0 +1,11 @@
+import React from 'react';
+import { createRoot } from 'react-dom/client';
+import '@fontsource/space-grotesk/600.css';
+import '@fontsource/inter/400.css';
+import '@fontsource/inter/600.css';
+import '@fontsource/jetbrains-mono/400.css';
+import '../../tokens.css';
+import './styles.css';
+import './interview.css';
+import { DesktopRoot } from './DesktopRoot';
+createRoot(document.getElementById('root')!).render(<React.StrictMode><DesktopRoot /></React.StrictMode>);
