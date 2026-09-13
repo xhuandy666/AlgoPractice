@@ -9,7 +9,7 @@
   "type": "module",
   "main": "dist/main.cjs",
   "scripts": {
-    "postinstall": "node node_modules/electron/install.js",
+    "postinstall": "node node_modules/electron/install.js && node scripts/prepare-windows-helper.mjs",
     "build": "node scripts/build.mjs",
     "typecheck": "tsc --noEmit",
     "start": "npm run build && electron .",
@@ -21,7 +21,8 @@
     "test:ai": "node tests/p5-ai-protocol-smoke.mjs",
     "dist:mac": "npm run build && electron-builder --mac --arm64 --publish never",
     "dist:mac:intel": "npm run build && electron-builder --mac --x64 --publish never",
-    "dist:win": "npm run build && electron-builder --win --x64 --publish never"
+    "dist:win": "npm run build && electron-builder --win --x64 --publish never",
+    "preruntime:install": "node scripts/prepare-windows-helper.mjs"
   },
   "devDependencies": {
     "@fontsource/inter": "5.3.0",
@@ -69,6 +70,12 @@
       "target": [
         "nsis",
         "zip"
+      ],
+      "extraResources": [
+        {
+          "from": ".runtime-tools/windows-job-helper.exe",
+          "to": "windows-job-helper.exe"
+        }
       ]
     },
     "nsis": {

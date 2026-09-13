@@ -1,9 +1,11 @@
+import { prepareWindowsHelper } from './prepare-windows-helper.mjs';
 import { build as bundle } from 'esbuild';
 import { build as frontend } from 'vite';
 import { mkdir, readFile, readdir, writeFile, copyFile, rm } from 'node:fs/promises';
 import { createHash } from 'node:crypto';
 import { join, relative, resolve } from 'node:path';
 const root = process.cwd();
+await prepareWindowsHelper({ root });
 const hash = bytes => createHash('sha256').update(bytes).digest('hex');
 await rm('dist', { recursive: true, force: true });
 await mkdir('dist', { recursive: true });
@@ -27,11 +29,11 @@ for (const path of [...packagePaths].sort()) {
   const notices = [];
   for (const file of (await readdir(path)).sort()) if (/^(licen[sc]e|copying|notice|third.?party)/i.test(file)) {
     const source = join(path, file); const stat = await import('node:fs/promises').then(fs => fs.stat(source)); if (!stat.isFile()) continue;
-    await copyFile(source, join(target, file)); notices.push({ file: relative('dist', join(target, file)), sha256: hash(await readFile(source)) });
+    await copyFile(source, join(target, file)); notices.push({ file: relative('dist', join(target, file)).replaceAll('\\', '/'), sha256: hash(await readFile(source)) });
   }
   if (metadata.name === 'electron') for (const file of ['LICENSE', 'LICENSES.chromium.html']) {
     const outputName = file === 'LICENSE' ? 'ELECTRON_RUNTIME_LICENSE' : file;
-    await copyFile(join(path, 'dist', file), join(target, outputName)); notices.push({ file: relative('dist', join(target, outputName)), sha256: hash(await readFile(join(path, 'dist', file))) });
+    await copyFile(join(path, 'dist', file), join(target, outputName)); notices.push({ file: relative('dist', join(target, outputName)).replaceAll('\\', '/'), sha256: hash(await readFile(join(path, 'dist', file))) });
   }
   if (!notices.length) throw new Error(`Missing third-party notices for bundled package ${metadata.name}`);
   inventory.push({ name: metadata.name, version: metadata.version, license: metadata.license ?? 'See notices', packagePath: path, notices });
@@ -43,7 +45,7 @@ async function walk(path) {
   }
   return files;
 }
-const sourcePaths = [...await walk('src'), 'runtime-manifest.json', 'tokens.css', 'LICENSE', 'package.json', 'package-lock.json', 'scripts/build.mjs', 'vite.config.ts', 'tsconfig.json', 'index.html'].sort();
+const sourcePaths = [...await walk('src'), 'runtime-manifest.json', 'tokens.css', 'LICENSE', 'package.json', 'package-lock.json', 'scripts/build.mjs', 'scripts/prepare-windows-helper.mjs', 'vite.config.ts', 'tsconfig.json', 'index.html'].map(path => path.replaceAll('\\', '/')).sort();
 const inputs = [];
 for (const path of sourcePaths) inputs.push({ path, sha256: hash(await readFile(path)) });
 const pkg = JSON.parse(await readFile('package.json', 'utf8'));

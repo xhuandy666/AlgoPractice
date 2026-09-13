@@ -1,4 +1,5 @@
 import { spawn } from 'node:child_process';
+import assert from 'node:assert/strict';
 import os from 'node:os';
 import { runProcess } from '../src/runner/process.ts';
 import { windowsJobCommand } from '../src/runner/windows-job.ts';
@@ -15,14 +16,6 @@ function direct(executable = process.execPath, launchArgs = args, env) {
   return new Promise(resolve => {
     let stdout = Buffer.alloc(0), stderr = Buffer.alloc(0), reason;
     const child = spawn(executable, launchArgs, { cwd: os.tmpdir(), env, shell: false, windowsHide: true, stdio: ['pipe', 'pipe', 'pipe', 'ignore'] });
-    let phaseBuffer = '';
-    child.stderr.on('data', chunk => {
-      phaseBuffer += chunk.toString('utf8');
-      const lines = phaseBuffer.split(/\r?\n/); phaseBuffer = lines.pop() ?? '';
-      for (const line of lines) if (line.startsWith('ALGOPRACTICE_DIAGNOSTIC_PHASE: ')) {
-        console.log(JSON.stringify({ diagnosticPhase: line.slice('ALGOPRACTICE_DIAGNOSTIC_PHASE: '.length), elapsedMs: performance.now() - started }));
-      }
-    });
     const timer = setTimeout(() => { reason = 'timeout'; child.kill('SIGKILL'); }, timeoutMs);
     const capture = (stream, chunk) => {
       const retained = stream === 'stdout' ? stdout : stderr;
@@ -42,6 +35,11 @@ function direct(executable = process.execPath, launchArgs = args, env) {
 }
 function emit(name, result) {
   console.log(JSON.stringify({ name, ...result }));
+  assert.equal(result.reason, undefined, `${name}: ${JSON.stringify(result)}`);
+  assert.equal(result.code, 0, `${name}: ${JSON.stringify(result)}`);
+  const metadata = JSON.parse(result.stdout);
+  assert.deepEqual({ argv: metadata.argv, input: metadata.input }, { argv: args.slice(2), input }, `${name}: argv/stdin did not survive the launcher`);
+  assert.match(result.stderr, /diagnostic stderr ✓/, `${name}: stderr was not preserved`);
 }
 console.log(JSON.stringify({ diagnostic: 'authored-node-launch-comparison', platform: process.platform, arch: process.arch, node: process.versions.node, ownerPid: process.pid, timeoutMs, containsEnvironmentDump: false }));
 emit('direct-node', await direct());
@@ -51,17 +49,5 @@ const cwd = os.tmpdir();
 const cleanEnvironment = { PATH: `${process.env.SystemRoot}\\System32`, HOME: cwd, TMPDIR: cwd, TMP: cwd, TEMP: cwd, LANG: 'en_US.UTF-8', PYTHONIOENCODING: 'utf-8', SystemRoot: process.env.SystemRoot, WINDIR: process.env.WINDIR };
 emit('direct-node-clean-environment', await direct(process.execPath, args, cleanEnvironment));
 const launch = windowsJobCommand(process.execPath, args);
-const encodedIndex = launch.args.length - 1;
-let script = Buffer.from(launch.args[encodedIndex], 'base64').toString('utf16le');
-const phase = name => `[Console]::Error.WriteLine('ALGOPRACTICE_DIAGNOSTIC_PHASE: ${name}');\n`;
-function instrument(needle, replacement) {
-  if (!script.includes(needle)) throw new Error('Production launcher changed; diagnostic instrumentation must be updated');
-  script = script.replace(needle, replacement);
-}
-instrument("$ErrorActionPreference='Stop';", phase('powershell-entry') + "$ErrorActionPreference='Stop';");
-instrument("Add-Type -TypeDefinition @'", phase('before-add-type') + "Add-Type -TypeDefinition @'");
-instrument("\n$d=[Text.Encoding]", "\n" + phase('after-add-type') + "$d=[Text.Encoding]");
-instrument("\nexit [APJobLauncher]::Run", "\n" + phase('before-native-run') + "exit [APJobLauncher]::Run");
-launch.args[encodedIndex] = Buffer.from(script, 'utf16le').toString('base64');
-emit('instrumented-production-launcher-cold', await direct(launch.executable, launch.args, cleanEnvironment));
+emit('native-helper-cold', await direct(launch.executable, launch.args, cleanEnvironment));
 emit('production-launcher-warm', await runProcess(process.execPath, args, { cwd, stdin: input, timeoutMs, outputLimitBytes }));

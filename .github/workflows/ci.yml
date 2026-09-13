@@ -40,9 +40,6 @@ jobs:
           cache: npm
       - name: Install dependencies and Electron
         run: npm ci
-      - name: Diagnose native Windows process startup
-        if: runner.os == 'Windows'
-        run: node --import tsx scripts/windows-diagnostics.mjs
       - name: Install managed Python and Java
         run: npm run runtime:install
       - name: Check types
@@ -53,3 +50,22 @@ jobs:
         run: npm run build
       - name: Launch desktop and run both languages
         run: npm run test:desktop
+      - name: Package Windows installer and portable archive
+        if: runner.os == 'Windows'
+        run: npx electron-builder --win --x64 --publish never
+      - name: Launch packaged Windows desktop
+        if: runner.os == 'Windows'
+        env:
+          ALGOPRACTICE_PACKAGED_APP: ${{ github.workspace }}/release/win-unpacked/题炼.exe
+        run: npm run test:desktop
+      - name: Upload verified Windows packages
+        if: runner.os == 'Windows'
+        uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5
+        with:
+          name: windows-packages-${{ github.sha }}
+          path: |
+            release/AlgoPractice-*-win-x64.exe
+            release/AlgoPractice-*-win-x64.zip
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 7

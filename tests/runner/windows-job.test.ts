@@ -1,10 +1,11 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
-import { mkdtemp,rm,stat,readFile } from 'node:fs/promises';
+import { mkdtemp,rm,stat,readFile,copyFile,mkdir } from 'node:fs/promises';
 import path from 'node:path';
 import os from 'node:os';
 import { runProcess } from '../../src/runner/process.ts';
+import { setWindowsJobHelperPath,windowsJobCommand } from '../../src/runner/windows-job.ts';
 const windows={skip:process.platform!=='win32'?'Requires real Windows 10/11 x64; Win32 ABI and Job semantics are unverified on macOS':false};
 const sleep=(ms:number)=>new Promise(r=>setTimeout(r,ms));
 const exists=(file:string)=>stat(file).then(()=>true,()=>false);
@@ -16,6 +17,18 @@ function descendantSource(marker:string,readyFile:string,exitParent=false){
 test('Windows native Job launcher executes argv, unicode, stdin, and both output streams',windows,async()=>{
  const args=['','two words','a"b','C:\\中文 path\\','🌳'];const source="let input='';process.stdin.setEncoding('utf8');process.stdin.on('data',c=>input+=c);process.stdin.on('end',()=>{console.log(JSON.stringify({args:process.argv.slice(1),input}));console.error('stderr ✓')})";
  const r=await runProcess(process.execPath,['-e',source,...args],{cwd:os.tmpdir(),stdin:'输入\n',timeoutMs:20000,outputLimitBytes:16384});assert.equal(r.reason,undefined,JSON.stringify(r));assert.equal(r.code,0);assert.deepEqual(JSON.parse(r.stdout),{args,input:'输入\n'});assert.match(r.stderr,/stderr ✓/);
+});
+test('Windows helper runs from packaged Unicode resources after the working directory changes',windows,async()=>{
+ const originalCwd=process.cwd(),originalHelper=windowsJobCommand(process.execPath,[]).executable;
+ const root=await mkdtemp(path.join(os.tmpdir(),'algopractice-win-resources-')),resources=path.join(root,'resources 题炼 🌳'),helper=path.join(resources,'windows-job-helper.exe');
+ try{
+  await mkdir(resources);await copyFile(originalHelper,helper);setWindowsJobHelperPath(helper);process.chdir(root);
+  const r=await runProcess(process.execPath,['-e',"process.stdout.write('题炼 🌳');process.stderr.write('resources ✓')"],{cwd:root,timeoutMs:10000,outputLimitBytes:4096});
+  assert.equal(r.reason,undefined,JSON.stringify(r));assert.equal(r.code,0);assert.equal(r.stdout,'题炼 🌳');assert.equal(r.stderr,'resources ✓');
+  setWindowsJobHelperPath(path.join(resources,'missing-helper.exe'));
+  const missing=await runProcess(process.execPath,['-e',''],{cwd:root,timeoutMs:10000,outputLimitBytes:4096});
+  assert.equal(missing.reason,'spawn_error');assert.match(missing.stderr,/Windows process helper is unavailable/);
+ }finally{process.chdir(originalCwd);setWindowsJobHelperPath(originalHelper);await rm(root,{recursive:true,force:true});}
 });
 for(const mode of ['cancellation','normal-parent-exit'] as const)test(`Windows Job removes detached descendants on ${mode}`,windows,async()=>{
  const root=await mkdtemp(path.join(os.tmpdir(),'algopractice-win-job-')),marker=path.join(root,'survived'),flag=path.join(root,'ready');const controller=new AbortController();

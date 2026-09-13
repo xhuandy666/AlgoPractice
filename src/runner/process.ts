@@ -56,7 +56,7 @@ export function runProcess(executable: string, args: string[], options: ProcessO
     };
     child.stdout!.on('data', c => capture('stdout', c)); child.stderr!.on('data', c => capture('stderr', c));
     child.stdin!.on('error', () => {}); child.stdin!.end(options.stdin ?? '');
-    child.on('error', error => { reason = 'spawn_error'; stderr = Buffer.from(error.message).subarray(0, options.outputLimitBytes); });
+    child.on('error', error => { reason = 'spawn_error'; const message = process.platform === 'win32' && (error as NodeJS.ErrnoException).code === 'ENOENT' ? `Windows process helper is unavailable; run npm install or reinstall the desktop application. ${error.message}` : error.message; stderr = Buffer.from(message).subarray(0, options.outputLimitBytes); });
     // Parent completion must also remove ordinary background descendants still holding pipes open.
     child.on('exit', killGroup);
     child.on('close', code => {

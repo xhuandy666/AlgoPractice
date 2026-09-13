@@ -1,7 +1,7 @@
 import path from 'node:path';
 
-// Windows PowerShell 5.1 ships with the C# compiler used by Add-Type. Keeping this source in TS
-// lets esbuild include it inside main.cjs/asar without shipping an executable asset or downloading code.
+// Compile this authored helper once with the Windows .NET Framework compiler during setup/build.
+// Runtime launches execute the packaged helper directly; no PowerShell or dynamic compilation.
 // P/Invoke execution is covered by Windows-only tests; macOS compilation cannot validate Win32 ABI.
 export const WINDOWS_JOB_SOURCE = String.raw`
 using System;
@@ -34,6 +34,13 @@ public static class APJobLauncher {
  [DllImport("kernel32.dll",SetLastError=true)] static extern IntPtr OpenProcess(uint access,bool inherit,uint pid);
  [DllImport("kernel32.dll",SetLastError=true)] static extern bool TerminateJobObject(IntPtr job,uint code);
  [DllImport("kernel32.dll")] static extern bool CloseHandle(IntPtr handle);
+ public static int Main(string[] args) {
+  try {
+   uint ownerPid;
+   if(args.Length!=3 || !UInt32.TryParse(args[2],out ownerPid) || ownerPid==0)throw new ArgumentException("Expected executable, quoted command, and owner PID");
+   return Run(args[0],args[1],ownerPid);
+  } catch(Exception error) {Console.Error.WriteLine("ALGOPRACTICE_LAUNCHER_ERROR: "+error.GetBaseException().Message);return 125;}
+ }
  static void Check(bool value) {if(!value)throw new Win32Exception(Marshal.GetLastWin32Error());}
  public static int Run(string executable,string command,uint ownerPid) {
   IntPtr job=IntPtr.Zero,owner=IntPtr.Zero,attributes=IntPtr.Zero,jobList=IntPtr.Zero,handles=IntPtr.Zero;bool initialized=false;PI child=new PI();
@@ -80,11 +87,15 @@ export function quoteWindowsArgument(value: string): string {
   }
   return out + '\\'.repeat(slashes * 2) + '"';
 }
+let configuredHelperPath: string | undefined;
+export function setWindowsJobHelperPath(executable: string): void {
+  if (!path.isAbsolute(executable)) throw new Error('Windows process helper path must be absolute');
+  configuredHelperPath = executable;
+}
 export function windowsJobCommand(executable: string, args: string[], ownerPid = process.pid): { executable: string; args: string[] } {
+  const helper = configuredHelperPath ?? path.join(process.cwd(), '.runtime-tools', 'windows-job-helper.exe');
   const command = [executable, ...args].map(quoteWindowsArgument).join(' ');
-  const data = Buffer.from(JSON.stringify({ executable, command, ownerPid }), 'utf8').toString('base64');
-  const script = `$ErrorActionPreference='Stop';$ProgressPreference='SilentlyContinue';\ntry {\nAdd-Type -TypeDefinition @'\n${WINDOWS_JOB_SOURCE}\n'@\n$d=[Text.Encoding]::UTF8.GetString([Convert]::FromBase64String('${data}'))|ConvertFrom-Json\nexit [APJobLauncher]::Run([string]$d.executable,[string]$d.command,[uint32]$d.ownerPid)\n} catch { [Console]::Error.WriteLine('ALGOPRACTICE_LAUNCHER_ERROR: '+$_.Exception.GetBaseException().Message); exit 125 }`;
-  const encoded = Buffer.from(script, 'utf16le').toString('base64');
-  if (encoded.length > 30000) throw new Error('Windows launcher command exceeds the supported command-line limit');
-  return { executable: path.join(process.env.SystemRoot ?? 'C:\\Windows', 'System32', 'WindowsPowerShell', 'v1.0', 'powershell.exe'), args: ['-NoLogo', '-NoProfile', '-NonInteractive', '-EncodedCommand', encoded] };
+  const helperArgs = [executable, command, String(ownerPid)];
+  if ([helper, ...helperArgs].map(quoteWindowsArgument).join(' ').length > 32766) throw new Error('Windows launcher command exceeds the supported command-line limit');
+  return { executable: helper, args: helperArgs };
 }

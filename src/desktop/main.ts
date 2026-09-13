@@ -1,3 +1,4 @@
+import { setWindowsJobHelperPath } from '../runner/windows-job';
 import { startupFailure } from './startup-errors';
 import { InterviewService } from '../interview/service';
 import type { InterviewRules } from '../shared/interview';
@@ -34,6 +35,7 @@ app.setPath('userData', process.env.ALGOPRACTICE_DATA_DIR ? resolve(process.env.
 app.setName('AlgoPractice');
 app.setAboutPanelOptions({ applicationName: '题炼', applicationVersion: app.getVersion() });
 app.setAppUserModelId('local.algopractice.desktop');
+if (process.platform === 'win32' && app.isPackaged) setWindowsJobHelperPath(join(process.resourcesPath, 'windows-job-helper.exe'));
 protocol.registerSchemesAsPrivileged([{ scheme: 'algopractice', privileges: { standard: true, secure: true, supportFetchAPI: true, corsEnabled: true } }]);
 let win: BrowserWindow;
 let tray: Tray;

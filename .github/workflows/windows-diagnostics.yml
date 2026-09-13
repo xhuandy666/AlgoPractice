@@ -17,5 +17,7 @@ jobs:
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
         with:
           node-version-file: .nvmrc
+      - name: Compile packaged native helper
+        run: node scripts/prepare-windows-helper.mjs
       - name: Measure cold launcher startup
         run: node scripts/windows-diagnostics.mjs

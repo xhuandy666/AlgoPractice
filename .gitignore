@@ -52,3 +52,6 @@ settings.json
 /tests/p2-*.mjs
 /tests/p3-*.mjs
 /tests/p4-*.mjs
+
+# Locally compiled Windows runner
+.runtime-tools/
