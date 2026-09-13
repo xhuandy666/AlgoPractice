@@ -6,7 +6,7 @@
 
 离线算法练习 · 学习日历 · 渐进式 AI 辅导 · 间隔复习 · 模拟面试
 
-[下载安装](https://github.com/xhuandy666/AlgoPractice/releases/tag/v0.6.0) · [快速开始](#三步开始练习) · [反馈问题](https://github.com/xhuandy666/AlgoPractice/issues)
+[下载安装](https://github.com/xhuandy666/AlgoPractice/releases/tag/v0.6.1) · [快速开始](#三步开始练习) · [反馈问题](https://github.com/xhuandy666/AlgoPractice/issues)
 
 </div>
 
@@ -50,17 +50,25 @@
 
 ## 下载
 
-**v0.6.0** · 直接下载安装包，无需安装 Node.js 或下载源码。
+**v0.6.1** · 直接下载安装包，无需安装 Node.js 或下载源码。
 
 | 你的电脑 | 安装包 | 便携归档 |
 | --- | --- | --- |
-| Mac · Apple Silicon（M 系列） | [下载 DMG](https://github.com/xhuandy666/AlgoPractice/releases/download/v0.6.0/AlgoPractice-0.6.0-mac-arm64.dmg) | [下载 ZIP](https://github.com/xhuandy666/AlgoPractice/releases/download/v0.6.0/AlgoPractice-0.6.0-mac-arm64.zip) |
-| Mac · Intel | [下载 DMG](https://github.com/xhuandy666/AlgoPractice/releases/download/v0.6.0/AlgoPractice-0.6.0-mac-x64.dmg) | [下载 ZIP](https://github.com/xhuandy666/AlgoPractice/releases/download/v0.6.0/AlgoPractice-0.6.0-mac-x64.zip) |
-| Windows · x64 | [下载安装程序](https://github.com/xhuandy666/AlgoPractice/releases/download/v0.6.0/AlgoPractice-0.6.0-win-x64.exe) | [下载 ZIP](https://github.com/xhuandy666/AlgoPractice/releases/download/v0.6.0/AlgoPractice-0.6.0-win-x64.zip) |
+| Mac · Apple Silicon（M 系列） | [下载 DMG](https://github.com/xhuandy666/AlgoPractice/releases/download/v0.6.1/AlgoPractice-0.6.1-mac-arm64.dmg) | [下载 ZIP](https://github.com/xhuandy666/AlgoPractice/releases/download/v0.6.1/AlgoPractice-0.6.1-mac-arm64.zip) |
+| Mac · Intel | [下载 DMG](https://github.com/xhuandy666/AlgoPractice/releases/download/v0.6.1/AlgoPractice-0.6.1-mac-x64.dmg) | [下载 ZIP](https://github.com/xhuandy666/AlgoPractice/releases/download/v0.6.1/AlgoPractice-0.6.1-mac-x64.zip) |
+| Windows · x64 | [下载安装程序](https://github.com/xhuandy666/AlgoPractice/releases/download/v0.6.1/AlgoPractice-0.6.1-win-x64.exe) | [下载 ZIP](https://github.com/xhuandy666/AlgoPractice/releases/download/v0.6.1/AlgoPractice-0.6.1-win-x64.zip) |
 
-Mac 需要 **macOS 14 或更新版本**；Windows 需要 **Windows 10 / 11 x64**。Linux 与 Windows ARM 暂不提供安装包。版本说明见 [Release 页面](https://github.com/xhuandy666/AlgoPractice/releases/tag/v0.6.0)。
+Mac 需要 **macOS 14 或更新版本**；Windows 需要 **Windows 10 / 11 x64**。Linux 与 Windows ARM 暂不提供安装包。版本说明见 [Release 页面](https://github.com/xhuandy666/AlgoPractice/releases/tag/v0.6.1)。
 
-应用目前没有正式开发者签名，也未完成 Apple 公证，首次打开可能出现系统提示。Mac 用户可以在核对下载来源后，按照 [Apple 的打开说明](https://support.apple.com/zh-cn/102445) 从“系统设置 → 隐私与安全性”选择“仍要打开”；Windows 可能出现 SmartScreen 提示。请从本仓库 Release 下载，并按需核对其中的 SHA-256 校验文件。
+应用目前没有正式开发者签名，也未完成 Apple 公证。Mac 首次打开可能显示“Apple could not verify 题炼 is free of malware”。请从本仓库 Release 下载，并按需核对其中的 SHA-256 校验文件。
+
+按照 [Apple 的打开说明](https://support.apple.com/zh-cn/102445)，确认下载来源后：
+
+1. 将“题炼”拖入“应用程序”，尝试打开一次，然后关闭提示。
+2. 打开 **系统设置 → 隐私与安全性**，向下找到“安全性”，在“题炼”被阻止的信息旁点击 **仍要打开**。
+3. 按系统要求认证，再次确认 **打开**。之后可直接从“应用程序”或 Dock 启动。
+
+Windows 首次打开可能出现 SmartScreen 提示。
 
 ## 三步开始练习
 
@@ -73,7 +81,7 @@ Mac 需要 **macOS 14 或更新版本**；Windows 需要 **Windows 10 / 11 x64**
 <details>
 <summary><strong>运行时下载不方便？使用离线安装包</strong></summary>
 
-在 [Release 附件](https://github.com/xhuandy666/AlgoPractice/releases/tag/v0.6.0) 下载与你的系统和架构匹配的两个文件：
+在 [Release 附件](https://github.com/xhuandy666/AlgoPractice/releases/tag/v0.6.1) 下载与你的系统和架构匹配的两个文件：
 
 | 系统 | Python | Java |
 | --- | --- | --- |

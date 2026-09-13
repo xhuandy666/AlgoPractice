@@ -33,7 +33,8 @@ import type { Language, RunResult } from '../runner/types';
 app.setPath('userData', process.env.ALGOPRACTICE_DATA_DIR ? resolve(process.env.ALGOPRACTICE_DATA_DIR) : join(app.getPath('appData'), 'AlgoPractice'));
 // The internal name also identifies existing macOS Keychain credentials.
 app.setName('AlgoPractice');
-app.setAboutPanelOptions({ applicationName: '题炼', applicationVersion: app.getVersion() });
+const applicationIconPath = join(__dirname, 'assets', 'icon.png');
+app.setAboutPanelOptions({ applicationName: '题炼', applicationVersion: app.getVersion(), iconPath: applicationIconPath });
 app.setAppUserModelId('local.algopractice.desktop');
 if (process.platform === 'win32' && app.isPackaged) setWindowsJobHelperPath(join(process.resourcesPath, 'windows-job-helper.exe'));
 protocol.registerSchemesAsPrivileged([{ scheme: 'algopractice', privileges: { standard: true, secure: true, supportFetchAPI: true, corsEnabled: true } }]);
@@ -154,6 +155,8 @@ else {
   app.on('will-quit', () => { tray?.destroy(); store?.close(); });
   app.on('activate', () => { if (win) reveal(); });
   void app.whenReady().then(async () => {
+    // Packaged macOS apps use the signed bundle icon; source runs use Electron's Dock.
+    if (process.platform === 'darwin' && !app.isPackaged) app.dock?.setIcon(applicationIconPath);
     const dataDirectory = app.getPath('userData'); mkdirSync(dataDirectory, { recursive: true });
     log = createLogger(join(dataDirectory, 'logs'));
     configPath = join(dataDirectory, 'settings.json');
@@ -185,7 +188,7 @@ else {
     });
     session.defaultSession.setPermissionRequestHandler((_contents, _permission, callback) => callback(false));
     session.defaultSession.setPermissionCheckHandler(() => false);
-    win = new BrowserWindow({ width: 1440, height: 940, minWidth: 760, minHeight: 620, title: '题炼', show: false,
+    win = new BrowserWindow({ width: 1440, height: 940, minWidth: 760, minHeight: 620, title: '题炼', icon: applicationIconPath, show: false,
       webPreferences: { preload: join(__dirname, 'preload.cjs'), nodeIntegration: false, contextIsolation: true, sandbox: true, webSecurity: true },
     });
     win.on('blur', () => learning?.resetActivity());

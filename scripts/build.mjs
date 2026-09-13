@@ -12,6 +12,8 @@ await mkdir('dist', { recursive: true });
 const main = await bundle({ entryPoints: ['src/desktop/main.ts'], outfile: 'dist/main.cjs', bundle: true, platform: 'node', target: 'node24', format: 'cjs', external: ['electron'], sourcemap: true, metafile: true });
 const preload = await bundle({ entryPoints: ['src/desktop/preload.ts'], outfile: 'dist/preload.cjs', bundle: true, platform: 'node', target: 'node24', format: 'cjs', external: ['electron'], sourcemap: true, metafile: true });
 const renderer = await frontend();
+await mkdir('dist/assets', { recursive: true });
+await copyFile('build/icon.png', 'dist/assets/icon.png');
 const moduleIds = new Set([...Object.keys(main.metafile.inputs), ...Object.keys(preload.metafile.inputs)]);
 for (const result of Array.isArray(renderer) ? renderer : [renderer]) for (const output of result.output ?? []) if (output.type === 'chunk') for (const id of Object.keys(output.modules)) moduleIds.add(id);
 const packagePaths = new Set(['node_modules/@fontsource/inter', 'node_modules/@fontsource/space-grotesk', 'node_modules/@fontsource/jetbrains-mono', 'node_modules/electron', 'node_modules/monaco-editor/node_modules/marked']);
@@ -45,7 +47,7 @@ async function walk(path) {
   }
   return files;
 }
-const sourcePaths = [...await walk('src'), 'runtime-manifest.json', 'tokens.css', 'LICENSE', 'package.json', 'package-lock.json', 'scripts/build.mjs', 'scripts/prepare-windows-helper.mjs', 'vite.config.ts', 'tsconfig.json', 'index.html'].map(path => path.replaceAll('\\', '/')).sort();
+const sourcePaths = [...await walk('src'), 'build/icon.png', 'build/icon.icns', 'build/icon.ico', 'runtime-manifest.json', 'tokens.css', 'LICENSE', 'package.json', 'package-lock.json', 'scripts/build.mjs', 'scripts/prepare-windows-helper.mjs', 'vite.config.ts', 'tsconfig.json', 'index.html'].map(path => path.replaceAll('\\', '/')).sort();
 const inputs = [];
 for (const path of sourcePaths) inputs.push({ path, sha256: hash(await readFile(path)) });
 const pkg = JSON.parse(await readFile('package.json', 'utf8'));

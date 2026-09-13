@@ -1,7 +1,7 @@
 {
   "name": "algopractice",
   "productName": "题炼",
-  "version": "0.6.0",
+  "version": "0.6.1",
   "private": true,
   "description": "题炼：离线算法练习、分级 AI 辅导、间隔复习与模拟面试",
   "author": "xhuandy666",
@@ -60,6 +60,7 @@
     ],
     "asar": true,
     "mac": {
+      "icon": "build/icon.icns",
       "target": [
         "dmg",
         "zip"
@@ -70,6 +71,7 @@
       "hardenedRuntime": true
     },
     "win": {
+      "icon": "build/icon.ico",
       "target": [
         "nsis",
         "zip"
