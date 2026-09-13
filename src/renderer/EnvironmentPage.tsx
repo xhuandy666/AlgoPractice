@@ -1,6 +1,7 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from 'react';
 import type { DesktopBridge, EnvironmentInfo, RuntimeProgress } from '../shared/bridge';
 import { errorText } from './ui';
+import { getPerformanceState, performanceReport, startPerformanceRecording, stopPerformanceRecording, subscribePerformance } from './performance-monitor';
 
 const phaseLabels: Record<RuntimeProgress['phase'], string> = {
   download: '正在下载', copy: '正在读取离线包', verify: '正在校验', extract: '正在解压',
@@ -12,6 +13,8 @@ export function EnvironmentPage({ api, onChanged, onError }: {
 }) {
   const [environment, setEnvironment] = useState<EnvironmentInfo | null>(null);
   const [busyAction, setBusyAction] = useState(false);
+  const performanceState = useSyncExternalStore(subscribePerformance, getPerformanceState);
+  const [performanceNotice, setPerformanceNotice] = useState('');
   const [installation, setInstallation] = useState<EnvironmentInfo['installation']>(null);
   const [startingLanguage, setStartingLanguage] = useState<RuntimeProgress['language'] | null>(null);
   const [cancelling, setCancelling] = useState(false);
@@ -119,6 +122,15 @@ export function EnvironmentPage({ api, onChanged, onError }: {
       </div>
       <p className="field-help" role="status">{environment?.reminder ? `测试提醒：${new Date(environment.reminder.dueAt).toLocaleString('zh-CN')}${environment.reminder.deliveredAt ? ' · 已请求系统投递' : new Date(environment.reminder.dueAt).getTime() <= Date.now() ? ' · 已逾期' : ' · 等待到期'}` : '尚未安排测试提醒。'}系统是否显示通知受通知权限与专注模式影响。</p>
     </section>
+    <details className="reminder-section">
+      <summary>性能诊断</summary>
+      <p>遇到卡顿时开始记录，再切换页面或输入代码。90 秒后自动停止，只记录前台帧耗时和页面类型，不包含题目、代码或 Key。</p>
+      <div className="button-row">
+        <button className="button" onClick={() => { setPerformanceNotice(''); if (performanceState.recording) stopPerformanceRecording(); else startPerformanceRecording(); }}>{performanceState.recording ? '停止记录' : '开始记录'}</button>
+        <button className="text-button" disabled={!api || !performanceState.hasReport || performanceState.recording} onClick={() => { void api!.copyCode(performanceReport()).then(() => setPerformanceNotice('诊断报告已复制')).catch(error => onError(errorText(error))); }}>复制诊断报告</button>
+      </div>
+      <p className="field-help" role="status">{performanceState.recording ? '正在记录，切换页面后会继续。' : performanceNotice || (performanceState.hasReport ? '记录已停止，可以复制报告用于排查。' : '默认关闭，记录仅保留在本次应用会话中。')}</p>
+    </details>
     <dl className="system-details">
       <dt>当前环境</dt><dd>{environment ? `${environment.platform} / ${environment.arch}` : '桌面环境未连接'}</dd>
       <dt>应用组件</dt><dd>{environment ? `Electron ${environment.electron} · Node ${environment.node} · SQLite ${environment.sqlite}` : '—'}</dd>

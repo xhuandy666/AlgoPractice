@@ -4,10 +4,12 @@ import type { NoteListItem, NotePageFilter, PageResult } from '../shared/learnin
 import type { DatabaseSync } from 'node:sqlite';
 import type {
   ActivityDay, ActivitySample, ActivitySampleInput, AddReviewItemInput, ArchiveStatistics, Attachment,
-  ConfirmNoteInput, CorrectReviewInput, LearningSettings, Note, NoteDeletionResult, NoteFilter, NoteVersion, ReviewEvent,
+  ConfirmNoteInput, CorrectReviewInput, LearningSettings, LearningSettingsInput, Note, NoteDeletionResult, NoteFilter, NoteVersion, ReviewEvent,
   ReviewFeedbackInput, ReviewFeedbackResult, ReviewFilter, ReviewItem, SaveNoteInput, TodayQueue,
 } from '../shared/learning.ts';
 import type { AiHelpState, AiLevel, AiRequestCompletion, AiRequestRecord, AiRequestSeed } from '../shared/ai.ts';
+import { learningDashboard } from './dashboard.ts';
+import { archiveDateBoundary } from '../shared/archive-date.ts';
 import { advanceReviewCard, FSRS_PARAMETERS, FSRS_VERSION, localDate, newReviewCard } from './fsrs.ts';
 
 type Row = Record<string, string | number | null>;
@@ -61,7 +63,7 @@ export function backfillNoteAttachmentReferences(db: DatabaseSync): void {
   db.exec('DELETE FROM attachment_deletion_candidates WHERE EXISTS(SELECT 1 FROM note_attachment_refs r WHERE r.hash = attachment_deletion_candidates.hash)');
 }
 export function defaultLearningSettings(): LearningSettings {
-  return { dailyReviewBudget: 3, timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC', updatedAt: '1970-01-01T00:00:00.000Z' };
+  return { dailyReviewBudget: 3, dailyPracticeGoal: 3, timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC', updatedAt: '1970-01-01T00:00:00.000Z' };
 }
 
 /** Shares the PracticeStore connection and transaction boundary; never opens another live writer. */
@@ -279,11 +281,13 @@ export class LearningRepository {
 
   getLearningSettings(): LearningSettings {
     const row = this.db.prepare('SELECT value_json FROM learning_settings WHERE id = 1').get() as Row | undefined;
-    return row ? JSON.parse(row.value_json as string) : defaultLearningSettings();
+    // A new optional JSON setting needs no table migration or rewrite of existing learning records.
+    return row ? { ...defaultLearningSettings(), ...JSON.parse(row.value_json as string) } : defaultLearningSettings();
   }
-  updateLearningSettings(input: Partial<Pick<LearningSettings, 'dailyReviewBudget' | 'timeZone'>>): LearningSettings {
-    if (Object.keys(input).some(key => !['dailyReviewBudget', 'timeZone'].includes(key))) throw new Error('Unknown learning setting');
+  updateLearningSettings(input: LearningSettingsInput): LearningSettings {
+    if (Object.keys(input).some(key => !['dailyReviewBudget', 'dailyPracticeGoal', 'timeZone'].includes(key))) throw new Error('Unknown learning setting');
     if (input.dailyReviewBudget !== undefined && input.dailyReviewBudget !== null) integer(input.dailyReviewBudget, 'daily review budget', 0, 1000);
+    if (input.dailyPracticeGoal !== undefined) integer(input.dailyPracticeGoal, 'daily practice goal', 1, 1000);
     if (input.timeZone !== undefined) zone(input.timeZone);
     return this.transaction(() => {
       const settings = { ...this.getLearningSettings(), ...input, updatedAt: now() };
@@ -434,22 +438,48 @@ export class LearningRepository {
       return sample;
     });
   }
+  getLearningDashboard(month?: string, at = now()) {
+    return learningDashboard(this.db, this.getLearningSettings(), () => this.listReviewItems(), month, timestamp(at));
+  }
   getArchiveStatistics(input: { attemptId?: string; from?: string; to?: string; timeZone?: string } = {}): ArchiveStatistics {
     const timeZone = input.timeZone ?? this.getLearningSettings().timeZone; zone(timeZone);
     const from = input.from ? timestamp(input.from) : '', to = input.to ? timestamp(input.to) : '9999';
     // Reuse one formatter and let SQLite aggregate small date/count rows, never Run code or results.
     const formatter = new Intl.DateTimeFormat('en', { timeZone, year: 'numeric', month: '2-digit', day: '2-digit' });
-    this.db.function('practice_local_date', { deterministic: true }, at => {
-      const parts = formatter.formatToParts(new Date(String(at)));
-      return ['year', 'month', 'day'].map(type => parts.find(part => part.type === type)!.value).join('-');
+    type DayRange = { date: string; start: number; end: number };
+    const ranges = new Map<string, DayRange>(); let recent: DayRange | undefined;
+    const rangeAt = (at: number): DayRange => {
+      if (recent && at >= recent.start && at < recent.end) return recent;
+      const parts = formatter.formatToParts(new Date(at));
+      const date = ['year', 'month', 'day'].map(type => parts.find(part => part.type === type)!.value).join('-');
+      let range = ranges.get(date);
+      if (!range) { range = { date, start: Date.parse(archiveDateBoundary(date, timeZone)), end: Date.parse(archiveDateBoundary(date, timeZone, true)) }; ranges.set(date, range); }
+      recent = range; return range;
+    };
+    this.db.function('practice_local_date', { deterministic: true }, at => rangeAt(Date.parse(String(at))).date);
+    let cachedSample: { at: string; duration: number; parts: [string, number, string, number] } | undefined;
+    this.db.function('practice_activity_part', { deterministic: true }, (value, durationValue, part) => {
+      const at = String(value), duration = Number(durationValue);
+      if (!cachedSample || cachedSample.at !== at || cachedSample.duration !== duration) {
+        const end = Date.parse(at), start = end - duration;
+        // A pulse describes [end-duration, end), so exactly-midnight samples belong to yesterday.
+        const first = rangeAt(start), last = rangeAt(duration > 0 ? end - 1 : end);
+        const previous = first.date === last.date ? 0 : Math.max(0, last.start - start);
+        cachedSample = { at, duration, parts: [last.date, duration - previous, first.date, previous] };
+      }
+      return cachedSample.parts[Number(part)];
     });
     const days = new Map<string, ActivityDay>();
     const day = (date: string) => { if (!days.has(date)) days.set(date, { date, activeMs: 0, attempts: 0, runs: 0, passedRuns: 0, reviewCount: 0 }); return days.get(date)!; };
     const condition = input.attemptId ? ' AND attempt_id = ?' : '', args = input.attemptId ? [from, to, input.attemptId] : [from, to];
     let activeMs = 0, attempts = 0, runs = 0, passedRuns = 0;
-    for (const row of this.db.prepare(`SELECT practice_local_date(occurred_at) AS date, SUM(duration_ms) AS duration
-      FROM activity_samples WHERE occurred_at >= ? AND occurred_at <= ?${condition} GROUP BY date`).all(...args) as Row[]) {
-      activeMs += row.duration as number; day(row.date as string).activeMs = row.duration as number;
+    const activityWhere = `occurred_at >= ? AND occurred_at <= ?${condition}`;
+    for (const row of this.db.prepare(`SELECT practice_activity_part(occurred_at, duration_ms, 0) AS date,
+      SUM(practice_activity_part(occurred_at, duration_ms, 1)) AS duration FROM activity_samples WHERE ${activityWhere} GROUP BY date
+      UNION ALL SELECT practice_activity_part(occurred_at, duration_ms, 2) AS date,
+      SUM(practice_activity_part(occurred_at, duration_ms, 3)) AS duration FROM activity_samples
+      WHERE ${activityWhere} AND practice_activity_part(occurred_at, duration_ms, 3) > 0 GROUP BY date`).all(...args, ...args) as Row[]) {
+      activeMs += row.duration as number; day(row.date as string).activeMs += row.duration as number;
     }
     for (const row of this.db.prepare(`SELECT practice_local_date(started_at) AS date, COUNT(*) AS count
       FROM attempts WHERE started_at >= ? AND started_at <= ?${input.attemptId ? ' AND id = ?' : ''} GROUP BY date`).all(...args) as Row[]) {

@@ -11,8 +11,8 @@ import { useEditsFrozen } from './pending-saves';
 const levels: { value: AiLevel; title: string }[] = [{ value: 'L0', title: 'L0 · 理解题意' }, { value: 'L1', title: 'L1 · 找到方向' }, { value: 'L2', title: 'L2 · 局部线索' }, { value: 'L3', title: 'L3 · 定位与纠错' }, { value: 'L4', title: 'L4 · 完整解法' }];
 const phaseLabels: Record<AiEvent['phase'], string> = { queued: '请求已保存', connecting: '正在连接模型', receiving: '正在接收回答', validating: '正在检查回答', repairing: '正在修正回答格式', completed: '回答已保存', failed: '请求失败', cancelled: '已停止', interrupted: '请求已中断' };
 const statusLabels: Record<AiRequestRecord['status'], string> = { pending: '等待响应', streaming: '正在接收', repairing: '修正格式中', completed: '已完成', failed: '未取得可用回答', cancelled: '已停止', interrupted: '应用中断' };
-export function AiPanel({ api, attempt, code, selectedRun, onApply, onNoteSaved, onSettings, onError, flush, reviewMode = false }: {
-  reviewMode?: boolean;
+export function AiPanel({ api, attempt, code, selectedRun, onApply, onNoteSaved, onSettings, onError, flush, reviewMode = false, active = true }: {
+  reviewMode?: boolean; active?: boolean;
   api: DesktopBridge | undefined; attempt: Attempt | null; code: string; selectedRun: RunArchive | null;
   onApply: (requestId: string) => Promise<void>; onNoteSaved: (note: Note) => void; onSettings: () => void;
   onError: (message: string) => void; flush: () => Promise<unknown>;
@@ -25,16 +25,16 @@ export function AiPanel({ api, attempt, code, selectedRun, onApply, onNoteSaved,
   const [busy, setBusy] = useState(''); const [patch, setPatch] = useState<AiPatchApplication | null>(null); const [message, setMessage] = useState('');
   const working = useRef(false); const generation = useRef(0); const frozen = useEditsFrozen();
   const load = useCallback(async () => {
-    if (!api) return; const token = ++generation.current;
+    if (!api || !active) return; const token = ++generation.current;
     const [state, records] = await Promise.all([api.aiProvider(), attempt ? api.aiRequests(attempt.id) : Promise.resolve([])]);
     if (token !== generation.current) return; setProvider(state); setRequests(records); 
-    const active = records.find(record => ['pending', 'streaming', 'repairing'].includes(record.status)); setActiveId(active?.id ?? null);
-  }, [api, attempt?.id]);
-  useEffect(() => { void load().catch(error => onError(errorText(error))); const remove = api?.onLibraryChanged(() => { void load().catch(error => onError(errorText(error))); }); const unlisten = api?.onAiEvent(next => {
+    const activeRequest = records.find(record => ['pending', 'streaming', 'repairing'].includes(record.status)); setActiveId(activeRequest?.id ?? null);
+  }, [api, attempt?.id, active]);
+  useEffect(() => { if (!active) return; void load().catch(error => onError(errorText(error))); const remove = api?.onLibraryChanged(() => { void load().catch(error => onError(errorText(error))); }); const unlisten = api?.onAiEvent(next => {
     if (next.attemptId !== attempt?.id) return; setEvent(next);
     if (['completed', 'failed', 'cancelled', 'interrupted'].includes(next.phase)) { setActiveId(null); void load().catch(error => onError(errorText(error))); } else setActiveId(next.requestId);
-  }); return () => { generation.current++; remove?.(); unlisten?.(); }; }, [api, load, attempt?.id]);
-  useEffect(() => { let alive = true; const timer = setTimeout(() => { if (api && attempt) void api.notePage({ confirmedOnly: true, relevantProblemId: attempt.problemId, search: noteSearch, offset: notePage * 20, limit: 20 }).then(value => { if (alive) { setNotes(value.items); setNoteTotal(value.total); } }).catch(error => { if (alive) onError(errorText(error)); }); }, 150); return () => { alive = false; clearTimeout(timer); }; }, [api, attempt?.problemId, noteSearch, notePage, requests]);
+  }); return () => { generation.current++; remove?.(); unlisten?.(); }; }, [api, load, attempt?.id, active]);
+  useEffect(() => { if (!active) return; let alive = true; const timer = setTimeout(() => { if (api && attempt) void api.notePage({ confirmedOnly: true, relevantProblemId: attempt.problemId, search: noteSearch, offset: notePage * 20, limit: 20 }).then(value => { if (alive) { setNotes(value.items); setNoteTotal(value.total); } }).catch(error => { if (alive) onError(errorText(error)); }); }, 150); return () => { alive = false; clearTimeout(timer); }; }, [api, attempt?.problemId, noteSearch, notePage, requests, active]);
   useEffect(() => { setUnlocked(false); setPatch(null); }, [level]);
   const canAsk = Boolean(api && (attempt?.isActive || reviewMode && attempt) && provider?.hasKey && !activeId && !busy && !frozen);
   async function ask(kind: AiKind = 'hint') {
@@ -61,6 +61,7 @@ export function AiPanel({ api, attempt, code, selectedRun, onApply, onNoteSaved,
     if (!api || busy || frozen) return; setBusy(record.id);
     try { onNoteSaved(await api.saveAiNoteDraft(record.id)); } catch (error) { onError(errorText(error)); } finally { setBusy(''); }
   }
+  if (!active) return null;
   return <section className="ai-panel" aria-label="AI 分级帮助"><h3>留一点空间，自己想通</h3><p className="field-help">选择帮助等级，再主动发送。回答依据对应的代码与运行快照。</p>
     {!provider?.hasKey && <div className="empty-state"><p>先配置你自己的模型接口与 Key。</p><button className="button" onClick={onSettings}>配置 AI</button></div>}
     {!attempt?.isActive && !reviewMode && <p className="field-help">开始一次练习后，可以请求分级帮助。已结束练习的回答保留在档案中。</p>}

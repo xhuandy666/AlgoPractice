@@ -1,7 +1,7 @@
 {
   "name": "algopractice",
   "productName": "题炼",
-  "version": "0.5.1",
+  "version": "0.6.0",
   "private": true,
   "description": "题炼：离线算法练习、分级 AI 辅导、间隔复习与模拟面试",
   "author": "xhuandy666",
@@ -22,7 +22,9 @@
     "dist:mac": "npm run build && electron-builder --mac --arm64 --publish never",
     "dist:mac:intel": "npm run build && electron-builder --mac --x64 --publish never",
     "dist:win": "npm run build && electron-builder --win --x64 --publish never",
-    "preruntime:install": "node scripts/prepare-windows-helper.mjs"
+    "preruntime:install": "node scripts/prepare-windows-helper.mjs",
+    "test:learning-center": "node tests/learning-center-smoke.mjs",
+    "test:editor-performance": "node tests/editor-performance-smoke.mjs"
   },
   "devDependencies": {
     "@fontsource/inter": "5.3.0",

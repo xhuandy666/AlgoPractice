@@ -21,7 +21,7 @@ export function LibraryPage({ api, data, onOpen, onImport, onChanged, onError }:
   const totalPages = Math.max(1, Math.ceil(result.total / 30)); const safePage = page;
   const operation = async (key: string, action: () => Promise<void>) => { setBusy(key); try { await action(); } catch (error) { onError(errorText(error)); } finally { setBusy(''); } };
   return <section className="library-page scroll-page">
-    <div className="page-intro"><div><h2>已准备好的题目</h2><p>选择一道，开始练习。每道题都会标明当前可用的内容。</p></div><button className="button primary" onClick={() => onImport()}>导入题单</button></div>
+    <div className="page-intro"><div><h2>我的题库</h2></div><button className="button primary" onClick={() => onImport()}>导入题单</button></div>
     <div className="library-filters">
       <label className="search-field">搜索题目<input type="search" placeholder="题名、编号或标签" value={query} onChange={event => { setQuery(event.target.value); setPage(0); }} /></label>
       <label>题库范围<select value={listId} onChange={event => { setListId(event.target.value); setChapterId(''); setPage(0); }}><option value="">全部题目 · {data.totalProblems}</option>{data.lists.map(item => <option key={item.id} value={item.id}>{item.title} · {item.items.length}</option>)}</select></label>
@@ -29,7 +29,7 @@ export function LibraryPage({ api, data, onOpen, onImport, onChanged, onError }:
       <label>内容状态<select value={support} onChange={event => { setSupport(event.target.value); setPage(0); }}><option value="">全部状态</option><option value="runnable">本地可运行</option><option value="reading">尚未准备运行</option></select></label>
     </div>
     {list && <div className="list-context"><div><h3>{list.title}</h3><p>{list.chapters.length} 个章节 · {list.items.length} 个条目 · 更新于 {dateTime(list.updatedAt)}</p></div><label><span className="sr-only">章节</span><select aria-label="章节" value={chapterId} onChange={event => { setChapterId(event.target.value); setPage(0); }}><option value="">全部章节</option>{list.chapters.map(chapter => <option key={chapter.id} value={chapter.id}>{chapter.title}</option>)}</select></label>{list.sourceUrl && <button className="text-button" onClick={() => onImport(list.sourceUrl)}>预览题单更新</button>}</div>}
-    <div className="table-caption"><span>{result.total} 道题目{loading ? ' · 正在读取…' : ''}</span><span>本地用例通过与官方 AC 分开记录</span></div>
+    <div className="table-caption"><span>{result.total} 道题目{loading ? ' · 正在读取…' : ''}</span></div>
     <div className="problem-table" role="table" aria-label="题库">
       <div className="problem-table-head" role="row"><span role="columnheader">题目</span><span role="columnheader">难度</span><span role="columnheader">内容</span><span role="columnheader">操作</span></div>
       {result.items.map((problem, index) => {

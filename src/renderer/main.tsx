@@ -7,5 +7,6 @@ import '@fontsource/jetbrains-mono/400.css';
 import '../../tokens.css';
 import './styles.css';
 import './interview.css';
+import './learning-center.css';
 import { DesktopRoot } from './DesktopRoot';
 createRoot(document.getElementById('root')!).render(<React.StrictMode><DesktopRoot /></React.StrictMode>);

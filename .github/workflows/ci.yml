@@ -50,6 +50,8 @@ jobs:
         run: npm run build
       - name: Launch desktop and run both languages
         run: npm run test:desktop
+      - name: Check learning dashboard and review calendar
+        run: npm run test:learning-center
       - name: Package Windows installer and portable archive
         if: runner.os == 'Windows'
         run: npx electron-builder --win --x64 --publish never

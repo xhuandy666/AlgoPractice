@@ -170,13 +170,13 @@ test('real PracticeStore schema 3 notes, historical attachments and learning set
   const input = join(directory, 'invariant.md'); await writeFile(input, '# 保存不变量\n所有历史附件都应可恢复。'); const attachment = await attachmentService.addFile(input);
   const first = store.saveNote({ requestId: randomUUID(), kind: 'topic', subjectId: 'binary-search', title: '边界', markdown: '旧版本有附件', attachmentHashes: [attachment.hash] });
   store.saveNote({ requestId: randomUUID(), noteId: first.id, kind: 'topic', subjectId: 'binary-search', title: '边界', markdown: '新版本正文', attachmentHashes: [], expectedVersion: first.latestVersion });
-  store.updateLearningSettings({ dailyReviewBudget: 7, timeZone: 'Asia/Shanghai' });
+  store.updateLearningSettings({ dailyReviewBudget: 7, dailyPracticeGoal: 9, timeZone: 'Asia/Shanghai' });
   const service = new BackupService({ dataDirectory: directory, appVersion: '0.3.0', snapshotDatabase: path => store.backupTo(path), inspectSnapshot: path => PracticeStore.inspectBackupSnapshot(path), getReminderSettings: () => ({ ...DEFAULT_REMINDER_SETTINGS }),
     lifecycle: { hasActiveInterview: () => false, enterMaintenance: async () => {}, closeDatabase: () => store.close(), openDatabase: () => { store = new PracticeStore(join(directory, 'practice.sqlite')); }, clearCredentials: async () => {}, leaveMaintenance: () => {} } });
   const backup = await service.create(); assert.ok(backup.manifest.files.some(file => file.path === `attachments/${attachment.hash}`));
-  const before = store.listNoteVersions(first.id); store.deleteNote(first.id, 2); store.updateLearningSettings({ dailyReviewBudget: 1 });
+  const before = store.listNoteVersions(first.id); store.deleteNote(first.id, 2); store.updateLearningSettings({ dailyReviewBudget: 1, dailyPracticeGoal: 2 });
   await service.restore(backup.path, backup.manifest);
-  assert.deepEqual(store.listNoteVersions(first.id), before); assert.equal(store.getLearningSettings().dailyReviewBudget, 7);
+  assert.deepEqual(store.listNoteVersions(first.id), before); assert.equal(store.getLearningSettings().dailyReviewBudget, 7); assert.equal(store.getLearningSettings().dailyPracticeGoal, 9);
   assert.equal((await attachmentService.read(attachment.hash)).bytes.toString(), '# 保存不变量\n所有历史附件都应可恢复。'); store.integrityCheck();
 });
 test('non-secret AI provider preferences restore atomically while key fields and credential-bearing URLs are refused', async t => {
@@ -197,4 +197,15 @@ test('an intentionally zero daily review budget remains a valid portable setting
   const f = await fixture(t); f.db().prepare("UPDATE settings SET value=? WHERE key='learning'").run(JSON.stringify({ ...learning, dailyReviewBudget: 0 }));
   const backup = await f.service.create(); await f.service.restore(backup.path, backup.manifest);
   assert.equal(JSON.parse(String(f.db().prepare("SELECT value FROM settings WHERE key='learning'").get()!.value)).dailyReviewBudget, 0);
+});
+
+
+test('legacy portable backups without a practice goal still verify and restore with original learning settings', async t => {
+  const f = await fixture(t), backup = await f.service.create();
+  const oldFile = await transformed(f, backup.path, entries => {
+    const entry = entries.find(value => value.name === 'settings.json')!, settings = JSON.parse(entry.bytes.toString());
+    delete settings.learning.dailyPracticeGoal; entry.bytes = Buffer.from(JSON.stringify(settings));
+  }, true);
+  await f.service.restore(oldFile);
+  assert.deepEqual(JSON.parse(String(f.db().prepare("SELECT value FROM settings WHERE key='learning'").get()!.value)), learning);
 });

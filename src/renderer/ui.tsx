@@ -12,9 +12,9 @@ export const statusClass = (status: RunArchive['result']['status']) => status ==
 export function errorText(error: unknown) { return error instanceof Error ? error.message.replace(/^Error invoking remote method '[^']+': Error: /, '') : String(error); }
 export const formatValue = (value: unknown) => value === undefined ? '—' : typeof value === 'string' ? value : JSON.stringify(value);
 export const dateTime = (value: string) => new Date(value).toLocaleString('zh-CN', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' });
-export type IconName = 'code' | 'source' | 'settings' | 'play' | 'stop' | 'search' | 'library' | 'archive';
+export type IconName = 'home' | 'code' | 'source' | 'settings' | 'play' | 'stop' | 'search' | 'library' | 'archive';
 export function Icon({ name }: { name: IconName }) {
-  const paths = { code: 'm8 6-5 6 5 6m8-12 5 6-5 6m-3-15-2 18', source: 'M4 4h6l2 3h8v13H4zm0 5h16', settings: 'M4 7h16M4 17h16M8 4v6m8 4v6', play: 'm8 5 11 7-11 7z', stop: 'M6 6h12v12H6z', search: 'm16 16 5 5M18 10a8 8 0 1 1-16 0 8 8 0 0 1 16 0', library: 'M4 4h5v16H4zM12 4h3v16h-3zM17 5l3-1 3 15-3 1z', archive: 'M4 8h16v12H4zM3 4h18v4H3zm6 9h6' };
+  const paths = { home: 'M3 11 12 3l9 8M5 10v11h5v-7h4v7h5V10', code: 'm8 6-5 6 5 6m8-12 5 6-5 6m-3-15-2 18', source: 'M4 4h6l2 3h8v13H4zm0 5h16', settings: 'M4 7h16M4 17h16M8 4v6m8 4v6', play: 'm8 5 11 7-11 7z', stop: 'M6 6h12v12H6z', search: 'm16 16 5 5M18 10a8 8 0 1 1-16 0 8 8 0 0 1 16 0', library: 'M4 4h5v16H4zM12 4h3v16h-3zM17 5l3-1 3 15-3 1z', archive: 'M4 8h16v12H4zM3 4h18v4H3zm6 9h6' };
   return <svg width="20" height="20" viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round"><path d={paths[name]} /></svg>;
 }
 export function Statement({ content }: { content: ProblemContent }) {

@@ -1,4 +1,4 @@
-import { dialog, Notification, safeStorage, shell, type BrowserWindow } from 'electron';
+import { clipboard, dialog, Notification, safeStorage, shell, type BrowserWindow } from 'electron';
 import { existsSync, readFileSync } from 'node:fs';
 import { lstat, mkdir, readdir, rename, unlink, writeFile } from 'node:fs/promises';
 import { basename, dirname, join } from 'node:path';
@@ -7,7 +7,7 @@ import { performance } from 'node:perf_hooks';
 import { PracticeStore, type StoredRun } from '../storage/practice-store';
 import { AiService, CredentialVault, normalizeProviderConfig, helpCardDecision, sha256 } from '../ai/index';
 import type { AiProviderConfig, AiRequestInput, AiTrustedContext, AiRunEvidence, AiHelpRun, AiDiagnostic } from '../shared/ai';
-import type { AddReviewItemInput, ConfirmNoteInput, CorrectReviewInput, NoteFilter, ReviewFeedbackInput, ReviewFilter, SaveNoteInput } from '../shared/learning';
+import type { AddReviewItemInput, ConfirmNoteInput, CorrectReviewInput, LearningSettingsInput, NoteFilter, ReviewFeedbackInput, ReviewFilter, SaveNoteInput } from '../shared/learning';
 import type { BackupSummary, RestoreLifecycle } from '../shared/maintenance';
 import type { Page } from '../shared/bridge';
 import type { ProblemContent } from '../shared/library';
@@ -15,6 +15,7 @@ import type { RunResult } from '../runner/types';
 import { AttachmentService, attachmentExtensions } from './attachment-service';
 import { BackupService } from './backup-service';
 import { ReminderService } from './reminder-service';
+import { writeCodeToClipboard } from './code-clipboard';
 const id = (value: unknown) => { if (typeof value !== 'string' || !value.trim() || value.length > 512) throw new Error('标识无效。'); return value; };
 const integer = (value: unknown) => { if (typeof value !== 'number' || !Number.isSafeInteger(value) || value < 1) throw new Error('版本无效。'); return value; };
 interface Options { dataDirectory: string; version: string; window: BrowserWindow; store(): PracticeStore; handle(channel: string, handler: (...args: unknown[]) => unknown): void; changed(): void; reveal(page: Page): void; lifecycle: RestoreLifecycle; isIdle(): boolean; interviewContext?(context: AiTrustedContext): AiTrustedContext; log(event: string, data: Record<string, string | number | boolean | null>): void; }
@@ -97,7 +98,7 @@ export class LearningController {
     const { handle, changed, window: win } = this.options, get = this.options.store;
     const mutate = <T>(operation: () => T) => { const result = operation(); changed(); return result; };
     handle('learning:settings', () => get().getLearningSettings());
-    handle('learning:save-settings', input => mutate(() => get().updateLearningSettings(input as { dailyReviewBudget: number | null; timeZone: string })));
+    handle('learning:save-settings', input => mutate(() => get().updateLearningSettings(input as LearningSettingsInput)));
     handle('review:today', () => get().getTodayQueue()); handle('review:list', filter => get().listReviewItems(filter as ReviewFilter));
     handle('review:add', input => mutate(() => { const value = input as AddReviewItemInput; return get().addReviewItem({ problemId: value.problemId, target: value.target, language: value.language }); }));
     handle('review:update', (key, input) => mutate(() => get().setReviewPlan(id(key), input as { suspended?: boolean; scheduledAt?: string | null })));
@@ -105,6 +106,8 @@ export class LearningController {
     handle('review:feedback', input => mutate(() => { const value = input as ReviewFeedbackInput; return get().recordReview({ requestId: value.requestId, itemId: value.itemId, rating: value.rating, ...(value.attemptId ? { attemptId: value.attemptId } : {}) }); }));
     handle('review:correct', input => mutate(() => get().correctReview(input as CorrectReviewInput)));
     handle('learning:statistics', () => get().getArchiveStatistics());
+    handle('learning:dashboard', month => get().getLearningDashboard(month as string | undefined));
+    handle('learning:pause-activity', () => this.resetActivity());
     handle('learning:pulse', key => { const attemptId = id(key), at = performance.now(), previous = this.#pulse; const attempt = get().getAttempt(attemptId); if (!attempt?.isActive || !win.isVisible() || !win.isFocused()) { this.#pulse = null; return; } this.#pulse = { attemptId, at }; if (previous?.attemptId === attemptId) { const duration = Math.round(at - previous.at); if (duration >= 1000 && duration <= 15000) get().recordActivity({ requestId: randomUUID(), attemptId, durationMs: duration, occurredAt: new Date().toISOString() }); } });
     handle('note:list', filter => get().listNotes(filter as NoteFilter)); handle('note:get', key => get().getNote(id(key)) ?? null); handle('note:versions', key => get().listNoteVersions(id(key)));
     handle('note:save', input => { const value = input as SaveNoteInput; let result; try { result = get().saveNote({ ...value, origin: 'user', state: 'draft', aiRequestId: undefined }); } catch (error) { throw new Error(`NOTE_WRITE_REJECTED: 笔记未保存：${error instanceof Error ? error.message : '写入失败'}`); } changed(); return result; });
@@ -135,6 +138,8 @@ export class LearningController {
     handle('backup:create', async () => { const selected = await dialog.showSaveDialog(win, { title: '保存完整备份', defaultPath: `题炼-${new Date().toISOString().slice(0, 10)}.algobak`, filters: [{ name: '题炼 备份', extensions: ['algobak'] }] }); if (selected.canceled || !selected.filePath) return null; return this.#withAttachmentLock(() => this.backups.create('manual', selected.filePath!)); });
     handle('backup:preview', async () => { const selected = await dialog.showOpenDialog(win, { title: '选择要恢复的备份', properties: ['openFile'], filters: [{ name: '题炼 备份', extensions: ['algobak'] }] }); if (selected.canceled) return null; const summary = await this.backups.inspect(selected.filePaths[0]), previewId = randomUUID(); this.#previews.clear(); this.#previews.set(previewId, summary); return { id: previewId, manifest: summary.manifest, bytes: summary.bytes }; });
     handle('backup:restore', key => { const preview = this.#previews.get(id(key)); if (!preview) throw new Error('恢复预览已失效，请重新选择文件。'); this.#previews.clear(); return this.backups.restore(preview.path, preview.manifest); });
+    // Use the same main-frame origin, maintenance and interview gates as every other app IPC.
+    handle('app:copy-code', value => writeCodeToClipboard(value, clipboard));
     handle('app:open-web-link', value => { const raw = id(value); if (raw.length > 2048) throw new Error('链接过长。'); const url = new URL(raw); if (!['https:','http:'].includes(url.protocol) || url.username || url.password) throw new Error('仅允许打开网页链接。'); return shell.openExternal(url.href); });
   }
 }

@@ -2,14 +2,14 @@
  * audience: personal algorithm learner · use: read, code, test · nav: N3 adapted side navigation · footer: Ft2 status line · enrichment: none
  * Hallmark · pre-emit critique: P4 H4 E4 S5 R5 V4 · applicable desktop visual gates reviewed; measured contrast is recorded in evidence. */
 :root {
-  --color-paper: oklch(98.5% 0.004 250);
-  --color-surface: oklch(99.3% 0.002 250);
+  --color-paper: oklch(97.3% 0.008 255);
+  --color-surface: oklch(99.8% 0.001 255);
   --color-paper-2: oklch(96.5% 0.006 250);
   --color-paper-3: oklch(93% 0.01 250);
   --color-ink: oklch(24% 0.02 258);
   --color-ink-2: oklch(34% 0.018 257);
   --color-muted: oklch(49% 0.018 257);
-  --color-rule: oklch(89% 0.008 250);
+  --color-rule: oklch(90.8% 0.015 255);
   --color-control-rule: oklch(65% 0.014 250);
   --color-accent: oklch(51% 0.2 256);
   --color-accent-soft: oklch(94% 0.027 256);
@@ -23,13 +23,13 @@
   --color-code-keyword: oklch(46% 0.15 256);
   --color-code-string: oklch(40% 0.08 160);
   --color-code-number: oklch(43% 0.12 55);
-  --font-display: 'Space Grotesk', 'PingFang SC', 'Microsoft YaHei', sans-serif;
+  --font-display: 'Inter', 'PingFang SC', 'Microsoft YaHei', sans-serif;
   --font-body: 'Inter', 'PingFang SC', 'Microsoft YaHei', sans-serif;
   --font-mono: 'JetBrains Mono', 'PingFang SC', 'Microsoft YaHei', monospace;
   --space-2xs: 4px; --space-xs: 8px; --space-sm: 12px; --space-md: 16px;
   --space-lg: 24px; --space-xl: 32px; --space-2xl: 48px; --space-3xl: 64px;
   --text-xs: 12px; --text-sm: 14px; --text-base: 16px; --text-md: 20px; --text-lg: 28px;
-  --radius-sm: 6px; --radius-md: 8px;
+  --radius-sm: 8px; --radius-md: 12px;
   --rule-thin: 1px;
   --ease-out: cubic-bezier(0.16, 1, 0.3, 1);
   --ease-in: cubic-bezier(0.7, 0, 0.84, 0);

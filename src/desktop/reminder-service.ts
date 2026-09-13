@@ -140,7 +140,7 @@ export class ReminderService {
       this.#ledger.lastError = message.slice(0, 2000); this.#phase = 'failed'; this.#save(); this.options.onChanged?.();
     };
     try {
-      await this.options.notifier.notify({ id, title: '题炼 · 复习提醒', body: `有 ${count} 项复习等待处理。打开今日队列继续练习。`, dueCount: count,
+      await this.options.notifier.notify({ id, title: '题炼 · 复习提醒', body: `有 ${count} 项复习等待处理。打开学习中心继续练习。`, dueCount: count,
         onClick: () => { if (this.#active && this.#settings.enabled && this.#currentNotification === id && this.#clock().day === clock.day && this.#due() > 0) this.options.onNavigateQueue(); }, onFailure: fail });
       if (this.#currentNotification === id && this.#ledger.days[clock.day].status !== 'failed') {
         this.#ledger.lastDeliveredAt = now.toISOString(); this.#phase = 'delivered'; this.#save();

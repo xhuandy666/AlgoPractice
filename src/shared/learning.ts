@@ -42,7 +42,8 @@ export interface ReviewEvent {
 }
 export interface ReviewFeedbackResult { item: ReviewItem; event: ReviewEvent; }
 export interface ReviewFilter { problemId?: string; target?: ReviewTarget; language?: ReviewLanguage; }
-export interface LearningSettings { dailyReviewBudget: number | null; timeZone: string; updatedAt: string; }
+export interface LearningSettings { dailyReviewBudget: number | null; dailyPracticeGoal: number; timeZone: string; updatedAt: string; }
+export type LearningSettingsInput = Partial<Pick<LearningSettings, 'dailyReviewBudget' | 'dailyPracticeGoal' | 'timeZone'>>;
 export interface TodayQueue {
   date: string; timeZone: string; budget: number | null; reviewedToday: number; remainingBudget: number | null;
   items: ReviewItem[]; overdueCount: number; dueCount: number; deferredCount: number; suspendedCount: number;
@@ -54,6 +55,19 @@ export interface ActivityDay { date: string; activeMs: number; attempts: number;
 export interface ArchiveStatistics {
   activeMs: number; attempts: number; runs: number; passedRuns: number; reviewedItems: number;
   days: ActivityDay[];
+}
+/** Completed means the user ended an attempt; it does not assert an official judge result. */
+export interface LearningDay {
+  date: string; activeMs: number; completedAttempts: number; completedProblems: number; reviewCount: number;
+}
+export interface LearningDashboard {
+  date: string; timeZone: string; dailyPracticeGoal: number; from: string; to: string;
+  days: LearningDay[];
+  /** Totals over the same inclusive local-date window as days. */
+  totals: { activeMs: number; completedAttempts: number; completedProblems: number; activeDays: number };
+  reviewItems: ReviewItem[];
+  /** Original completion events for the selected month, with the latest corrected rating. */
+  reviewEvents: ReviewEvent[];
 }
 export interface BackupSnapshotInfo {
   schemaVersion: number; attachments: Attachment[]; mediaHashes: string[]; learningSettings: LearningSettings;
@@ -77,6 +91,8 @@ export interface ProblemListItem {
 export interface AttemptPageFilter extends PageRequest {
   problemId?: string; language?: 'python' | 'java'; search?: string; state?: 'active' | 'ended';
   helpLevel?: 'none' | 'L0' | 'L1' | 'L2' | 'L3' | 'L4'; from?: string; to?: string;
+  /** Any recorded activity on this local learning date, including an attempt spanning midnight. */
+  learningDate?: string; timeZone?: string;
 }
 export interface AttemptListItem {
   attempt: Omit<import('../storage/practice-store').Attempt, 'problemSnapshot' | 'finalCode'>;

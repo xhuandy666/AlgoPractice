@@ -188,6 +188,8 @@ else {
     win = new BrowserWindow({ width: 1440, height: 940, minWidth: 760, minHeight: 620, title: '题炼', show: false,
       webPreferences: { preload: join(__dirname, 'preload.cjs'), nodeIntegration: false, contextIsolation: true, sandbox: true, webSecurity: true },
     });
+    win.on('blur', () => learning?.resetActivity());
+    win.on('hide', () => learning?.resetActivity());
     win.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
     win.webContents.on('will-navigate', (event, url) => { if (url !== 'algopractice://app/index.html') event.preventDefault(); });
     win.webContents.on('render-process-gone', () => { if (quitting) void stopAndQuit(); });
@@ -278,7 +280,7 @@ else {
     });
     win.once('ready-to-show', () => win.show());
     tray = new Tray(trayImage()); tray.setToolTip('题炼');
-    tray.setContextMenu(Menu.buildFromTemplate([{ label: '打开工作台', click: () => reveal() }, { label: '今日复习与提醒', click: () => reveal('today') }, { type: 'separator' }, { label: '完全退出', click: () => app.quit() }]));
+    tray.setContextMenu(Menu.buildFromTemplate([{ label: '打开工作台', click: () => reveal() }, { label: '学习中心', click: () => reveal('today') }, { type: 'separator' }, { label: '完全退出', click: () => app.quit() }]));
     tray.on('click', () => reveal());
     Menu.setApplicationMenu(Menu.buildFromTemplate([
       ...(process.platform === 'darwin' ? [{ label: '题炼', submenu: [{ role: 'about' as const, label: '关于题炼' }, { type: 'separator' as const }, { role: 'hide' as const, label: '隐藏题炼' }, { label: '完全退出题炼', accelerator: 'CmdOrCtrl+Q', click: () => app.quit() }] }] : []),

@@ -144,7 +144,7 @@ try {
   assert.equal(await page.locator('.sidebar .wordmark span').last().innerText(), '题炼');
   assert.equal(await page.evaluate(() => typeof window.require), 'undefined');
   assert.deepEqual((await api('libraryIndex')).problems.map(problem => problem.id).sort(), ['array-total', 'mirror-text', 'sum-stdin']);
-  await page.getByRole('heading', { name: '今天，从需要回忆的题开始', exact: true }).waitFor();
+  await page.getByRole('heading', { name: '今日进度', exact: true }).waitFor();
   pass('Fresh startup shows the three bundled problems and both real runtimes', { python: environment.python, java: environment.java });
   const reminder = await api('reminderState');
   await api('saveReminderSettings', { ...reminder.settings, enabled: false });
@@ -189,9 +189,9 @@ try {
   await api('addReviewItem', { problemId: 'mirror-text', target: 'rewrite', language: 'java' });
   assert.equal((await api('reviewItems')).length, 3);
   assert.equal((await api('reviewEvents', rewrite.id)).length, 1);
-  await nav('今日复习');
+  await nav('学习中心');
   await page.getByRole('combobox', { name: '复习列表范围', exact: true }).selectOption('all');
-  await until(async () => (await page.locator('li.study-row').count()) === 3, 'all three real review items render');
+  await until(async () => (await page.locator('li.todo-row').count()) === 3, 'all three real review items render');
   await shot('review.png');
   pass('Real FSRS review items keep understanding and language-specific rewriting separate');
 

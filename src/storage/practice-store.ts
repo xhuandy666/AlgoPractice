@@ -3,13 +3,14 @@ import { existsSync, linkSync, mkdirSync, unlinkSync, copyFileSync } from 'node:
 import { dirname, resolve } from 'node:path';
 import { DatabaseSync, backup as sqliteBackup } from 'node:sqlite';
 import { LearningRepository, backfillNoteAttachmentReferences, defaultLearningSettings } from '../learning/repository.ts';
+import { archiveDateBoundary } from '../shared/archive-date.ts';
 import { pageBounds, pageResult, searchText, literalLike, SQL_TRIM_WHITESPACE } from './pagination.ts';
 import type { AttemptListItem, AttemptPageFilter, NotePageFilter, PageResult, ProblemListItem, ProblemPageFilter, RunListItem, RunPageFilter } from '../shared/learning.ts';
 import { MIGRATE_V5 } from '../interview/schema.ts';
 import type { CompanyDataset, InterviewSession } from '../shared/interview.ts';
 import { MIGRATE_V3, MIGRATE_V4 } from '../learning/schema.ts';
 import type { ActivitySampleInput, AddReviewItemInput, Attachment, BackupSnapshotInfo, ConfirmNoteInput,
-  CorrectReviewInput, LearningSettings, NoteFilter, ReviewFeedbackInput, ReviewFilter, SaveNoteInput } from '../shared/learning.ts';
+  CorrectReviewInput, LearningSettingsInput, NoteFilter, ReviewFeedbackInput, ReviewFilter, SaveNoteInput } from '../shared/learning.ts';
 import type { AiLevel, AiRequestCompletion, AiRequestSeed } from '../shared/ai.ts';
 import type {
   CreateImportJobInput, ImportError, ImportItem, ImportItemSeed, ImportItemStatus,
@@ -646,6 +647,18 @@ export class PracticeStore {
       if (!Number.isFinite(Date.parse(filter[key]!))) throw new Error('Invalid attempt date filter');
       clauses.push(`started_at ${operator} ?`); values.push(new Date(filter[key]!).toISOString());
     }
+    if (filter.timeZone !== undefined && !filter.learningDate) throw new Error('A learning time zone requires a learning date');
+    if (filter.learningDate !== undefined) {
+      const timeZone = filter.timeZone ?? this.getLearningSettings().timeZone;
+      const start = archiveDateBoundary(filter.learningDate, timeZone), end = archiveDateBoundary(filter.learningDate, timeZone, true);
+      // A recorded pulse is the preceding duration ending at occurred_at. Include either side of midnight.
+      clauses.push(`(started_at >= ? AND started_at < ? OR ended_at >= ? AND ended_at < ?
+        OR EXISTS(SELECT 1 FROM activity_samples s WHERE s.attempt_id = summaries.id AND s.duration_ms > 0 AND s.occurred_at > ?
+          AND julianday(s.occurred_at) - s.duration_ms / 86400000.0 < julianday(?))
+        OR EXISTS(SELECT 1 FROM runs r WHERE r.attempt_id = summaries.id AND r.created_at >= ? AND r.created_at < ?)
+        OR EXISTS(SELECT 1 FROM review_events e WHERE e.attempt_id = summaries.id AND e.kind = 'review' AND e.reviewed_at >= ? AND e.reviewed_at < ?))`);
+      values.push(start, end, start, end, start, end, start, end, start, end);
+    }
     const cte = `WITH summaries AS (SELECT a.id, a.problem_id, a.language, a.problem_version, a.mode, a.started_at,
       a.draft_scope_id, a.ended_at, a.final_code_hash, a.final_draft_revision, a.final_last_run_id,
       a.last_run_matches_final, a.restored_from_run_id, a.rowid AS ordering,
@@ -1279,7 +1292,8 @@ export class PracticeStore {
   listNoteVersions(id: string) { return this.#learning.listNoteVersions(id); }
   getAttemptNoteVersions(attemptId: string) { return this.#learning.getAttemptNoteVersions(attemptId); }
   getLearningSettings() { return this.#learning.getLearningSettings(); }
-  updateLearningSettings(input: Partial<Pick<LearningSettings, 'dailyReviewBudget' | 'timeZone'>>) { return this.#learning.updateLearningSettings(input); }
+  getLearningDashboard(month?: string, at?: string) { return this.#learning.getLearningDashboard(month, at); }
+  updateLearningSettings(input: LearningSettingsInput) { return this.#learning.updateLearningSettings(input); }
   addReviewItem(input: AddReviewItemInput) { return this.#learning.addReviewItem(input); }
   getReviewItem(id: string) { return this.#learning.getReviewItem(id); }
   listReviewItems(filter: ReviewFilter = {}) { return this.#learning.listReviewItems(filter); }

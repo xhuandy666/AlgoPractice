@@ -23,7 +23,8 @@ function ArchivePager({ page, loading, label, onOffset }: { page: PageResult<unk
   </div>;
 }
 
-export function ArchivePage({ api, onRestore, onError }: { api: DesktopBridge | undefined; onRestore: (run: RunArchive) => Promise<void>; onError: (message: string) => void }) {
+export function ArchivePage({ api, initialLearningDate, onRestore, onError }: { initialLearningDate?: string; api: DesktopBridge | undefined; onRestore: (run: RunArchive) => Promise<void>; onError: (message: string) => void }) {
+  const [learningDate, setLearningDate] = useState(initialLearningDate ?? '');
   const [timeZone, setTimeZone] = useState(Intl.DateTimeFormat().resolvedOptions().timeZone);
   const dateTime = (value: string) => new Intl.DateTimeFormat('zh-CN', { timeZone, dateStyle: 'short', timeStyle: 'short' }).format(new Date(value));
   const [deleting, setDeleting] = useState(false); const [deleteOpen, setDeleteOpen] = useState(false);
@@ -47,7 +48,7 @@ export function ArchivePage({ api, onRestore, onError }: { api: DesktopBridge | 
   useEffect(() => { let alive = true; if (api) void Promise.all([api.learningStatistics(), api.learningSettings()]).then(([value, settings]) => { if (alive) { setStatistics(value); setTimeZone(settings.timeZone); } }).catch(error => { if (alive) onError(errorText(error)); }); return () => { alive = false; }; }, [api, refresh]);
   useEffect(() => {
     let alive = true; setLoading(true);
-    const filters: AttemptPageFilter = { offset: archiveOffset, limit: ATTEMPT_PAGE_SIZE,
+    const filters: AttemptPageFilter = { offset: archiveOffset, limit: ATTEMPT_PAGE_SIZE, ...(learningDate ? { learningDate, timeZone } : {}),
       ...(query.trim() ? { search: query.trim() } : {}), ...(filter !== 'all' ? { state: filter as 'active' | 'ended' } : {}),
       ...(language !== 'all' ? { language: language as 'python' | 'java' } : {}), ...(helpFilter !== 'all' ? { helpLevel: helpFilter as AttemptPageFilter['helpLevel'] } : {}),
       ...(dateFilter.from ? { from: dateFilter.from } : {}), ...(dateFilter.to ? { to: dateFilter.to } : {}) };
@@ -58,7 +59,7 @@ export function ArchivePage({ api, onRestore, onError }: { api: DesktopBridge | 
       setArchives(page);
     }).catch(error => { if (alive) onError(errorText(error)); }).finally(() => { if (alive) setLoading(false); });
     return () => { alive = false; };
-  }, [api, archiveOffset, query, filter, language, helpFilter, dateFilter, refresh]);
+  }, [api, archiveOffset, query, filter, language, helpFilter, dateFilter, refresh, learningDate, timeZone]);
   function selectArchive(id: string) { if (id === selected) return; setSelected(id); setRunOffset(0); setRunId(''); setCompare(''); setRunPage(emptyPage(RUN_PAGE_SIZE)); setDeleteOpen(false); setLearning(null); setAiOpen(false); setNotesOpen(false); }
   useEffect(() => {
     let alive = true; setOverview(current => current?.attempt.id === selected ? current : null); setDetailLoading(Boolean(selected && api));
@@ -98,6 +99,7 @@ export function ArchivePage({ api, onRestore, onError }: { api: DesktopBridge | 
   const content = detail?.attempt.problemSnapshot as unknown as ProblemContent | undefined;
   return <section className="archives-page scroll-page"><div className="page-intro"><div><h2>每一次练习，都有存档</h2><p>题面、代码和测试结果保留当时的版本。恢复历史会另建草稿。</p></div><span className="muted">{archives.total} 次练习</span></div>
     {statistics && <details className="learning-section"><summary>学习统计 · 有效练习 {Math.round(statistics.activeMs / 60000)} 分钟 · 复习 {statistics.reviewedItems} 项</summary><p className="field-help">仅累计前台练习且近期有操作的时间；关闭窗口、系统睡眠和长期闲置不计入。</p><div className="study-list">{statistics.days.slice(-14).reverse().map(day => <div className="study-row" key={day.date}><strong>{day.date}</strong><span>{Math.round(day.activeMs / 60000)} 分钟 · {day.runs} 次运行 · {day.passedRuns} 次通过 · {day.reviewCount} 次复习</span></div>)}</div></details>}
+    {learningDate && <div className="archive-day-filter"><span>{learningDate} 的学习记录</span><button className="text-button" onClick={() => { setLearningDate(''); setArchiveOffset(0); }}>查看全部日期 ×</button></div>}
     <div className="library-filters"><label className="search-field">搜索练习<input type="search" value={query} placeholder="按题目名称查找" onChange={event => { setQuery(event.target.value); setArchiveOffset(0); }} /></label><label>练习状态<select value={filter} onChange={event => { setFilter(event.target.value); setArchiveOffset(0); }}><option value="all">全部练习</option><option value="ended">已结束</option><option value="active">进行中</option></select></label><label>语言<select value={language} onChange={event => { setLanguage(event.target.value); setArchiveOffset(0); }}><option value="all">全部语言</option><option value="python">Python</option><option value="java">Java</option></select></label><label>最高 AI 帮助<select value={helpFilter} onChange={event => { setHelpFilter(event.target.value); setArchiveOffset(0); }}><option value="all">全部</option><option value="none">未取得 AI 帮助</option>{['L0','L1','L2','L3','L4'].map(value => <option key={value}>{value}</option>)}</select></label><label>开始日期（{timeZone}）<input type="date" value={from} onChange={event => { setFrom(event.target.value); setArchiveOffset(0); }} /></label><label>截止日期<input type="date" value={to} onChange={event => { setTo(event.target.value); setArchiveOffset(0); }} /></label></div>
     {dateFilter.error && <p className="field-help error-text" role="status">{dateFilter.error}</p>}
     <ArchivePager page={archives} loading={loading || deleting || restoring} label="练习档案" onOffset={setArchiveOffset} />

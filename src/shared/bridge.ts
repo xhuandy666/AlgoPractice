@@ -5,7 +5,7 @@ import type { ImportJob, LibraryProblem, StudyList, ListRefreshPreview } from '.
 import type { ImportInput, ImportPreview } from '../source/index';
 import type { AiProviderConfig, AiProviderState, AiConnectionResult, AiRequestInput, AiRequestRecord, AiEvent, AiHelpDecision, AiPatchApplication } from './ai';
 import type { ReminderSettings, ReminderStatus, BackupSummary, BackupManifest, RestoreResult } from './maintenance';
-import type { Note, NoteVersion, SaveNoteInput, ConfirmNoteInput, NoteFilter, Attachment, ReviewItem, ReviewEvent, AddReviewItemInput, ReviewFeedbackInput, ReviewFeedbackResult, CorrectReviewInput, ReviewFilter, LearningSettings, TodayQueue, ArchiveStatistics } from './learning';
+import type { Note, NoteVersion, SaveNoteInput, ConfirmNoteInput, NoteFilter, Attachment, ReviewItem, ReviewEvent, AddReviewItemInput, ReviewFeedbackInput, ReviewFeedbackResult, CorrectReviewInput, ReviewFilter, LearningSettings, LearningSettingsInput, LearningDashboard, TodayQueue, ArchiveStatistics } from './learning';
 import type { PageResult, ProblemPageFilter, ProblemListItem, NotePageFilter, NoteListItem, AttemptPageFilter, AttemptListItem, RunPageFilter, RunListItem } from './learning';
 export type Page = 'today' | 'library' | 'workbench' | 'sources' | 'notes' | 'archives' | 'learning-settings' | 'environment' | 'interview';
 export interface RunArchive {
@@ -46,7 +46,8 @@ export interface DesktopBridge {
   selectCompanyFile(): Promise<{ kind: 'csv' | 'json'; text: string; name: string } | null>;
 
   learningSettings(): Promise<LearningSettings>;
-  saveLearningSettings(input: { dailyReviewBudget: number | null; timeZone: string }): Promise<LearningSettings>;
+  saveLearningSettings(input: LearningSettingsInput): Promise<LearningSettings>;
+  learningDashboard(month?: string): Promise<LearningDashboard>;
   todayQueue(): Promise<TodayQueue>;
   reviewItems(filter?: ReviewFilter): Promise<ReviewItem[]>;
   addReviewItem(input: AddReviewItemInput): Promise<ReviewItem>;
@@ -85,11 +86,13 @@ export interface DesktopBridge {
   previewAiPatch(requestId: string): Promise<AiPatchApplication>;
   applyAiPatch(requestId: string): Promise<Draft>;
   openWebLink(url: string): Promise<void>;
+  copyCode(code: string): Promise<void>;
   exportAttachment(hash: string): Promise<boolean>;
   onMaintenance(callback: (requestId: string) => void): () => void;
   maintenanceReady(requestId: string, error?: string): void;
   onMaintenanceEnd(callback: () => void): () => void;
   activityPulse(attemptId: string): Promise<void>;
+  pauseActivity(): Promise<void>;
   environment(): Promise<EnvironmentInfo>;
   libraryIndex(): Promise<LibraryIndex>;
   problemPage(filter?: ProblemPageFilter): Promise<PageResult<ProblemListItem>>;

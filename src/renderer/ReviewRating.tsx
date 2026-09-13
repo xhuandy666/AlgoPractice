@@ -34,8 +34,8 @@ export function ReviewRating({ api, problemId, language, attemptId, existingItem
     } catch (error) { setRetry(true); onError(errorText(error)); } finally { working.current = false; setBusy(false); }
   }
   return <section className="review-rating" aria-label="练习自评与复习计划">
-    {saved ? <><h3>自评已记录</h3><p>{reviewLabel(saved.item)} · 下次到期 {dateTime(saved.item.dueAt)}。可在今日复习中查看或更正这次评分。</p>{onDismiss && <button className="text-button" onClick={onDismiss}>收起自评</button>}</> : <>
-      <div className="section-heading"><div><h3>这次能独立完成多少？</h3><p>按实际回忆情况自评。它决定复习时间，不改变题目难度或测试结果。</p></div>{onDismiss && <button className="text-button" disabled={busy} onClick={onDismiss}>稍后再评</button>}</div>
+    {saved ? <><h3>自评已记录</h3><p>{reviewLabel(saved.item)} · 下次到期 {dateTime(saved.item.dueAt)}。可在学习中心查看评分记录。</p>{onDismiss && <button className="text-button" onClick={onDismiss}>收起自评</button>}</> : <>
+      <div className="section-heading"><div><h3>这次能独立完成多少？</h3><p>根据这次掌握情况，安排下次复习。</p></div>{onDismiss && <button className="text-button" disabled={busy} onClick={onDismiss}>稍后再评</button>}</div>
       <label className="p3-field">本次复习目标<select value={target} disabled={busy || frozen || Boolean(submission.current)} onChange={event => setTarget(event.target.value as 'understanding' | 'rewrite')}><option value="rewrite">{language === 'python' ? 'Python' : 'Java'} 重写</option><option value="understanding">思路复习（不区分语言）</option></select></label>
       <div className="rating-options">{ratings.map(option => <button key={option.value} className="button" aria-pressed={rating === option.value} disabled={busy || frozen || Boolean(submission.current)} onClick={() => setRating(option.value)}><strong>{option.title}</strong><span>{option.hint}</span></button>)}</div>
       <div className="button-row"><button className="button primary" disabled={!api || !rating || busy || frozen} onClick={() => { void submit(); }}>{busy ? '正在记录…' : retry ? '重试记录本次自评' : '确认自评并安排复习'}</button></div>
