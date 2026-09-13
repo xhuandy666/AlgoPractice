@@ -92,6 +92,9 @@ async function close() {
 }
 async function shot(name) {
   if (!screenshots) return;
+  const dismissNotice = page.locator('.preview-banner').getByRole('button', { name: '收起', exact: true });
+  if (await dismissNotice.count()) await dismissNotice.click();
+  assert.equal(await page.locator('.error-banner').count(), 0, 'No application error banner may be hidden in a public screenshot');
   await page.evaluate(async () => {
     document.activeElement?.blur();
     document.scrollingElement?.scrollTo(0, 0);
@@ -136,7 +139,7 @@ try {
   const environment = await api('environment');
   assert.equal(resolve(environment.dataDirectory), dataDirectory);
   assert.ok(environment.python && environment.java, 'Install both runtimes with npm run runtime:install, or set ALGOPRACTICE_RUNTIME_DIR to a prepared runtime directory.');
-  assert.equal(await app.evaluate(({ app }) => app.getName()), 'AlgoPractice');
+  assert.equal(await app.evaluate(({ app }) => app.getName()), '题炼');
   assert.equal(await page.evaluate(() => typeof window.require), 'undefined');
   assert.deepEqual((await api('libraryIndex')).problems.map(problem => problem.id).sort(), ['array-total', 'mirror-text', 'sum-stdin']);
   await page.getByRole('heading', { name: '今天，从需要回忆的题开始', exact: true }).waitFor();
@@ -210,6 +213,7 @@ try {
   assert.equal(await page.getByRole('textbox', { name: 'Markdown 正文', exact: true }).inputValue(), markdown);
   assert.equal(await page.getByRole('button', { name: '确认当前版本', exact: true }).isDisabled(), true);
   await shot('notes.png');
+  assert.equal(await page.locator('.error-banner').count(), 0);
   pass('A full quit and restart preserves confirmed note, successful runs, reviews and the no-Key preset');
   await close();
   assert.deepEqual(report.rendererErrors, []); assert.deepEqual(report.httpAttempts, []);

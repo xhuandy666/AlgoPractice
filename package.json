@@ -1,9 +1,9 @@
 {
   "name": "algopractice",
-  "productName": "AlgoPractice",
+  "productName": "题炼",
   "version": "0.5.1",
   "private": true,
-  "description": "题序：离线算法练习、分级 AI 辅导、间隔复习与模拟面试",
+  "description": "题炼：离线算法练习、分级 AI 辅导、间隔复习与模拟面试",
   "author": "xhuandy666",
   "license": "MIT",
   "type": "module",

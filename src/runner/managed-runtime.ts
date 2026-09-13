@@ -130,7 +130,7 @@ export async function installRuntime(language: Language, options: InstallOptions
     const inspection = await inspectRuntime(language, { runtimePath: executable, signal: options.signal });
     options.signal?.throwIfAborted();
     const pinnedVersion = language === 'python' ? manifest.python.version : manifest.java.version.split('+')[0];
-    if (inspection.status !== 'ready' || inspection.version !== pinnedVersion) throw new Error('Extracted interpreter/compiler does not match the pinned runtime version');
+    if (inspection.status !== 'ready' || inspection.version !== pinnedVersion) throw new Error(`Extracted runtime validation failed (status=${inspection.status}, expected=${pinnedVersion}, actual=${inspection.version ?? 'unavailable'}): ${inspection.diagnostics.map(item => item.message).join('; ') || 'version mismatch'}`);
     await atomicJson(path.join(extracted, MARKER), { schema: 1, installationId: id, language, target, version: pinnedVersion, sha256, source: options.localArchive ? 'offline-archive' : item.url, installedAt: new Date().toISOString() });
     journal.phase = 'prepared'; await atomicJson(p.journal, journal);
     options.signal?.throwIfAborted(); progress('commit');

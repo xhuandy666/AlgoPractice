@@ -28,9 +28,10 @@ import type { LibraryProblem, ImportJob } from '../shared/library';
 import type { ImportInput } from '../source/index';
 import type { Language, RunResult } from '../runner/types';
 
-app.setName('AlgoPractice');
+// Keep the existing learning-data directory when the display name changes.
+app.setPath('userData', process.env.ALGOPRACTICE_DATA_DIR ? resolve(process.env.ALGOPRACTICE_DATA_DIR) : join(app.getPath('appData'), 'AlgoPractice'));
+app.setName('题炼');
 app.setAppUserModelId('local.algopractice.desktop');
-if (process.env.ALGOPRACTICE_DATA_DIR) app.setPath('userData', resolve(process.env.ALGOPRACTICE_DATA_DIR));
 protocol.registerSchemesAsPrivileged([{ scheme: 'algopractice', privileges: { standard: true, secure: true, supportFetchAPI: true, corsEnabled: true } }]);
 let win: BrowserWindow;
 let tray: Tray;
@@ -100,7 +101,7 @@ function deliverReminder() {
   if (!config.reminder || config.reminder.deliveredAt || quitting) return;
   if (new Date(config.reminder.dueAt).getTime() > Date.now()) { armReminder(); return; }
   if (!Notification.isSupported()) return;
-  const notification = new Notification({ title: 'AlgoPractice · 练习提醒', body: '测试提醒已到期。打开工作台查看待办状态。', silent: true });
+  const notification = new Notification({ title: '题炼 · 练习提醒', body: '测试提醒已到期。打开工作台查看待办状态。', silent: true });
   notification.on('click', () => reveal('environment'));
   notification.on('failed', (_event, message) => { console.error('notification-failed', message); });
   notification.show();
@@ -180,7 +181,7 @@ else {
     });
     session.defaultSession.setPermissionRequestHandler((_contents, _permission, callback) => callback(false));
     session.defaultSession.setPermissionCheckHandler(() => false);
-    win = new BrowserWindow({ width: 1440, height: 940, minWidth: 760, minHeight: 620, title: 'AlgoPractice', show: false,
+    win = new BrowserWindow({ width: 1440, height: 940, minWidth: 760, minHeight: 620, title: '题炼', show: false,
       webPreferences: { preload: join(__dirname, 'preload.cjs'), nodeIntegration: false, contextIsolation: true, sandbox: true, webSecurity: true },
     });
     win.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
@@ -272,11 +273,11 @@ else {
       activeRun={id:runId,identity:{problemId:problemKey,language,code,scopeId:item.scopeId,version:item.problem.version},controller,promise};return promise;
     });
     win.once('ready-to-show', () => win.show());
-    tray = new Tray(trayImage()); tray.setToolTip('AlgoPractice');
+    tray = new Tray(trayImage()); tray.setToolTip('题炼');
     tray.setContextMenu(Menu.buildFromTemplate([{ label: '打开工作台', click: () => reveal() }, { label: '今日复习与提醒', click: () => reveal('today') }, { type: 'separator' }, { label: '完全退出', click: () => app.quit() }]));
     tray.on('click', () => reveal());
     Menu.setApplicationMenu(Menu.buildFromTemplate([
-      ...(process.platform === 'darwin' ? [{ label: 'AlgoPractice', submenu: [{ role: 'about' as const }, { type: 'separator' as const }, { role: 'hide' as const }, { label: '完全退出 AlgoPractice', accelerator: 'CmdOrCtrl+Q', click: () => app.quit() }] }] : []),
+      ...(process.platform === 'darwin' ? [{ label: '题炼', submenu: [{ role: 'about' as const }, { type: 'separator' as const }, { role: 'hide' as const }, { label: '完全退出题炼', accelerator: 'CmdOrCtrl+Q', click: () => app.quit() }] }] : []),
       { label: '编辑', submenu: [{ role: 'undo' }, { role: 'redo' }, { type: 'separator' }, { role: 'cut' }, { role: 'copy' }, { role: 'paste' }, { role: 'selectAll' }] },
       { label: '窗口', submenu: [{ role: 'minimize' }, { role: 'close' }, { label: '完全退出', click: () => app.quit() }] },
     ]));

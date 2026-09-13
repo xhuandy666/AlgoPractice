@@ -69,7 +69,7 @@ test('macOS: ordinary child cannot survive parent completion',async()=>{
  // kill(pid,0) can still see a reparented zombie; marker absence proves no code ran after delay.
  reports.push({name:'ordinary child delayed-write evidence',pid,markerExists,passed:!markerExists});
 });
-test('macOS: unicode and space runtime path',async()=>{
+test('macOS: unicode and space runtime path',{skip:process.platform!=='darwin'?'Uses a macOS executable symlink; Windows has native Job argument/path coverage':false},async()=>{
  const root=path.join(os.tmpdir(),'algopractice 中文 runtime');await mkdir(root,{recursive:true});
  const {symlink}=await import('node:fs/promises'); const link=path.join(root,'python3');await rm(link,{force:true});await symlink(defaultRuntimePath('python'),link);
  await check('unicode space runtime path',{language:'python',mode:'acm',code:'print("路径正确")',runtimePath:link,cases:[{expected:'路径正确'}]},'passed');await rm(root,{recursive:true,force:true});
@@ -79,7 +79,15 @@ after(async()=>{
  await mkdir('evidence',{recursive:true});await writeFile('evidence/runner-results.json',JSON.stringify({startedAt,completedAt:new Date().toISOString(),platform:process.platform,architecture:process.arch,osRelease:os.release(),node:process.version,summary:{scenarios:reports.length,passed:reports.filter((r:any)=>r.passed).length,failed:reports.filter((r:any)=>!r.passed).length},reports},null,2)+'\n');
 });
 
-test('total execution deadline spans all cases',async()=>{const r=await check('total execution deadline',{language:'python',mode:'function',timeoutMs:250,adapter:{method:'solve',params:['int'],returns:'int'},cases:[{args:[1],expected:1},{args:[2],expected:2},{args:[3],expected:3}],code:'import time\nclass Solution:\n    def solve(self,x):\n        time.sleep(0.15)\n        return x'},'timeout');assert.equal(r.caseResults[0].status,'passed');assert.ok(r.durationMs<1500);});
+test('total execution deadline spans all cases',async()=>{
+ let executionStarted=0;
+ const r=await runCode({language:'python',mode:'function',timeoutMs:4000,adapter:{method:'solve',params:['int'],returns:'int'},cases:[{args:[1],expected:1},{args:[2],expected:2},{args:[3],expected:3}],code:'import time\nclass Solution:\n    def solve(self,x):\n        if x > 1: time.sleep(3)\n        return x'}, {onEvent:event=>{if(event.phase==='run'&&!executionStarted)executionStarted=performance.now();}});
+ assert.equal(r.status,'timeout',JSON.stringify(r));
+ assert.equal(r.caseResults[0].status,'passed',JSON.stringify(r));
+ // Measure execution only: interpreter validation and compilation do not consume this deadline.
+ // The two slow cases need at least 6 seconds if the budget accidentally resets per case.
+ assert.ok(performance.now()-executionStarted<5500,'The 4-second budget must cover all cases together');
+});
 test('truncated UTF8 stays within byte budget',async()=>{const r=await check('UTF8 output truncation',{language:'python',mode:'acm',outputLimitBytes:4096,code:'while True: print("🌳"*1000)'},'output_limit');assert.ok(Buffer.byteLength(r.stdout)+Buffer.byteLength(r.stderr)<=4096);});
 for(const language of ['python','java'] as const){
  test(`${language}: tree expected trailing null normalization`,async()=>{await check('tree normalization',{language,mode:'function',adapter:{method:'solve',params:['treenode'],returns:'treenode'},cases:[{args:[[1]],expected:[1,null,null]}],code:language==='python'?fn('return x'):javaFn('TreeNode solve(TreeNode x)','return x;')},'passed');});

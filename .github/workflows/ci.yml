@@ -40,6 +40,9 @@ jobs:
           cache: npm
       - name: Install dependencies and Electron
         run: npm ci
+      - name: Diagnose native Windows process startup
+        if: runner.os == 'Windows'
+        run: node --import tsx scripts/windows-diagnostics.mjs
       - name: Install managed Python and Java
         run: npm run runtime:install
       - name: Check types
