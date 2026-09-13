@@ -1,3 +1,5 @@
+import { OfficialService } from './official-service';
+import type { OfficialSubmitInput } from '../shared/official';
 import { setWindowsJobHelperPath } from '../runner/windows-job';
 import { startupFailure } from './startup-errors';
 import { InterviewService } from '../interview/service';
@@ -43,6 +45,7 @@ let tray: Tray;
 let store: PracticeStore;
 let importer: ImportService;
 let sourceSession: SourceSession;
+let official: OfficialService;
 let learning: LearningController;
 let interviews: InterviewService;
 let interviewTimer: ReturnType<typeof setInterval> | null = null;
@@ -136,6 +139,7 @@ async function stopAndQuit() {
   activeRun?.controller.abort(); installing?.controller.abort();
   if (interviewTimer) clearInterval(interviewTimer);
   try { interviews?.tick(); } catch { log('interview.quit-check-failed', { operation: 'deadline' }); }
+  await official?.stopAll();
   await learning?.stop();
   sourceSession?.close();
   try { await Promise.allSettled([activeRun?.promise, installing?.promise, importer?.stop()]); } catch { /* Interrupted snapshots recover on next startup. */ }
@@ -166,6 +170,8 @@ else {
     store = new PracticeStore(join(dataDirectory, 'practice.sqlite')); const interrupted = store.recoverInterruptedRuns(); store.recoverImportJobs();
     for (const demo of demoProblems) if (!store.getProblem(demo.id)) store.upsertProblem(demoContent(demo));
     sourceSession = new SourceSession();
+    official = new OfficialService(store, sourceSession.officialJudge, { onUpdate: record => { if (win && !win.isDestroyed() && maintenance.phase === 'idle') { win.webContents.send('official:event', record); changed(); } } });
+    official.recover();
     importer = new ImportService(store, sourceSession.adapter, join(dataDirectory, 'media'), changed, log);
     const recovery = await recoverRuntimeInstallations(join(dataDirectory, 'runtimes'));
     runtimeNotices = recovery.filter(item => item.status === 'needs_attention' || item.status === 'active').map(item => `${item.language === 'python' ? 'Python' : 'Java'}：${item.status === 'active' ? '检测到另一个安装任务，请等待后重启应用。' : '中断的安装需要检查；原有目录已保留，请保留数据目录后处理。'}${item.message ? ` ${item.message}` : ''}`);
@@ -215,6 +221,7 @@ else {
           try {
             await new Promise<void>((resolve, reject) => { const requestId = randomUUID(); const timer = setTimeout(() => { maintenanceAck = null; reject(new Error('等待保存超时，恢复已取消。')); }, 15000); maintenanceAck = { id: requestId, resolve: () => { clearTimeout(timer); maintenanceAck = null; resolve(); }, reject: error => { clearTimeout(timer); maintenanceAck = null; reject(error); } }; win.webContents.send('app:maintenance', requestId); });
             activeRun?.controller.abort(); installing?.controller.abort(); sourceSession.close();
+            await official.pause();
             await learning.pause();
             const importing = importer.stop();
             await maintenance.lockAndDrain();
@@ -222,14 +229,14 @@ else {
           } catch (error) { maintenance.release(); win.webContents.send('app:maintenance-end'); await learning.resume(); throw error; }
         },
         closeDatabase: () => store.close(),
-        openDatabase: () => { const reopened = new PracticeStore(join(dataDirectory, 'practice.sqlite')); try { reopened.integrityCheck(); store = reopened; importer = new ImportService(store, sourceSession.adapter, join(dataDirectory, 'media'), changed, log); learning.rebind(); } catch (error) { reopened.close(); throw error; } },
+        openDatabase: () => { const reopened = new PracticeStore(join(dataDirectory, 'practice.sqlite')); try { reopened.integrityCheck(); store = reopened; official.rebind(store); official.recover(); importer = new ImportService(store, sourceSession.adapter, join(dataDirectory, 'media'), changed, log); learning.rebind(); } catch (error) { reopened.close(); throw error; } },
         clearCredentials: async () => { await learning.clearCredentials(); await sourceSession.clear(); },
         leaveMaintenance: async restored => { maintenance.release(); await learning.resume(); if (restored) { await win.loadURL('algopractice://app/index.html'); } else win.webContents.send('app:maintenance-end'); },
       },
     });
     interviews = new InterviewService({ store: () => store, changed, beforeStart: async pool => {
       if (installing || activeRun || learning.backups.status().busy) throw new Error('请先等待运行、安装或备份结束。');
-      await learning.ai.stopAll(); await importer.stop(); sourceSession.close();
+      await official.pause(); await learning.ai.stopAll(); await importer.stop(); sourceSession.close();
       const runtime = await inspectRuntime(pool.rules.language, { runtimePath: runtimePath(pool.rules.language) });
       if (runtime.status !== 'ready') throw new Error('面试运行时未就绪，请先在运行环境中准备对应语言。');
     } });
@@ -312,7 +319,7 @@ else {
     handle('archive:list', () => store.listAttempts().map(attempt => {
       const runs = store.listRuns(attempt.id); const last = runs.filter(run => run.status !== 'queued').at(-1);
       const snapshot = attempt.problemSnapshot as { title?: string } | null;
-      return { attempt, title: snapshot?.title || store.getProblem(attempt.problemId)?.content.title || attempt.problemId, runCount: runs.length, lastStatus: last?.status ?? null, activeMs: store.getArchiveStatistics({ attemptId: attempt.id }).activeMs, helpLevel: store.listAIRequests(attempt.id).filter(request => request.status === 'completed').map(request => request.snapshot.level).sort().at(-1) ?? null };
+      return { attempt, title: snapshot?.title || store.getProblem(attempt.problemId)?.content.title || attempt.problemId, runCount: runs.length, lastStatus: last?.status ?? null, activeMs: store.getArchiveStatistics({ attemptId: attempt.id }).activeMs, helpLevel: store.listAIRequests(attempt.id).filter(request => request.status === 'completed').map(request => request.snapshot.level ?? 'adaptive').sort().at(-1) ?? null };
     }));
     handle('archive:get', id => { const attempt = store.getAttempt(idValue(id)); if (!attempt) throw new Error('练习档案不存在。'); return { attempt, runs: store.listRuns(attempt.id).filter(run => run.status !== 'queued').map(toArchive), aiRequests: store.listAIRequests(attempt.id), noteVersions: store.getAttemptNoteVersions(attempt.id), activeMs: store.getArchiveStatistics({ attemptId: attempt.id }).activeMs }; });
     handle('archive:restore', (id, request) => { const restored = store.restoreRunAsDraft(idValue(id), { requestId: idValue(request) }); changed(); return restored; });
@@ -336,9 +343,12 @@ else {
       const preview = store.previewListRefresh({ ...list, items: list.items.filter(item => item.key !== itemKey), membershipComplete: true });
       const result = store.applyListRefresh(preview.id); changed(); return result;
     });
+    handle('official:submit', input => { if (interviews.active()) throw new Error('请结束当前面试后再提交到力扣。'); return official.submit(input as OfficialSubmitInput); });
+    handle('official:list', key => official.list(idValue(key)));
+    handle('official:resume', key => { if (interviews.active()) throw new Error('请结束当前面试后再查询官方结果。'); return official.resume(idValue(key)); });
     handle('source:session', () => sourceSession.state());
     handle('source:login', () => sourceSession.open());
-    handle('source:logout', async () => { await importer.stop(); await sourceSession.clear(); });
+    handle('source:logout', async () => { await official.pause(); await importer.stop(); await sourceSession.clear(); });
     handle('runner:run', (id, lang, text, scope, request, expectedVersion) => {
       const problemId = idValue(id); const language = languageValue(lang); const code = codeValue(text); const scopeId = scopeValue(scope);
       const runId = request === undefined ? randomUUID() : idValue(request);

@@ -6,7 +6,7 @@ import { randomUUID } from 'node:crypto';
 import { performance } from 'node:perf_hooks';
 import { PracticeStore, type StoredRun } from '../storage/practice-store';
 import { AiService, CredentialVault, normalizeProviderConfig, helpCardDecision, sha256 } from '../ai/index';
-import type { AiProviderConfig, AiRequestInput, AiTrustedContext, AiRunEvidence, AiHelpRun, AiDiagnostic } from '../shared/ai';
+import type { AiProviderConfig, AiRequestInput, AiTrustedContext, AiRunEvidence, AiHelpRun, AiDiagnostic, AiOfficialEvidence } from '../shared/ai';
 import type { AddReviewItemInput, ConfirmNoteInput, CorrectReviewInput, LearningSettingsInput, NoteFilter, ReviewFeedbackInput, ReviewFilter, SaveNoteInput } from '../shared/learning';
 import type { BackupSummary, RestoreLifecycle } from '../shared/maintenance';
 import type { Page } from '../shared/bridge';
@@ -55,11 +55,17 @@ export class LearningController {
     const selectedRun = input.runId ? allRuns.find(run => run.id === input.runId) : undefined;
     if (input.runId && !selectedRun) throw new Error('运行快照不属于当前练习。');
     const interview = store.getInterviewForAttempt(attempt.id), item = interview?.items.find(item => item.attemptId === attempt.id);
-    const code = selectedRun?.code ?? (item ? (interview!.endedAt ? item.final!.code : item.accepted.code) : draft?.code) ?? content.starter[attempt.language] ?? '';
-    const run = selectedRun ?? allRuns.filter(row => row.codeHash === sha256(code)).at(-1);
+    const code = (item ? (interview!.endedAt ? item.final!.code : item.accepted.code) : draft?.code) ?? content.starter[attempt.language] ?? '';
+    const codeHash = sha256(code);
+    const run = selectedRun?.codeHash === codeHash ? selectedRun : allRuns.filter(row => row.codeHash === codeHash).at(-1);
+    const historical = selectedRun && selectedRun.codeHash !== codeHash ? this.#runEvidence(selectedRun) : null;
+    const submission = store.listOfficialSubmissions(attempt.id).find(row => row.status === 'completed' && row.codeHash === codeHash && row.problemVersion === attempt.problemVersion && row.result);
+    const official: AiOfficialEvidence | null = submission?.result ? { id: submission.id, attemptId: attempt.id, problemVersion: attempt.problemVersion, codeHash,
+      status: submission.result.status, statusMessage: submission.result.statusMessage,
+      ...Object.fromEntries(['passedCases','totalCases','runtime','memory','compileError','runtimeError','input','expectedOutput','actualOutput'].filter(key => submission.result![key as keyof typeof submission.result] !== undefined).map(key => [key, submission.result![key as keyof typeof submission.result]])) } : null;
     const notes = (input.noteIds ?? []).map(noteId => { const note = store.getNote(noteId); if (!note?.confirmed || (note.kind === 'problem' && note.subjectId !== attempt.problemId)) throw new Error('所选笔记未确认或不属于当前题目。'); return { id: note.id, version: String(note.confirmed.version), title: note.confirmed.title, markdown: note.confirmed.markdown }; });
     const conversation = (input.conversationIds ?? []).flatMap(requestId => { const record = store.getAIRequest(requestId); if (!record || record.attemptId !== attempt.id || record.status !== 'completed' || !record.response) throw new Error('对话不属于当前练习或尚未完成。'); return [{ id: requestId, role: 'assistant' as const, content: JSON.stringify({ question: record.snapshot.question, response: record.response }) }]; });
-    const context: AiTrustedContext = { attemptId: attempt.id, problemId: attempt.problemId, problemVersion: attempt.problemVersion, language: attempt.language, mode: attempt.mode, isActive: attempt.isActive, draftScopeId: attempt.draftScopeId, draftRevision: item ? (interview!.endedAt ? item.final! : item.accepted).revision : draft?.revision ?? 0, code, ...(item ? { reasoning: !selectedRun || selectedRun.code === (interview!.endedAt ? item.final! : item.accepted).code ? (interview!.endedAt ? item.final! : item.accepted).reasoning : '' } : {}), problem: { title: content.title, description: content.description, constraints: content.constraints ?? [] }, run: this.#runEvidence(run), notes, conversation };
+    const context: AiTrustedContext = { attemptId: attempt.id, problemId: attempt.problemId, problemVersion: attempt.problemVersion, language: attempt.language, mode: attempt.mode, isActive: attempt.isActive, draftScopeId: attempt.draftScopeId, draftRevision: item ? (interview!.endedAt ? item.final! : item.accepted).revision : draft?.revision ?? 0, code, ...(item ? { reasoning: (interview!.endedAt ? item.final! : item.accepted).reasoning } : {}), problem: { title: content.title, description: content.description, constraints: content.constraints ?? [] }, run: this.#runEvidence(run), official, previousRun: historical ? { code: selectedRun!.code, run: historical } : null, notes, conversation };
     return this.options.interviewContext?.(context) ?? context;
   }
   async clearCredentials() {

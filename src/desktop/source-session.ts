@@ -1,9 +1,11 @@
 import { BrowserWindow, session, type Session } from 'electron';
 import { LeetCodeCnSourceAdapter } from '../source/index';
+import { LeetCodeOfficialJudge, validCsrfCookie } from '../source/official-judge';
 
 export class SourceSession {
   readonly session: Session;
   readonly adapter: LeetCodeCnSourceAdapter;
+  readonly officialJudge: LeetCodeOfficialJudge;
   #window: BrowserWindow | null = null;
   constructor() {
     this.session = session.fromPartition('persist:leetcode-cn');
@@ -16,10 +18,13 @@ export class SourceSession {
       return this.session.fetch(url.href, { ...init, credentials: 'include', redirect: 'manual' });
     };
     this.adapter = new LeetCodeCnSourceAdapter({ fetchImpl, sessionMode: 'user-session' });
+    this.officialJudge = new LeetCodeOfficialJudge({ fetchImpl, csrfToken: async () => {
+      const cookies = await this.session.cookies.get({ url: 'https://leetcode.cn/' });
+      return cookies.find(validCsrfCookie)?.value;
+    } });
   }
   async state() {
-    const cookies = await this.session.cookies.get({ url: 'https://leetcode.cn' });
-    return { hasSession: cookies.some(cookie => cookie.name === 'LEETCODE_SESSION' && (!cookie.expirationDate || cookie.expirationDate * 1000 > Date.now())) };
+    return { hasSession: await this.officialJudge.authenticated() };
   }
   async open() {
     if (this.#window && !this.#window.isDestroyed()) { this.#window.show(); this.#window.focus(); return; }

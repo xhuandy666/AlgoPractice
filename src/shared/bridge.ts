@@ -1,3 +1,4 @@
+import type { OfficialSubmitInput, OfficialSubmission } from './official';
 import type { CompanyDataset, CompanyPreview, InterviewRules, InterviewPool, InterviewView, InterviewSaveResult } from './interview';
 import type { Language, RunEvent, RunResult, RunStatus } from '../runner/types';
 import type { Attempt, Draft } from '../storage/practice-store';
@@ -30,6 +31,10 @@ export interface PreparedProblemRefresh { id: string; before: LibraryProblem; af
 export interface BackupState { busy: boolean; backups: BackupSummary[]; lastError: string | null; }
 export interface PreparedRestore { id: string; manifest: BackupManifest; bytes: number; }
 export interface DesktopBridge {
+  officialSubmit(input: OfficialSubmitInput): Promise<OfficialSubmission>;
+  officialSubmissions(attemptId: string): Promise<OfficialSubmission[]>;
+  officialResume(id: string): Promise<OfficialSubmission>;
+  onOfficialEvent(callback: (record: OfficialSubmission) => void): () => void;
   interviewState(): Promise<{ active: InterviewView | null; history: { id: string; mode: 'strict' | 'coached'; startedAt: string; endedAt: string | null; count: number; anomalous: boolean }[]; datasets: CompanyDataset[] }>;
   previewInterview(rules: InterviewRules): Promise<{ id: string; pool: InterviewPool }>;
   startInterview(previewId: string, requestId: string): Promise<InterviewView>;

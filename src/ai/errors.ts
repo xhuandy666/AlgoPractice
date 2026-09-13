@@ -15,7 +15,7 @@ const messages: Record<AiErrorCode, string> = {
   UNSUPPORTED_RESPONSE: '接口未返回受支持的聊天响应，请检查兼容地址、模型、JSON 模式或流式用量选项。',
   RESPONSE_TOO_LARGE: 'AI 响应超过本次大小上限，已停止接收。',
   FORMAT_INVALID: 'AI 回答未通过结构校验，格式修复后仍不可用；未展示原始回答。',
-  POLICY_VIOLATION: 'AI 回答未通过当前提示等级或证据检查，未展示原始回答。',
+  POLICY_VIOLATION: 'AI 回答未通过回答结构或证据检查，未展示原始回答。',
   CANCELLED: 'AI 请求已停止，部分回答未展示。',
   INTERRUPTED: '上次 AI 请求在应用退出时中断，未自动重试。',
   STALE_PATCH: '代码或题面已经改变，请重新分析后再应用建议。',
@@ -31,7 +31,13 @@ export class AiServiceError extends Error {
 }
 /** Do not include provider bodies, URLs, error causes or arbitrary exception messages. */
 export function publicAiError(error: unknown, fallback: AiErrorCode = 'PROVIDER'): AiError {
-  return error instanceof AiServiceError ? { ...error.detail } : new AiServiceError(fallback).detail;
+  const detail = error instanceof AiServiceError && Object.hasOwn(messages, error.detail.code) ? error.detail : null;
+  const result = new AiServiceError(detail?.code ?? fallback).detail;
+  // Project only known safe fields, even if a caller adds arbitrary properties
+  // or overwrites Error.message/detail.message while handling a provider failure.
+  if (detail && Number.isInteger(detail.httpStatus) && detail.httpStatus! >= 100 && detail.httpStatus! <= 599) result.httpStatus = detail.httpStatus;
+  if (detail && typeof detail.retryAfterMs === 'number' && Number.isFinite(detail.retryAfterMs) && detail.retryAfterMs >= 0) result.retryAfterMs = detail.retryAfterMs;
+  return result;
 }
 export function aborted(signal: AbortSignal): never {
   throw new AiServiceError(signal.reason instanceof Error && signal.reason.name === 'TimeoutError' ? 'TIMEOUT' : 'CANCELLED');

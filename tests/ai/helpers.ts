@@ -10,9 +10,9 @@ export function context(): AiTrustedContext {
     run: { id: 'run-a', attemptId: 'attempt-a', problemVersion: 'version-a', codeHash: sha256(code), status: 'wrong_answer', trustworthyExpected: true, diagnostics: [], caseResults: [{ index: 0, status: 'wrong_answer', actual: 0, expected: 6 }], stdout: '', stderr: '' },
     conversation: [{ id: 'message-a', role: 'user', content: '我不理解这个循环不变式。' }], notes: [{ id: 'note-a', version: 'note-version-a', title: '自己写的提示', markdown: '关注累积状态。' }] };
 }
-export const input = (level: AiLevel = 'L2'): AiRequestInput => ({ requestId: randomUUID(), attemptId: 'attempt-a', kind: 'hint', level, question: '给我当前等级的一条提示。', unlockCompleteSolution: level === 'L4' });
+export const input = (): AiRequestInput => ({ requestId: randomUUID(), attemptId: 'attempt-a', kind: 'hint', question: '' });
 export function answer(request = input(), source = context()): AiResponse {
-  const response: AiResponse = { schemaVersion: 1, kind: request.kind, level: request.level, title: '检查当前思路', explanation: request.level === 'L0' ? '输入是整数数组，目标是返回元素之和。' : '检查已处理元素与累积值之间的关系。', nextSteps: ['用一个短数组手动观察状态变化。'], evidence: [], inferences: [], patch: null, completeSolution: null, noteDraft: null };
+  const response: AiResponse = { schemaVersion: 2, kind: request.kind, title: '检查当前思路', explanation: '检查已处理元素与累积值之间的关系。', nextSteps: ['用一个短数组手动观察状态变化。'], evidence: [], inferences: [], patch: null, completeSolution: null, noteDraft: null };
   if (request.kind === 'diagnosis') { response.evidence = source.run ? [{ runId: source.run.id, kind: 'test', quote: canonicalJson(source.run.caseResults[0]), caseIndex: 0 }] : []; response.inferences = [{ text: '返回位置可能没有使用累积值。', reason: '这是基于当前代码的判断，需运行本地用例确认。' }]; }
   if (request.kind === 'note-draft') response.noteDraft = { title: '累积状态复盘草稿', markdown: '我应先说明累积值代表哪些已处理的元素。此内容待本人确认。', tags: ['数组'] };
   return response;
@@ -38,6 +38,6 @@ export class MemoryRepository implements AiRepository {
   getAIHelpState(attemptId: string) { return structuredClone(this.help.get(attemptId) ?? { automaticShownAt: null, dismissedAt: null }); }
   markAIHelpShown(attemptId: string) { const state = this.getAIHelpState(attemptId); if (state.automaticShownAt || state.dismissedAt) return false; state.automaticShownAt = new Date().toISOString(); this.help.set(attemptId, state); return true; }
   dismissAIHelp(attemptId: string) { const state = this.getAIHelpState(attemptId); state.dismissedAt = new Date().toISOString(); this.help.set(attemptId, state); }
-  markAIHelpUsed(attemptId: string, requestId: string, level: AiLevel) { this.used.add(`${attemptId}:${requestId}:${level}`); }
+  markAIHelpUsed(attemptId: string, requestId: string, level?: AiLevel) { this.used.add(`${attemptId}:${requestId}:${level ?? 'adaptive'}`); }
 }
 export const mockVault = () => ({ secureStorageAvailable: async () => true, hasKey: async () => true, setKey: async (_provider: AiProviderConfig, _key: string) => ({ hasKey: true as const }), clearKey: async (_provider: AiProviderConfig) => {}, withKey: async <T>(_provider: AiProviderConfig, operation: (key: string) => Promise<T>) => operation('synthetic-unit-key-12345') });

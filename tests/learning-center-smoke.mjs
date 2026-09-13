@@ -270,13 +270,12 @@ try {
   await page.getByRole('navigation', { name: '主导航' }).getByRole('button', { name: '练习工作台', exact: true }).waitFor();
   await page.locator('.coding-pane .monaco-editor').waitFor();
   if (!screenshotOnly) await activityTimingRegression();
-  const syntheticCode = `${fixture.official.code}\n# UI copy validation: 保留空格 🧪  \n`;
+  const syntheticCode = `${fixture.official.code}\n# UI draft validation: 保留空格 🧪  \n`;
   await pasteCode(syntheticCode);
-  await page.getByRole('button', { name: '力扣判题 ↗', exact: true }).click();
-  await until(async () => (await app.evaluate(() => globalThis.learningCenterSmoke.opened)).length === 1, 'official link passed through trusted IPC');
+  assert.equal(await page.getByRole('button', { name: '提交到力扣', exact: true }).count(), 0, 'A local authored problem with only a source URL has no verified official submission metadata');
   const intercepted = await app.evaluate(() => ({ copies: globalThis.learningCenterSmoke.copies, opened: globalThis.learningCenterSmoke.opened }));
-  assert.deepEqual(intercepted.copies, [syntheticCode]); assert.deepEqual(intercepted.opened, [fixture.official.url]);
-  pass('Review todo enters the existing workbench; official-judge button copies exact synthetic code and opens the source URL through real IPC without touching clipboard or submitting', { copiedBytes: Buffer.byteLength(syntheticCode), opened: intercepted.opened });
+  assert.deepEqual(intercepted.copies, []); assert.deepEqual(intercepted.opened, []);
+  pass('Review todo enters the existing workbench and preserves the exact draft; a source URL alone does not authorize official submission', { draftBytes: Buffer.byteLength(syntheticCode) });
   // Publication screenshots show the original example and an actual local result, not test annotations.
   await pasteCode(fixture.official.code);
   assert.ok((await api('environment')).python, 'Prepare a Python runtime or pass ALGOPRACTICE_RUNTIME_DIR');
