@@ -51,7 +51,7 @@ export function createAiProviderPreset(presetId: string, configId: string): AiPr
   if (!preset || typeof configId !== 'string' || !configId.trim() || configId.length > 256 || /[\u0000-\u001f\u007f]/.test(configId)) throw new Error('AI 预设或配置标识无效。');
   return { id: configId, ...preset.config };
 }
-export interface AiProviderState { config: AiProviderConfig | null; hasKey: boolean; secureStorageAvailable: boolean; }
+export interface AiProviderState { config: AiProviderConfig | null; hasKey: boolean; /** null means OS encryption has not been probed; credential operations check it when needed. */ secureStorageAvailable: boolean | null; }
 export interface AiRequestInput {
   requestId: string;
   attemptId: string;

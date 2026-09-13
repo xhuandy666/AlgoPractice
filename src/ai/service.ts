@@ -39,7 +39,10 @@ export class AiService {
     try { this.#options.onEvent?.({ requestId, attemptId: snapshot.attemptId, problemId: snapshot.problemId, codeHash: snapshot.codeHash, phase, ...(receivedBytes !== undefined ? { receivedBytes } : {}) }); } catch { /* Observers cannot mutate request state. */ }
   }
   async providerState(): Promise<AiProviderState> {
-    const config = await this.#provider(); return { config, hasKey: config ? await this.#options.vault.hasKey(config) : false, secureStorageAvailable: await this.#options.vault.secureStorageAvailable() };
+    const config = await this.#provider();
+    // Merely opening settings must not prompt for or wait on the OS keychain.
+    // The vault still requires OS encryption when saving or decrypting a Key.
+    return { config, hasKey: config ? await this.#options.vault.hasKey(config) : false, secureStorageAvailable: null };
   }
   async setKey(key: string): Promise<{ hasKey: true }> { const provider = await this.#provider(); if (!provider) throw new AiServiceError('NOT_CONFIGURED'); await this.stopAll(); return this.#options.vault.setKey(provider, key); }
   async clearKey(): Promise<void> { const provider = await this.#provider(); await this.stopAll(); if (provider) await this.#options.vault.clearKey(provider); }

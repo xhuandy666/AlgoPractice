@@ -27,3 +27,17 @@ test('Credential echoes are rejected without putting the Key into a repair promp
 test('Recovered pending requests become interrupted and are never reused as completed cache', async () => { const fixture = setup(), request = input(); const snapshot = buildRequestSnapshot(request, fixture.source, config()); fixture.repository.beginAIRequest({ id: request.requestId, attemptId: request.attemptId, requestHash: requestHash(snapshot), snapshot }); assert.equal(fixture.service.recoverInterrupted(), 1); const recovered = await fixture.service.request(request); assert.equal(recovered.status, 'interrupted'); assert.equal(fixture.calls, 0); await fixture.service.request({ ...request, requestId: 'retry-new-request' }); assert.equal(fixture.calls, 1); });
 test('Corrupted completed snapshots and answers are not published as cached or idempotent responses', async () => { const fixture = setup(), request = input(); const first = await fixture.service.request(request); const saved = fixture.repository.records.get(first.id)!; saved.snapshot.messages[1].content += 'corruption'; await assert.rejects(fixture.service.request(request), error => error instanceof AiServiceError && error.detail.code === 'STORAGE'); const replacement = await fixture.service.request({ ...request, requestId: 'after-corrupt-cache' }); assert.equal(replacement.status, 'completed'); assert.equal(replacement.cachedFromRequestId, null); assert.equal(fixture.calls, 2); const latest = fixture.repository.records.get(replacement.id)!; latest.response!.explanation = '```python\nreturn answer\n```'; await assert.rejects(fixture.service.request({ ...request, requestId: latest.id }), error => error instanceof AiServiceError && error.detail.code === 'STORAGE'); });
 test('Resolver exception details cannot escape through request or provider configuration APIs', async () => { const fixture = setup(); fixture.options.resolveContext = () => { throw new Error('synthetic-sensitive-context-error'); }; const service = new AiService(fixture.options); await assert.rejects(service.request(input()), error => error instanceof AiServiceError && error.detail.code === 'INVALID_REQUEST' && !error.message.includes('synthetic-sensitive')); fixture.options.resolveProvider = () => { throw new Error('synthetic-sensitive-provider-error'); }; await assert.rejects(service.providerState(), error => error instanceof AiServiceError && error.detail.code === 'INVALID_CONFIG' && !error.message.includes('synthetic-sensitive')); });
+
+
+test('Provider settings load without probing a locked OS keychain, with or without a saved Key', { timeout: 1000 }, async () => {
+  for (const hasKey of [false, true]) {
+    const fixture = setup(); let probes = 0;
+    fixture.options.vault.secureStorageAvailable = () => { probes++; return new Promise<boolean>(() => {}); };
+    fixture.options.vault.hasKey = async () => hasKey;
+    const service = new AiService(fixture.options);
+    assert.deepEqual(await service.providerState(), { config: config(), hasKey, secureStorageAvailable: null });
+    fixture.options.resolveProvider = () => null;
+    assert.deepEqual(await service.providerState(), { config: null, hasKey: false, secureStorageAvailable: null });
+    assert.equal(probes, 0);
+  }
+});
