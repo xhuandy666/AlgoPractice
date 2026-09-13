@@ -126,13 +126,13 @@ test('schema 4 permits only nonempty provenance to become null while all immutab
   } finally { raw.close(); }
 });
 
-test('a real schema 3 WAL database upgrades to 5 only after an unchanged schema 3 backup is published', t => {
+test('a real schema 3 WAL database upgrades to 6 only after an unchanged schema 3 backup is published', t => {
   const { store, directory, dbPath } = fixture(t), value = graph(store), legacyPath = join(directory, 'legacy-v3.sqlite'), legacy = legacyV3(legacyPath, dbPath);
   try {
     const before = rows(legacy), upgraded = new PracticeStore(legacyPath);
     try {
-      assert.ok(upgraded.migrationBackupPath?.includes('.before-v5-')); assert.equal(legacy.prepare('PRAGMA user_version').get()?.user_version, 5);
-      const after = rows(legacy); delete after.attachment_deletion_candidates; delete after.company_datasets; delete after.interview_sessions; delete after.interview_attempts; assert.deepEqual(after, before);
+      assert.ok(upgraded.migrationBackupPath?.includes('.before-v6-')); assert.equal(legacy.prepare('PRAGMA user_version').get()?.user_version, 6);
+      const after = rows(legacy); delete after.attachment_deletion_candidates; delete after.company_datasets; delete after.interview_sessions; delete after.interview_attempts; delete after.official_submissions; assert.deepEqual(after, before);
       const backup = new DatabaseSync(upgraded.migrationBackupPath!, { readOnly: true });
       try { assert.equal(backup.prepare('PRAGMA user_version').get()?.user_version, 3); assert.deepEqual(rows(backup), before); } finally { backup.close(); }
       assert.equal(PracticeStore.inspectBackupSnapshot(upgraded.migrationBackupPath!).schemaVersion, 3); assert.deepEqual(PracticeStore.inspectBackupSnapshot(upgraded.migrationBackupPath!).attachments, [value.file]);
@@ -143,15 +143,15 @@ test('a real schema 3 WAL database upgrades to 5 only after an unchanged schema 
   } finally { legacy.close(); }
 });
 
-test('a failed schema 3 to 4 migration restores every original trigger and row and keeps its pre-migration backup', t => {
+test('a failed schema 3 to 6 migration restores every original trigger and row and keeps its pre-migration backup', t => {
   const { store, directory, dbPath } = fixture(t); graph(store);
   const legacyPath = join(directory, 'failed-v3.sqlite'), legacy = legacyV3(legacyPath, dbPath);
   try {
     legacy.exec('CREATE TABLE attachment_deletion_candidates (injected_conflict TEXT)');
     const beforeRows = rows(legacy), beforeSchema = legacy.prepare('SELECT name, sql FROM sqlite_schema ORDER BY name').all();
-    assert.throws(() => new PracticeStore(legacyPath), /Schema v5 migration failed/); assert.equal(legacy.prepare('PRAGMA user_version').get()?.user_version, 3);
+    assert.throws(() => new PracticeStore(legacyPath), /Schema v6 migration failed/); assert.equal(legacy.prepare('PRAGMA user_version').get()?.user_version, 3);
     assert.deepEqual(rows(legacy), beforeRows); assert.deepEqual(legacy.prepare('SELECT name, sql FROM sqlite_schema ORDER BY name').all(), beforeSchema);
-    const backupName = readdirSync(directory).find(name => name.startsWith('failed-v3.sqlite.before-v5-') && name.endsWith('.sqlite')); assert.ok(backupName);
+    const backupName = readdirSync(directory).find(name => name.startsWith('failed-v3.sqlite.before-v6-') && name.endsWith('.sqlite')); assert.ok(backupName);
     const backup = new DatabaseSync(join(directory, backupName!), { readOnly: true });
     try { assert.equal(backup.prepare('PRAGMA user_version').get()?.user_version, 3); assert.deepEqual(rows(backup), beforeRows); } finally { backup.close(); }
   } finally { legacy.close(); }
@@ -160,7 +160,7 @@ test('a failed schema 3 to 4 migration restores every original trigger and row a
 test('a deleted archive stays deleted after schema 4 backup and restore while retained learning data remains exact', async t => {
   const { store, directory } = fixture(t), value = graph(store); store.deleteEndedAttempt(value.ended.id);
   const note = store.getNote(value.note.id), card = store.getReviewItem(value.reviewItem.id), backupPath = join(directory, 'after-delete.sqlite'); await store.backupTo(backupPath);
-  assert.equal(PracticeStore.inspectBackupSnapshot(backupPath).schemaVersion, 5); assert.deepEqual(PracticeStore.inspectBackupSnapshot(backupPath).attachments, [value.file]);
+  assert.equal(PracticeStore.inspectBackupSnapshot(backupPath).schemaVersion, 6); assert.deepEqual(PracticeStore.inspectBackupSnapshot(backupPath).attachments, [value.file]);
   const restoredPath = join(directory, 'restored.sqlite'); PracticeStore.restoreBackup(backupPath, restoredPath); const restored = new PracticeStore(restoredPath);
   try {
     assert.equal(restored.migrationBackupPath, null); assert.equal(restored.getAttempt(value.ended.id), undefined);

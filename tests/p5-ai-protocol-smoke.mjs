@@ -18,7 +18,7 @@ const services = [], requests = [];
 const event = value => `data: ${JSON.stringify(value)}\r\n\r\n`;
 const chunk = (delta, finish_reason = null) => ({ choices: [{ index: 0, delta, finish_reason }] });
 const usage = { prompt_tokens: 20, completion_tokens: 10, total_tokens: 30 };
-let mode = 'valid', repairCount = 0, activeRequest = input('L0');
+let mode = 'valid', repairCount = 0, activeRequest = input();
 function wire(profile, content) {
   const start = ': keep-alive\n\n' + event(chunk({ role: 'assistant', content: null, reasoning_content: 'PRIVATE-AUTHORED-THINKING' }));
   const body = event(chunk({ role: profile === 'qwen-cn' ? null : 'assistant', content }));
@@ -67,18 +67,17 @@ try {
     check(`${preset.id}: real loopback HTTP connection probe parses SSE and usage`, () => {
       assert.equal(probe.status, 'passed'); assert.equal(probe.streaming, true); assert.equal(probe.structuredOutput, true); assert.equal(probe.usage?.totalTokens, 30);
     });
-    activeRequest = input('L0'); const result = await service.request(activeRequest);
-    check(`${preset.id}: validated L0 response persists without reasoning`, () => {
-      assert.equal(result.status, 'completed'); assert.equal(result.response.level, 'L0');
+    activeRequest = input(); const result = await service.request(activeRequest);
+    check(`${preset.id}: validated adaptive response persists without reasoning`, () => {
+      assert.equal(result.status, 'completed'); assert.equal(result.response.schemaVersion, 2); assert.equal(result.response.level, undefined); assert.equal(result.snapshot.question, '');
       assert.ok(!JSON.stringify([result, events]).includes('PRIVATE-AUTHORED'));
     });
     const beforeCache = requests.length, cached = await service.request({ ...activeRequest, requestId: `cache-${preset.id}` });
     check(`${preset.id}: cache reuses a validated answer without another HTTP request`, () => {
       assert.equal(cached.cachedFromRequestId, activeRequest.requestId); assert.equal(requests.length, beforeCache);
     });
-    await assert.rejects(service.request({ ...input('L4'), unlockCompleteSolution: false }));
-    source.mode = 'strict'; await assert.rejects(service.request(input('L0'))); source.mode = 'practice';
-    check(`${preset.id}: L4 lock and active strict mode prevent HTTP traffic`, () => assert.equal(requests.length, beforeCache));
+    source.mode = 'strict'; await assert.rejects(service.request(input())); source.mode = 'practice';
+    check(`${preset.id}: Active strict mode prevent HTTP traffic`, () => assert.equal(requests.length, beforeCache));
     const sent = requests.find(entry => entry.profile === preset.id).body;
     check(`${preset.id}: sends only the selected vendor's explicit options`, () => {
       if (preset.id === 'qwen-cn') { assert.equal(sent.enable_thinking, false); assert.equal(sent.thinking, undefined); }
@@ -91,7 +90,7 @@ try {
   const provider = { ...createAiProviderPreset('qwen-cn', 'failure-profile'), baseUrl: `${origin}/qwen-cn/v1`, timeoutMs: 3000 };
   const service = new AiService({ repository, vault: mockVault(), resolveContext: () => source, resolveProvider: () => provider, fetchImpl: localFetch, onEvent: event => events.push(event) });
   services.push(service);
-  mode = 'repair'; activeRequest = input('L0'); let before = requests.length;
+  mode = 'repair'; activeRequest = input(); let before = requests.length;
   const repaired = await service.request(activeRequest);
   check('Invalid format gets exactly one repair with the same system/user role order', () => {
     assert.equal(repaired.status, 'completed'); assert.equal(requests.length - before, 2); assert.equal(repaired.usage.calls, 2);
@@ -99,13 +98,13 @@ try {
     assert.ok(requests.at(-1).body.messages[1].content.includes('One format repair only'));
     assert.ok(!JSON.stringify([...repository.records.values(), events]).includes('PRIVATE-AUTHORED-INVALID'));
   });
-  mode = 'rate-limit'; activeRequest = { ...input('L0'), question: '新的限流测试。' }; before = requests.length;
+  mode = 'rate-limit'; activeRequest = { ...input(), question: '新的限流测试。' }; before = requests.length;
   const limited = await service.request(activeRequest);
   check('HTTP 429 is actionable and is not retried automatically', () => {
     assert.equal(limited.status, 'failed'); assert.equal(limited.error.code, 'RATE_LIMITED'); assert.equal(limited.error.retryAfterMs, 2000);
     assert.equal(requests.length - before, 1); assert.ok(!JSON.stringify(limited).includes('PRIVATE-AUTHORED-ERROR'));
   });
-  mode = 'slow'; activeRequest = { ...input('L0'), question: '新的取消测试。' }; before = requests.length;
+  mode = 'slow'; activeRequest = { ...input(), question: '新的取消测试。' }; before = requests.length;
   const pending = service.request(activeRequest);
   for (let tries = 0; tries < 100 && requests.length === before; tries++) await delay(5);
   assert.equal(requests.length, before + 1); service.cancel(activeRequest.requestId);

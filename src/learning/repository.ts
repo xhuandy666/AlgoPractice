@@ -567,10 +567,10 @@ export class LearningRepository {
   dismissAIHelp(attemptId: string): void {
     this.transaction(() => { this.db.prepare('INSERT INTO ai_help_state VALUES (?, NULL, ?) ON CONFLICT(attempt_id) DO UPDATE SET dismissed_at = COALESCE(dismissed_at, excluded.dismissed_at)').run(attemptId, now()); });
   }
-  markAIHelpUsed(attemptId: string, requestId: string, level: AiLevel): void {
+  markAIHelpUsed(attemptId: string, requestId: string, legacyLevel?: AiLevel): void {
     this.transaction(() => { const request = this.getAIRequest(requestId);
-      if (!request || request.status !== 'completed' || request.attemptId !== attemptId || request.snapshot.level !== level || request.snapshot.mode === 'strict') throw new Error('AI help record does not match a completed request and mode');
-      this.db.prepare('INSERT OR IGNORE INTO ai_help_used VALUES (?, ?, ?, ?)').run(requestId, attemptId, level, now());
+      if (!request || request.status !== 'completed' || request.attemptId !== attemptId || (legacyLevel !== undefined && request.snapshot.level !== legacyLevel) || (request.snapshot.mode === 'strict' && request.snapshot.isActive)) throw new Error('AI help record does not match a completed request and mode');
+      this.db.prepare('INSERT OR IGNORE INTO ai_help_used VALUES (?, ?, ?, ?)').run(requestId, attemptId, request.snapshot.level ?? 'adaptive', now());
     });
   }
 }

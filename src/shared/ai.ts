@@ -1,6 +1,7 @@
 /** Renderer-visible AI data. Credentials never appear in these structures. */
-export const AI_POLICY_VERSION = 'algopractice-ai-policy-v1';
-export const AI_PROMPT_VERSION = 'algopractice-tutor-v1';
+export const AI_POLICY_VERSION = 'tilian-ai-policy-v2';
+export const AI_PROMPT_VERSION = 'tilian-adaptive-coach-v2.3';
+/** Historical record compatibility only. New coach requests have no help levels. */
 export const AI_LEVELS = ['L0', 'L1', 'L2', 'L3', 'L4'] as const;
 export type AiLevel = typeof AI_LEVELS[number];
 export type AiKind = 'hint' | 'diagnosis' | 'note-draft';
@@ -56,12 +57,11 @@ export interface AiRequestInput {
   requestId: string;
   attemptId: string;
   kind: AiKind;
-  level: AiLevel;
+  /** Optional user request. Empty means assess the supplied problem and current work. */
   question: string;
   runId?: string;
   noteIds?: string[];
   conversationIds?: string[];
-  unlockCompleteSolution?: boolean;
 }
 export interface AiDiagnostic { message: string; source: 'user' | 'runner'; line?: number; column?: number; }
 export interface AiCaseEvidence { index: number; status: string; actual?: AiJson; expected?: AiJson; }
@@ -69,6 +69,12 @@ export interface AiRunEvidence {
   id: string; attemptId: string; problemVersion: string; codeHash: string;
   status: string; trustworthyExpected: boolean;
   diagnostics: AiDiagnostic[]; caseResults: AiCaseEvidence[]; stdout: string; stderr: string;
+}
+export interface AiOfficialEvidence {
+  id: string; attemptId: string; problemVersion: string; codeHash: string;
+  status: string; statusMessage: string;
+  passedCases?: number; totalCases?: number; runtime?: string; memory?: string;
+  compileError?: string; runtimeError?: string; input?: string; actualOutput?: string; expectedOutput?: string;
 }
 /** Construct only in main/business code, using the persisted Attempt and Draft/Run. Never accept this object from IPC. */
 export interface AiTrustedContext {
@@ -78,6 +84,9 @@ export interface AiTrustedContext {
   reasoning?: string;
   problem: { title: string; description: string; constraints: string[] };
   run: AiRunEvidence | null;
+  official?: AiOfficialEvidence | null;
+  /** Explicitly selected historical evidence; never evidence for the current code. */
+  previousRun?: { code: string; run: AiRunEvidence } | null;
   conversation: Array<{ id: string; role: 'user' | 'assistant'; content: string }>;
   notes: Array<{ id: string; version: string; title: string; markdown: string }>;
 }
@@ -86,8 +95,12 @@ export interface AiRequestSnapshot {
   policyVersion: string; promptVersion: string;
   attemptId: string; problemId: string; problemVersion: string; language: 'python' | 'java';
   mode: AiMode; isActive: boolean; draftScopeId: string; draftRevision: number;
-  codeHash: string; code: string; kind: AiKind; level: AiLevel; question: string; unlockCompleteSolution: boolean;
+  codeHash: string; code: string; kind: AiKind; question: string;
+  /** Read-only fields on snapshots saved by the old coach. Never emitted for new requests. */
+  level?: AiLevel; unlockCompleteSolution?: boolean;
   runId: string | null; run: AiRunEvidence | null;
+  official?: AiOfficialEvidence | null;
+  previousRun?: { code: string; run: AiRunEvidence } | null;
   provider: AiProviderConfig;
   /** Exactly what the provider receives, after deterministic context clipping. */
   messages: AiMessage[];
@@ -96,7 +109,7 @@ export interface AiRequestSnapshot {
 }
 export interface AiEvidenceReference {
   runId: string;
-  kind: 'compiler' | 'exception' | 'test';
+  kind: 'compiler' | 'exception' | 'test' | 'official';
   /** Exact bounded excerpt from supplied diagnostic/output, or the named case result. */
   quote: string;
   caseIndex?: number;
@@ -105,9 +118,10 @@ export interface AiInference { text: string; reason: string; }
 export interface AiPatchEdit { startLine: number; endLine: number; replacement: string; }
 export interface AiPatch { baseCodeHash: string; edits: AiPatchEdit[]; }
 export interface AiResponse {
-  schemaVersion: 1;
+  schemaVersion: 1 | 2;
   kind: AiKind;
-  level: AiLevel;
+  /** Present only on historical schemaVersion 1 answers. */
+  level?: AiLevel;
   title: string;
   explanation: string;
   nextSteps: string[];
@@ -122,7 +136,10 @@ export type AiErrorCode = 'NOT_CONFIGURED' | 'CREDENTIAL_UNAVAILABLE' | 'INVALID
   | 'STRICT_MODE' | 'L4_LOCKED' | 'AUTH' | 'RATE_LIMITED' | 'TIMEOUT' | 'NETWORK' | 'PROVIDER'
   | 'UNSUPPORTED_RESPONSE' | 'RESPONSE_TOO_LARGE' | 'FORMAT_INVALID' | 'POLICY_VIOLATION'
   | 'CANCELLED' | 'INTERRUPTED' | 'STALE_PATCH' | 'REQUEST_CONFLICT' | 'STORAGE';
-export interface AiError { code: AiErrorCode; message: string; retryable: boolean; httpStatus?: number; retryAfterMs?: number; }
+/** Fixed diagnostic categories only; never include provider text or credentials. */
+export const AI_VALIDATION_REASONS = ['shape', 'schemaKind', 'localRun', 'officialRun', 'testCase', 'quote', 'evidenceKind', 'patchHash', 'patchClipped', 'patchGrounding', 'patchRange', 'patchKind', 'codeConflict', 'noteKind', 'guarantee', 'officialSuccess', 'localSuccess'] as const;
+export type AiValidationReason = typeof AI_VALIDATION_REASONS[number];
+export interface AiError { code: AiErrorCode; message: string; retryable: boolean; httpStatus?: number; retryAfterMs?: number; validationReason?: AiValidationReason; }
 export interface AiUsage {
   source: 'provider'; inputTokens: number | null; outputTokens: number | null; totalTokens: number | null;
   /** Includes a possible single format-repair call. Missing provider usage is not estimated. */
@@ -150,7 +167,7 @@ export interface AiRepository {
   getAIHelpState(attemptId: string): AiHelpState;
   markAIHelpShown(attemptId: string): boolean;
   dismissAIHelp(attemptId: string): void;
-  markAIHelpUsed(attemptId: string, requestId: string, level: AiLevel): void;
+  markAIHelpUsed(attemptId: string, requestId: string, legacyLevel?: AiLevel): void;
 }
 export interface AiEvent {
   requestId: string; attemptId: string; problemId: string; codeHash: string;

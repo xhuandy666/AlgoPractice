@@ -29,7 +29,7 @@ for (const { name, provider } of providers) test(`AI ${name} completes through S
   t.after(async () => { store?.close(); restored?.close(); await rm(root, { recursive: true, force: true }); });
   const attempt = store.startAttempt({ problemId: 'p1', problemVersion: 'v1', language: 'python' });
   const source = { ...context(), attemptId: attempt.id, problemId: 'p1', problemVersion: 'v1', run: null, notes: [], conversation: [] };
-  const request = { ...input('L0'), attemptId: attempt.id };
+  const request = { ...input(), attemptId: attempt.id };
   const normalized = normalizeProviderConfig(provider);
   const snapshot = buildRequestSnapshot(request, source, normalized);
   const originalHash = requestHash(snapshot);
@@ -110,7 +110,7 @@ test('AI SQLite snapshot rejects invalid compatibility values and still excludes
   const store = new PracticeStore(join(root, 'practice.sqlite'));
   t.after(async () => { store.close(); await rm(root, { recursive: true, force: true }); });
   const attempt = store.startAttempt({ problemId: 'p1', problemVersion: 'v1', language: 'python' });
-  const request = { ...input('L0'), attemptId: attempt.id };
+  const request = { ...input(), attemptId: attempt.id };
   const source = { ...context(), attemptId: attempt.id, problemId: 'p1', problemVersion: 'v1', run: null };
   const snapshot = buildRequestSnapshot(request, source, normalizeProviderConfig(config()));
   const seed = { id: request.requestId, attemptId: attempt.id, snapshot, requestHash: requestHash(snapshot) };
@@ -123,4 +123,19 @@ test('AI SQLite snapshot rejects invalid compatibility values and still excludes
     assert.throws(() => store.beginAIRequest(invalid), /Credentials or unknown fields/);
   }
   assert.deepEqual(store.listAIRequests(attempt.id), []);
+});
+
+test('Ended strict interview coaching persists adaptive help while an active strict session stays blocked', async t => {
+  const root = await mkdtemp(join(tmpdir(), 'ai-strict-retrospective-'));
+  const store = new PracticeStore(join(root, 'practice.sqlite'));
+  t.after(async () => { store.close(); await rm(root, { recursive: true, force: true }); });
+  const attempt = store.startAttempt({ problemId: 'p1', problemVersion: 'v1', language: 'python', mode: 'strict' });
+  const source = { ...context(), attemptId: attempt.id, problemId: 'p1', problemVersion: 'v1', mode: 'strict' as const, isActive: true, run: null, notes: [], conversation: [] };
+  const request = { ...input(), attemptId: attempt.id }; let calls = 0;
+  const service = new AiService({ repository: store, vault: { secureStorageAvailable: async () => true, hasKey: async () => true, setKey: async () => ({ hasKey: true as const }), clearKey: async () => {}, withKey: async (_provider, fn) => fn('fixture-retrospective-key') }, resolveProvider: config, resolveContext: () => source,
+    fetchImpl: async () => { calls++; return jsonCompletion(JSON.stringify(answer(request, source))); } });
+  await assert.rejects(service.request(request), /严格/); assert.equal(calls, 0);
+  store.finishAttempt(attempt.id, { code: source.code }); source.isActive = false;
+  const record = await service.request(request); assert.equal(record.status, 'completed'); assert.equal(record.snapshot.level, undefined); assert.equal(calls, 1);
+  assert.equal(store.listAIRequests(attempt.id)[0].status, 'completed'); store.integrityCheck();
 });

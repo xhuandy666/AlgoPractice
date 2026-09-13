@@ -4,15 +4,15 @@
 
 **把做过的题，变成下次还会的题。**
 
-离线算法练习 · 学习日历 · 渐进式 AI 辅导 · 间隔复习 · 模拟面试
+离线算法练习 · 学习日历 · AI 教练 · 间隔复习 · 模拟面试
 
-[下载安装](https://github.com/xhuandy666/AlgoPractice/releases/tag/v0.6.1) · [快速开始](#三步开始练习) · [反馈问题](https://github.com/xhuandy666/AlgoPractice/issues)
+[下载安装](https://github.com/xhuandy666/AlgoPractice/releases/tag/v0.7.0) · [快速开始](#三步开始练习) · [反馈问题](https://github.com/xhuandy666/AlgoPractice/issues)
 
 </div>
 
 ![题炼学习中心：每日目标、学习热力图与复习日历](.github/assets/screenshots/learning-center.png)
 
-*界面截图使用示例学习数据。*
+*界面截图使用示例学习数据、判题结果和辅导内容。*
 
 **题炼是一个保存在自己电脑上的算法学习工作台。** 整理力扣题单，用 Python / Java 练习，按需获取 AI 提示，再通过笔记和间隔复习巩固掌握。无需注册题炼账号。
 
@@ -30,11 +30,17 @@
 
 ![题炼工作台：题面、代码、运行结果与 AI 教练](.github/assets/screenshots/workbench.png)
 
-需要官方完整判题时，点击 **“力扣判题”** 复制当前代码并打开官网，粘贴后由你提交。官方结果在力扣查看；题炼的本地运行使用已缓存用例，本地通过不等于官方 AC。
+登录力扣国服后，在工作台点击 **“提交到力扣”**，即可提交当前 Python / Java 代码，在题炼查看官方判题结果、返回的通过用例数及错误信息。每次提交保存代码快照，也能在练习档案中回看。
 
-## AI 帮多少，由你决定
+本地运行和官方判题分别显示。题炼不下载隐藏测试集；官方返回多少信息，就展示多少。遇到登录过期或站点验证时，在独立登录窗口处理后再继续；已有提交编号的中断查询可以恢复，不会自动重复提交代码。
 
-**L0–L4 分级提示**从引导问题逐步深入到完整解法。完整解法需要单独解锁；应用代码建议前可以先看差异。结束练习前，还可以让 AI 整理笔记草稿，由你确认保存。
+## AI 教练，围绕你的作答提供帮助
+
+无需选择帮助等级，也不用先想好问题。直接点击 **“帮我看看”**，AI 会结合题面、当前代码及对应的运行或官方判题结果提供帮助：还没开始时理解题意、梳理解题方向；已有作答时分析你的思路，定位问题并建议修改。
+
+输入框是可选的。想只要提示、解释某段代码，或查看完整解法，写下需求即可。代码建议仍需你预览差异后应用；练习结束前，还可以让 AI 整理笔记草稿，由你确认保存。
+
+代码已经通过时，也可以请 AI 复盘思路和复杂度。回答中的运行与提交引用会核对当前代码记录；格式修复后仍无法核对的回答，会显示具体原因，便于重试或反馈。
 
 支持 **DeepSeek、GLM、Qwen 和自定义 OpenAI 兼容接口**，使用自己的 API Key。AI 是可选项，不配置也能使用本地练习、笔记和复习。
 
@@ -50,15 +56,15 @@
 
 ## 下载
 
-**v0.6.1** · 直接下载安装包，无需安装 Node.js 或下载源码。
+**v0.7.0** · 直接下载安装包，无需安装 Node.js 或下载源码。
 
 | 你的电脑 | 安装包 | 便携归档 |
 | --- | --- | --- |
-| Mac · Apple Silicon（M 系列） | [下载 DMG](https://github.com/xhuandy666/AlgoPractice/releases/download/v0.6.1/AlgoPractice-0.6.1-mac-arm64.dmg) | [下载 ZIP](https://github.com/xhuandy666/AlgoPractice/releases/download/v0.6.1/AlgoPractice-0.6.1-mac-arm64.zip) |
-| Mac · Intel | [下载 DMG](https://github.com/xhuandy666/AlgoPractice/releases/download/v0.6.1/AlgoPractice-0.6.1-mac-x64.dmg) | [下载 ZIP](https://github.com/xhuandy666/AlgoPractice/releases/download/v0.6.1/AlgoPractice-0.6.1-mac-x64.zip) |
-| Windows · x64 | [下载安装程序](https://github.com/xhuandy666/AlgoPractice/releases/download/v0.6.1/AlgoPractice-0.6.1-win-x64.exe) | [下载 ZIP](https://github.com/xhuandy666/AlgoPractice/releases/download/v0.6.1/AlgoPractice-0.6.1-win-x64.zip) |
+| Mac · Apple Silicon（M 系列） | [下载 DMG](https://github.com/xhuandy666/AlgoPractice/releases/download/v0.7.0/AlgoPractice-0.7.0-mac-arm64.dmg) | [下载 ZIP](https://github.com/xhuandy666/AlgoPractice/releases/download/v0.7.0/AlgoPractice-0.7.0-mac-arm64.zip) |
+| Mac · Intel | [下载 DMG](https://github.com/xhuandy666/AlgoPractice/releases/download/v0.7.0/AlgoPractice-0.7.0-mac-x64.dmg) | [下载 ZIP](https://github.com/xhuandy666/AlgoPractice/releases/download/v0.7.0/AlgoPractice-0.7.0-mac-x64.zip) |
+| Windows · x64 | [下载安装程序](https://github.com/xhuandy666/AlgoPractice/releases/download/v0.7.0/AlgoPractice-0.7.0-win-x64.exe) | [下载 ZIP](https://github.com/xhuandy666/AlgoPractice/releases/download/v0.7.0/AlgoPractice-0.7.0-win-x64.zip) |
 
-Mac 需要 **macOS 14 或更新版本**；Windows 需要 **Windows 10 / 11 x64**。Linux 与 Windows ARM 暂不提供安装包。版本说明见 [Release 页面](https://github.com/xhuandy666/AlgoPractice/releases/tag/v0.6.1)。
+Mac 需要 **macOS 14 或更新版本**；Windows 需要 **Windows 10 / 11 x64**。Linux 与 Windows ARM 暂不提供安装包。版本说明见 [Release 页面](https://github.com/xhuandy666/AlgoPractice/releases/tag/v0.7.0)。
 
 应用目前没有正式开发者签名，也未完成 Apple 公证。Mac 首次打开可能显示“Apple could not verify 题炼 is free of malware”。请从本仓库 Release 下载，并按需核对其中的 SHA-256 校验文件。
 
@@ -81,7 +87,7 @@ Windows 首次打开可能出现 SmartScreen 提示。
 <details>
 <summary><strong>运行时下载不方便？使用离线安装包</strong></summary>
 
-在 [Release 附件](https://github.com/xhuandy666/AlgoPractice/releases/tag/v0.6.1) 下载与你的系统和架构匹配的两个文件：
+在 [Release 附件](https://github.com/xhuandy666/AlgoPractice/releases/tag/v0.7.0) 下载与你的系统和架构匹配的两个文件：
 
 | 系统 | Python | Java |
 | --- | --- | --- |
@@ -101,7 +107,7 @@ Windows 首次打开可能出现 SmartScreen 提示。
 
 **我的数据会上传到哪里？**
 
-学习数据默认保存在本机。使用 AI 时，当前请求所需的上下文会发给你配置的服务；来源导入会访问对应站点。API Key 通过系统加密能力保存，不写入学习备份。
+学习数据默认保存在本机。使用 AI 时，当前请求所需的上下文会发给你配置的服务；来源导入会访问对应站点；点击“提交到力扣”会将当时的代码和语言发送到力扣国服，并在你的力扣账号中留下提交记录。API Key 通过系统加密能力保存，不写入学习备份。
 
 **能同步到另一台电脑吗？**
 
@@ -109,7 +115,7 @@ Windows 首次打开可能出现 SmartScreen 提示。
 
 **支持哪些题目和用例？**
 
-当前支持 Python / Java。导入后能否本地运行取决于题目的输入格式和适配状态；自建 JSON 练习可以提供自己的用例及期望结果。力扣官方完整测试在原站提交时执行，题炼不下载隐藏测试集。
+当前支持 Python / Java。导入后能否本地运行取决于题目的输入格式和适配状态；自建 JSON 练习可以提供自己的用例及期望结果。官方提交支持已导入且具备对应语言模板的国服函数题，在普通练习中进行。官方完整测试在力扣执行，题炼通过国服登录会话提交并读取结果，不下载隐藏测试集。该连接使用站点当前的网页接口，可用性取决于力扣接口、账号权限和验证要求。
 
 **输入或切换页面仍有卡顿怎么办？**
 
@@ -144,6 +150,7 @@ npm test
 npm run build
 npm run test:desktop
 npm run test:learning-center
+npm run test:official
 ```
 
 测试使用隔离数据目录。语言执行测试需要先完成 `npm run runtime:install`。

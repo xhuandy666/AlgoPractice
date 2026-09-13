@@ -12,6 +12,8 @@ import { MIGRATE_V3, MIGRATE_V4 } from '../learning/schema.ts';
 import type { ActivitySampleInput, AddReviewItemInput, Attachment, BackupSnapshotInfo, ConfirmNoteInput,
   CorrectReviewInput, LearningSettingsInput, NoteFilter, ReviewFeedbackInput, ReviewFilter, SaveNoteInput } from '../shared/learning.ts';
 import type { AiLevel, AiRequestCompletion, AiRequestSeed } from '../shared/ai.ts';
+import type { BeginOfficialSubmissionInput, OfficialSubmission, OfficialSubmissionUpdate } from '../shared/official.ts';
+import { officialProblemSlug, officialSubmissionUrl } from '../source/official-judge.ts';
 import type {
   CreateImportJobInput, ImportError, ImportItem, ImportItemSeed, ImportItemStatus,
   ImportItemUpdate, ImportJob, ImportJobStatus, ImportJobUpdate, LibraryProblem,
@@ -119,7 +121,49 @@ export interface StoredRun {
 }
 
 type Row = Record<string, string | number | null>;
-const SCHEMA_VERSION = 5;
+const SCHEMA_VERSION = 6;
+const MIGRATE_V6 = `
+CREATE TABLE official_submissions (
+  id TEXT PRIMARY KEY NOT NULL,
+  attempt_id TEXT NOT NULL REFERENCES attempts(id),
+  code TEXT NOT NULL,
+  code_hash TEXT NOT NULL,
+  draft_revision INTEGER NOT NULL CHECK(draft_revision > 0),
+  slug TEXT NOT NULL,
+  source_id TEXT NOT NULL,
+  submission_id TEXT,
+  status TEXT NOT NULL CHECK(status IN ('submitting','judging','paused','completed','unknown','error')),
+  result_json TEXT NOT NULL CHECK(json_valid(result_json)),
+  error_json TEXT NOT NULL CHECK(json_valid(error_json)),
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  finished_at TEXT,
+  CHECK((status IN ('submitting','judging','paused') AND finished_at IS NULL)
+    OR (status IN ('completed','unknown','error') AND finished_at IS NOT NULL)),
+  CHECK((status = 'completed' AND result_json <> 'null') OR (status <> 'completed' AND result_json = 'null')),
+  CHECK(status NOT IN ('judging','paused','completed') OR submission_id IS NOT NULL)
+) STRICT;
+CREATE INDEX official_by_attempt ON official_submissions(attempt_id, created_at);
+CREATE UNIQUE INDEX official_active_attempt ON official_submissions(attempt_id) WHERE status IN ('submitting','judging');
+CREATE TRIGGER immutable_official_snapshot BEFORE UPDATE OF
+  id, attempt_id, code, code_hash, draft_revision, slug, source_id, created_at ON official_submissions
+BEGIN SELECT RAISE(ABORT, 'official submission snapshot is immutable'); END;
+CREATE TRIGGER immutable_official_id BEFORE UPDATE OF submission_id ON official_submissions
+WHEN OLD.submission_id IS NOT NULL AND OLD.submission_id IS NOT NEW.submission_id
+BEGIN SELECT RAISE(ABORT, 'official submission id is immutable'); END;
+CREATE TRIGGER immutable_official_result BEFORE UPDATE ON official_submissions
+WHEN OLD.status IN ('completed','unknown','error')
+BEGIN SELECT RAISE(ABORT, 'official terminal result is immutable'); END;
+ALTER TABLE ai_help_used RENAME TO ai_help_used_v5;
+CREATE TABLE ai_help_used (
+  request_id TEXT PRIMARY KEY NOT NULL REFERENCES ai_requests(id),
+  attempt_id TEXT NOT NULL REFERENCES attempts(id),
+  level TEXT NOT NULL CHECK(level IN ('L0','L1','L2','L3','L4','adaptive')),
+  created_at TEXT NOT NULL
+) STRICT;
+INSERT INTO ai_help_used SELECT * FROM ai_help_used_v5;
+DROP TABLE ai_help_used_v5;
+`;
 const terminalSQL = TERMINAL_STATUSES.map((status) => `'${status}'`).join(',');
 const RUN_SNAPSHOT_TRIGGERS = `
 CREATE TRIGGER immutable_run_snapshot BEFORE UPDATE OF
@@ -428,7 +472,7 @@ export class PracticeStore {
     this.#db = new DatabaseSync(this.dbPath);
     try {
       const version = (this.#db.prepare('PRAGMA user_version').get() as Row).user_version;
-      if (![0, 1, 2, 3, 4, SCHEMA_VERSION].includes(version as number)) throw new Error(`Unsupported schema version: ${version}`);
+      if (![0, 1, 2, 3, 4, 5, SCHEMA_VERSION].includes(version as number)) throw new Error(`Unsupported schema version: ${version}`);
       this.#db.exec('PRAGMA foreign_keys = ON; PRAGMA journal_mode = WAL; PRAGMA synchronous = FULL; PRAGMA busy_timeout = 5000;');
       if (version === 0) this.#transaction(() => {
         this.#db.exec(SCHEMA);
@@ -436,12 +480,13 @@ export class PracticeStore {
         this.#db.exec(MIGRATE_V3);
         this.#db.exec(MIGRATE_V4);
         this.#db.exec(MIGRATE_V5);
+        this.#db.exec(MIGRATE_V6);
         this.#db.prepare('INSERT INTO learning_settings VALUES (1, ?)').run(json({ ...defaultLearningSettings(), updatedAt: new Date().toISOString() }));
         this.#db.exec(`PRAGMA user_version = ${SCHEMA_VERSION}`);
       });
-      if (version === 1 || version === 2 || version === 3 || version === 4) {
+      if (version === 1 || version === 2 || version === 3 || version === 4 || version === 5) {
         checkDatabase(this.#db, [version]);
-        const backupPath = `${this.dbPath}.before-v5-${new Date().toISOString().replace(/[:.]/g, '-')}-${randomUUID()}.sqlite`;
+        const backupPath = `${this.dbPath}.before-v6-${new Date().toISOString().replace(/[:.]/g, '-')}-${randomUUID()}.sqlite`;
         const temporary = `${backupPath}.partial`;
         try {
           // VACUUM INTO is a synchronous, transactionally consistent snapshot including committed WAL pages.
@@ -460,13 +505,14 @@ export class PracticeStore {
               this.#db.prepare('INSERT INTO learning_settings VALUES (1, ?)').run(json({ ...defaultLearningSettings(), updatedAt: new Date().toISOString() }));
             }
             if (version < 4) this.#db.exec(MIGRATE_V4);
-            this.#db.exec(MIGRATE_V5);
+            if (version < 5) this.#db.exec(MIGRATE_V5);
+            this.#db.exec(MIGRATE_V6);
             backfillNoteAttachmentReferences(this.#db);
             this.#db.exec(`PRAGMA user_version = ${SCHEMA_VERSION}`);
             checkDatabase(this.#db);
           });
         } catch (error) {
-          throw new Error(`Schema v5 migration failed; original schema retained. Backup: ${backupPath}`, { cause: error });
+          throw new Error(`Schema v6 migration failed; original schema retained. Backup: ${backupPath}`, { cause: error });
         }
       }
       // Existing schema 2 databases need only a trigger update; table layouts and stored snapshots stay intact.
@@ -664,7 +710,7 @@ export class PracticeStore {
       a.last_run_matches_final, a.restored_from_run_id, a.rowid AS ordering,
       EXISTS(SELECT 1 FROM active_attempts active WHERE active.attempt_id = a.id) AS is_active,
       COALESCE(json_extract(v.snapshot_json, '$.title'), a.problem_id) AS title,
-      (SELECT MAX(json_extract(ai.snapshot_json, '$.level')) FROM ai_requests ai WHERE ai.attempt_id = a.id AND ai.status = 'completed') AS help_level
+      (SELECT MAX(COALESCE(json_extract(ai.snapshot_json, '$.level'), 'adaptive')) FROM ai_requests ai WHERE ai.attempt_id = a.id AND ai.status = 'completed') AS help_level
       FROM attempts a JOIN problem_versions v ON v.problem_id = a.problem_id AND v.version = a.problem_version)`;
     const where = clauses.length ? `WHERE ${clauses.join(' AND ')}` : '';
     const total = this.#db.prepare(`${cte} SELECT COUNT(*) AS total FROM summaries ${where}`).get(...values)!.total as number;
@@ -1055,8 +1101,8 @@ export class PracticeStore {
         if (input.code !== undefined && hashCode(input.code) !== attempt.finalCodeHash) throw new Error('Attempt already ended with a different final snapshot');
         return attempt;
       }
-      if (this.#db.prepare("SELECT id FROM runs WHERE attempt_id = ? AND status = 'queued' LIMIT 1").get(id)) {
-        throw new Error('Cannot finish an attempt while a run is unfinished');
+      if (this.#db.prepare("SELECT id FROM runs WHERE attempt_id = ? AND status = 'queued' LIMIT 1").get(id) || this.hasActiveOfficialSubmission(id)) {
+        throw new Error('Cannot finish an attempt while a run or official submission is unfinished');
       }
       const draft = input.code === undefined ? this.getDraft(attempt.problemId, attempt.language, scopeId)
         : this.saveDraft({ problemId: attempt.problemId, language: attempt.language, scopeId, code: input.code,
@@ -1078,6 +1124,101 @@ export class PracticeStore {
 
   getRun(id: string): StoredRun | undefined { return this.#readRun(id); }
 
+  getOfficialSubmission(id: string): OfficialSubmission | undefined {
+    const row = this.#db.prepare(`SELECT s.*, a.problem_id, a.problem_version, a.language
+      FROM official_submissions s JOIN attempts a ON a.id = s.attempt_id WHERE s.id = ?`).get(id) as Row | undefined;
+    if (!row) return undefined;
+    const submissionId = row.submission_id as string | null;
+    return { id: row.id as string, attemptId: row.attempt_id as string, problemId: row.problem_id as string,
+      problemVersion: row.problem_version as string, language: row.language as Language,
+      code: row.code as string, codeHash: row.code_hash as string, draftRevision: row.draft_revision as number,
+      slug: row.slug as string, sourceId: row.source_id as string, submissionId,
+      status: row.status as OfficialSubmission['status'], result: JSON.parse(row.result_json as string),
+      error: JSON.parse(row.error_json as string), createdAt: row.created_at as string,
+      updatedAt: row.updated_at as string, finishedAt: row.finished_at as string | null,
+      resultUrl: submissionId ? officialSubmissionUrl(submissionId) : null };
+  }
+
+  listOfficialSubmissions(attemptId: string): OfficialSubmission[] {
+    requireText(attemptId, 'attempt id');
+    return (this.#db.prepare('SELECT id FROM official_submissions WHERE attempt_id = ? ORDER BY rowid DESC LIMIT 200')
+      .all(attemptId) as Row[]).map(row => this.getOfficialSubmission(row.id as string)!);
+  }
+
+  hasActiveOfficialSubmission(attemptId?: string): boolean {
+    return Boolean(attemptId
+      ? this.#db.prepare("SELECT 1 FROM official_submissions WHERE attempt_id = ? AND status IN ('submitting','judging') LIMIT 1").get(attemptId)
+      : this.#db.prepare("SELECT 1 FROM official_submissions WHERE status IN ('submitting','judging') LIMIT 1").get());
+  }
+
+  beginOfficialSubmission(input: BeginOfficialSubmissionInput): OfficialSubmission {
+    requireText(input.requestId, 'official request id'); requireText(input.attemptId, 'attempt id');
+    if (input.requestId.length > 200 || typeof input.code !== 'string' || Buffer.byteLength(input.code, 'utf8') > 1_000_000) throw new Error('Invalid official submission input');
+    if (!/^[a-z0-9][a-z0-9-]*$/.test(input.slug) || !/^\d{1,30}$/.test(input.sourceId)) throw new Error('Invalid official problem identity');
+    return this.#transaction(() => {
+      const codeHash = hashCode(input.code), previous = this.getOfficialSubmission(input.requestId);
+      if (previous) {
+        if (previous.attemptId !== input.attemptId || previous.codeHash !== codeHash || previous.slug !== input.slug || previous.sourceId !== input.sourceId) {
+          throw new Error('Official request id conflicts with a different snapshot');
+        }
+        return previous;
+      }
+      const attempt = this.getAttempt(input.attemptId);
+      if (!attempt || !attempt.isActive || attempt.endedAt || attempt.mode === 'strict') throw new Error('请在当前普通练习中提交代码。');
+      const interview = this.getInterviewForAttempt(attempt.id);
+      if (interview && !interview.endedAt) throw new Error('模拟面试中不能提交到力扣。');
+      const problem = this.getProblem(attempt.problemId, attempt.problemVersion)?.content;
+      if (!problem || problem.source !== 'leetcode-cn' || problem.mode !== 'function' || !problem.starter[attempt.language]
+        || problem.sourceId !== input.sourceId || officialProblemSlug(problem.sourceUrl) !== input.slug) throw new Error('题目缺少当前语言的官方模板或提交信息，请重新导入。');
+      const draft = this.getDraft(attempt.problemId, attempt.language, attempt.draftScopeId);
+      if (!draft || draft.codeHash !== codeHash || (input.expectedDraftRevision !== undefined && draft.revision !== input.expectedDraftRevision)) {
+        throw new Error('代码已变化，请等待草稿保存完成后再提交。');
+      }
+      if (this.hasActiveOfficialSubmission(attempt.id)) throw new Error('当前题目正在提交或判题，请等待结果。');
+      const now = new Date().toISOString();
+      this.#db.prepare(`INSERT INTO official_submissions
+        (id,attempt_id,code,code_hash,draft_revision,slug,source_id,submission_id,status,result_json,error_json,created_at,updated_at,finished_at)
+        VALUES (?,?,?,?,?,?,?,NULL,'submitting','null','null',?,?,NULL)`)
+        .run(input.requestId, attempt.id, input.code, codeHash, draft.revision, input.slug, input.sourceId, now, now);
+      return this.getOfficialSubmission(input.requestId)!;
+    });
+  }
+
+  updateOfficialSubmission(id: string, input: OfficialSubmissionUpdate): OfficialSubmission {
+    return this.#transaction(() => {
+      const previous = this.getOfficialSubmission(id);
+      if (!previous) throw new Error('Official submission not found');
+      const allowed: Record<OfficialSubmission['status'], OfficialSubmission['status'][]> = {
+        submitting: ['judging', 'unknown', 'error'], judging: ['completed', 'paused'], paused: ['judging'], completed: [], unknown: [], error: [],
+      };
+      const submissionId = input.submissionId ?? previous.submissionId;
+      if (submissionId) officialSubmissionUrl(submissionId);
+      if (previous.submissionId && submissionId !== previous.submissionId) throw new Error('Official submission id is immutable');
+      const result = input.result ?? null, error = input.error ?? null;
+      if (previous.status === input.status && previous.submissionId === submissionId && json(previous.result) === json(result) && json(previous.error) === json(error)) return previous;
+      if (!allowed[previous.status].includes(input.status)) throw new Error('Invalid official submission status transition');
+      if (['judging', 'paused', 'completed'].includes(input.status) && !submissionId) throw new Error('Official submission id is required');
+      if ((input.status === 'completed') !== Boolean(result)) throw new Error('Official result is only valid after completed judging');
+      const now = new Date(Math.max(Date.now(), Date.parse(previous.updatedAt) + 1)).toISOString();
+      const finishedAt = ['completed', 'unknown', 'error'].includes(input.status) ? now : null;
+      this.#db.prepare(`UPDATE official_submissions SET submission_id=?,status=?,result_json=?,error_json=?,updated_at=?,finished_at=? WHERE id=?`)
+        .run(submissionId, input.status, json(result), json(error), now, finishedAt, id);
+      return this.getOfficialSubmission(id)!;
+    });
+  }
+
+  recoverInterruptedOfficialSubmissions(): number {
+    const rows = this.#db.prepare("SELECT id FROM official_submissions WHERE status IN ('submitting','judging')").all() as Row[];
+    return this.#transaction(() => {
+      for (const row of rows) {
+        const record = this.getOfficialSubmission(row.id as string)!;
+        this.updateOfficialSubmission(record.id, { status: record.submissionId ? 'paused' : 'unknown',
+          error: { code: 'interrupted', message: record.submissionId ? '结果查询已暂停，可以继续查询。' : '上次提交被中断，无法确认是否已送达，请先在力扣提交记录中核对。' } });
+      }
+      return rows.length;
+    });
+  }
+
   /** Explicit user deletion of one finished archive; ratings, notes and all drafts remain independent. */
   deleteEndedAttempt(id: string): boolean {
     requireText(id, 'attempt id');
@@ -1086,7 +1227,8 @@ export class PracticeStore {
       if (!attempt) return false;
       if (attempt.endedAt === null || attempt.isActive) throw new Error('Finish the attempt before deleting its archive');
       if (this.#db.prepare("SELECT 1 FROM runs WHERE attempt_id = ? AND status = 'queued' LIMIT 1").get(id)
-        || this.#db.prepare("SELECT 1 FROM ai_requests WHERE attempt_id = ? AND status IN ('pending', 'streaming', 'repairing') LIMIT 1").get(id)) {
+        || this.#db.prepare("SELECT 1 FROM ai_requests WHERE attempt_id = ? AND status IN ('pending', 'streaming', 'repairing') LIMIT 1").get(id)
+        || this.hasActiveOfficialSubmission(id)) {
         throw new Error('Wait for unfinished runs and AI requests before deleting the archive');
       }
       // Run.attempt_id and Attempt.final_last_run_id form a cycle. Defer checks until this
@@ -1098,6 +1240,7 @@ export class PracticeStore {
       this.#db.prepare(`DELETE FROM draft_restorations
         WHERE attempt_id = ? OR run_id IN (SELECT id FROM runs WHERE attempt_id = ?)`).run(id, id);
       this.#db.prepare('DELETE FROM runs WHERE attempt_id = ?').run(id);
+      this.#db.prepare('DELETE FROM official_submissions WHERE attempt_id = ?').run(id);
       this.#db.prepare('DELETE FROM attempts WHERE id = ?').run(id);
       return true;
     });
@@ -1314,13 +1457,13 @@ export class PracticeStore {
   getAIHelpState(attemptId: string) { return this.#learning.getAIHelpState(attemptId); }
   markAIHelpShown(attemptId: string) { return this.#learning.markAIHelpShown(attemptId); }
   dismissAIHelp(attemptId: string) { return this.#learning.dismissAIHelp(attemptId); }
-  markAIHelpUsed(attemptId: string, requestId: string, level: AiLevel) { return this.#learning.markAIHelpUsed(attemptId, requestId, level); }
+  markAIHelpUsed(attemptId: string, requestId: string, legacyLevel?: AiLevel) { return this.#learning.markAIHelpUsed(attemptId, requestId, legacyLevel); }
 
   /** Inspect the completed SQLite snapshot, never the mutable live database. Includes historical references. */
   static inspectBackupSnapshot(snapshotPath: string): BackupSnapshotInfo {
     const db = new DatabaseSync(resolve(snapshotPath), { readOnly: true });
     try {
-      checkDatabase(db, [1, 2, 3, 4, SCHEMA_VERSION]);
+      checkDatabase(db, [1, 2, 3, 4, 5, SCHEMA_VERSION]);
       const version = (db.prepare('PRAGMA user_version').get() as Row).user_version as number;
       const mediaHashes = new Set<string>();
       for (const row of db.prepare('SELECT snapshot_json FROM problem_versions').all() as Row[]) {
@@ -1371,7 +1514,7 @@ export class PracticeStore {
     try {
       copyFileSync(source, temporary);
       const verification = new DatabaseSync(temporary, { readOnly: true });
-      try { checkDatabase(verification, [1, 2, 3, 4, SCHEMA_VERSION]); } finally { verification.close(); }
+      try { checkDatabase(verification, [1, 2, 3, 4, 5, SCHEMA_VERSION]); } finally { verification.close(); }
       linkSync(temporary, target);
       return target;
     } finally {

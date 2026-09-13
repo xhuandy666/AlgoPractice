@@ -1,4 +1,4 @@
-import type { AiError, AiErrorCode } from '../shared/ai.ts';
+import { AI_VALIDATION_REASONS, type AiError, type AiErrorCode, type AiValidationReason } from '../shared/ai.ts';
 
 const messages: Record<AiErrorCode, string> = {
   NOT_CONFIGURED: '尚未配置 AI 接口、模型或本应用的 API Key；真实模型连接未验证。',
@@ -15,23 +15,53 @@ const messages: Record<AiErrorCode, string> = {
   UNSUPPORTED_RESPONSE: '接口未返回受支持的聊天响应，请检查兼容地址、模型、JSON 模式或流式用量选项。',
   RESPONSE_TOO_LARGE: 'AI 响应超过本次大小上限，已停止接收。',
   FORMAT_INVALID: 'AI 回答未通过结构校验，格式修复后仍不可用；未展示原始回答。',
-  POLICY_VIOLATION: 'AI 回答未通过当前提示等级或证据检查，未展示原始回答。',
+  POLICY_VIOLATION: 'AI 回答未通过回答结构或证据检查，未展示原始回答。',
   CANCELLED: 'AI 请求已停止，部分回答未展示。',
   INTERRUPTED: '上次 AI 请求在应用退出时中断，未自动重试。',
   STALE_PATCH: '代码或题面已经改变，请重新分析后再应用建议。',
   REQUEST_CONFLICT: '该 AI 请求标识已用于另一份上下文，请创建新请求。',
   STORAGE: 'AI 记录未能保存，请保留数据目录并稍后重试。',
 };
+const validationMessages: Record<AiValidationReason, string> = {
+  shape: 'AI 返回的回答格式不完整，暂时无法显示，请重试。',
+  schemaKind: 'AI 未按本次请求返回回答，请重试。',
+  localRun: 'AI 引用了不属于当前代码的本地运行记录，请重新分析。',
+  officialRun: 'AI 引用了无法核对的官方提交记录，请重新分析。',
+  testCase: 'AI 引用的测试用例与当前记录不一致，请重新分析。',
+  quote: 'AI 引用的数据与运行或提交记录不一致，请重新分析。',
+  evidenceKind: 'AI 引用的错误类型与本次运行不一致，请重新分析。',
+  patchHash: 'AI 的修改建议不对应当前代码版本，请重新分析。',
+  patchClipped: '代码上下文不完整，无法安全应用 AI 的修改建议，请缩小问题范围。',
+  patchGrounding: 'AI 的修改建议缺少可核对的依据，请重新分析。',
+  patchRange: 'AI 修改建议的行号无效，请重新分析。',
+  patchKind: 'AI 返回的代码建议与本次请求不符，请重试。',
+  codeConflict: 'AI 同时返回了两种冲突的代码建议，请重试。',
+  noteKind: 'AI 未按要求生成笔记草稿，请重试。',
+  guarantee: 'AI 给出了无法验证的正确性保证，请重新分析。',
+  officialSuccess: 'AI 对官方通过结果的描述与当前记录不符，请重新分析。',
+  localSuccess: 'AI 对本地用例通过情况的描述与当前记录不符，请重新分析。',
+};
+function safeValidationReason(code: AiErrorCode, value: unknown): AiValidationReason | undefined {
+  return ['FORMAT_INVALID', 'POLICY_VIOLATION'].includes(code) && typeof value === 'string' && (AI_VALIDATION_REASONS as readonly string[]).includes(value) ? value as AiValidationReason : undefined;
+}
 export class AiServiceError extends Error {
   readonly detail: AiError;
-  constructor(code: AiErrorCode, extra: Pick<AiError, 'httpStatus' | 'retryAfterMs'> = {}) {
+  constructor(code: AiErrorCode, extra: Pick<AiError, 'httpStatus' | 'retryAfterMs' | 'validationReason'> = {}) {
     super(messages[code]); this.name = 'AiServiceError';
-    this.detail = { code, message: messages[code], retryable: ['RATE_LIMITED', 'TIMEOUT', 'NETWORK', 'PROVIDER', 'STORAGE'].includes(code), ...extra };
+    const validationReason = safeValidationReason(code, extra.validationReason);
+    this.detail = { code, message: validationReason ? validationMessages[validationReason] : messages[code], retryable: ['RATE_LIMITED', 'TIMEOUT', 'NETWORK', 'PROVIDER', 'STORAGE'].includes(code),
+      ...(extra.httpStatus !== undefined ? { httpStatus: extra.httpStatus } : {}), ...(extra.retryAfterMs !== undefined ? { retryAfterMs: extra.retryAfterMs } : {}), ...(validationReason ? { validationReason } : {}) };
   }
 }
 /** Do not include provider bodies, URLs, error causes or arbitrary exception messages. */
 export function publicAiError(error: unknown, fallback: AiErrorCode = 'PROVIDER'): AiError {
-  return error instanceof AiServiceError ? { ...error.detail } : new AiServiceError(fallback).detail;
+  const detail = error instanceof AiServiceError && Object.hasOwn(messages, error.detail.code) ? error.detail : null;
+  const result = new AiServiceError(detail?.code ?? fallback, { validationReason: detail?.validationReason }).detail;
+  // Project only known safe fields, even if a caller adds arbitrary properties
+  // or overwrites Error.message/detail.message while handling a provider failure.
+  if (detail && Number.isInteger(detail.httpStatus) && detail.httpStatus! >= 100 && detail.httpStatus! <= 599) result.httpStatus = detail.httpStatus;
+  if (detail && typeof detail.retryAfterMs === 'number' && Number.isFinite(detail.retryAfterMs) && detail.retryAfterMs >= 0) result.retryAfterMs = detail.retryAfterMs;
+  return result;
 }
 export function aborted(signal: AbortSignal): never {
   throw new AiServiceError(signal.reason instanceof Error && signal.reason.name === 'TimeoutError' ? 'TIMEOUT' : 'CANCELLED');

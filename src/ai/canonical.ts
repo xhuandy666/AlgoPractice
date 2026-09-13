@@ -1,6 +1,6 @@
 import { normalizeAiBaseUrl, aiCompletionEndpoint } from '../shared/ai-endpoint.ts';
 import { createHash } from 'node:crypto';
-import { AI_LEVELS, type AiProviderConfig, type AiRequestInput } from '../shared/ai.ts';
+import { type AiProviderConfig, type AiRequestInput } from '../shared/ai.ts';
 import { AiServiceError } from './errors.ts';
 
 export const sha256 = (value: string | Uint8Array): string => createHash('sha256').update(value).digest('hex');
@@ -43,10 +43,10 @@ export function completionEndpoint(config: AiProviderConfig): string {
   return aiCompletionEndpoint(base);
 }
 export function validateRequestInput(value: unknown): AiRequestInput {
-  if (!object(value) || Object.keys(value).some(key => !['requestId', 'attemptId', 'kind', 'level', 'question', 'runId', 'noteIds', 'conversationIds', 'unlockCompleteSolution'].includes(key))) throw new AiServiceError('INVALID_REQUEST');
+  if (!object(value) || Object.keys(value).some(key => !['requestId', 'attemptId', 'kind', 'question', 'runId', 'noteIds', 'conversationIds'].includes(key))) throw new AiServiceError('INVALID_REQUEST');
   const requestId = identifier(value.requestId), attemptId = identifier(value.attemptId);
-  if (!['hint', 'diagnosis', 'note-draft'].includes(String(value.kind)) || !AI_LEVELS.includes(value.level as never) || typeof value.question !== 'string' || !value.question.trim() || value.question.length > 4000 || (value.unlockCompleteSolution !== undefined && typeof value.unlockCompleteSolution !== 'boolean')) throw new AiServiceError('INVALID_REQUEST');
+  if (!['hint', 'diagnosis', 'note-draft'].includes(String(value.kind)) || typeof value.question !== 'string' || value.question.length > 4000 || /[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/.test(value.question)) throw new AiServiceError('INVALID_REQUEST');
   const ids = (input: unknown, maximum: number) => { if (input === undefined) return undefined; if (!Array.isArray(input) || input.length > maximum) throw new AiServiceError('INVALID_REQUEST'); const result = input.map(identifier); if (new Set(result).size !== result.length) throw new AiServiceError('INVALID_REQUEST'); return result; };
   const noteIds = ids(value.noteIds, 3), conversationIds = ids(value.conversationIds, 6);
-  return { requestId, attemptId, kind: value.kind as AiRequestInput['kind'], level: value.level as AiRequestInput['level'], question: value.question.trim(), ...(value.runId !== undefined ? { runId: identifier(value.runId) } : {}), ...(noteIds ? { noteIds } : {}), ...(conversationIds ? { conversationIds } : {}), unlockCompleteSolution: value.unlockCompleteSolution === true };
+  return { requestId, attemptId, kind: value.kind as AiRequestInput['kind'], question: value.question.trim(), ...(value.runId !== undefined ? { runId: identifier(value.runId) } : {}), ...(noteIds ? { noteIds } : {}), ...(conversationIds ? { conversationIds } : {}) };
 }

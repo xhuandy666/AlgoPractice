@@ -135,7 +135,7 @@ test('legacy runtime trigger update in an existing current-schema database prese
   const rows = raw.prepare('SELECT * FROM runs ORDER BY rowid').all();
   const reopened = new PracticeStore(dbPath);
   try {
-    assert.equal(raw.prepare('PRAGMA user_version').get()?.user_version, 5);
+    assert.equal(raw.prepare('PRAGMA user_version').get()?.user_version, 6);
     assert.equal(reopened.migrationBackupPath, null);
     assert.deepEqual(raw.prepare("SELECT name, sql FROM sqlite_schema WHERE type = 'table' ORDER BY name").all(), tables);
     assert.deepEqual(raw.prepare('SELECT * FROM runs ORDER BY rowid').all(), rows);

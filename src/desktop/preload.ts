@@ -1,3 +1,4 @@
+import type { OfficialSubmission } from '../shared/official';
 import { contextBridge, ipcRenderer } from 'electron';
 import type { DesktopBridge, Page, RuntimeProgress } from '../shared/bridge';
 import type { AiEvent } from '../shared/ai';
@@ -100,6 +101,10 @@ const bridge: DesktopBridge = {
   previewProblemRefresh: id => ipcRenderer.invoke('problem:refresh-preview', id),
   applyProblemRefresh: id => ipcRenderer.invoke('problem:refresh-apply', id),
   detachListItem: (id, key, revision) => ipcRenderer.invoke('list:detach', id, key, revision),
+  officialSubmit: input => ipcRenderer.invoke('official:submit', input),
+  officialSubmissions: id => ipcRenderer.invoke('official:list', id),
+  officialResume: id => ipcRenderer.invoke('official:resume', id),
+  onOfficialEvent: callback => listen<OfficialSubmission>('official:event', callback),
   sourceSession: () => ipcRenderer.invoke('source:session'),
   loginSource: () => ipcRenderer.invoke('source:login'),
   logoutSource: () => ipcRenderer.invoke('source:logout'),
