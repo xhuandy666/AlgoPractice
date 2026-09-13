@@ -20,7 +20,7 @@ export async function inspectRuntime(language: Language, options: { root?: strin
   catch { return fail('missing', 'Interpreter or matching javac is unavailable; select a full runtime installation.'); }
   const processOptions = { cwd: os.tmpdir(), timeoutMs: 10000, outputLimitBytes: 16384, signal: options.signal };
   const probe = await runProcess(executable, language === 'python'
-    ? ['-I', '-c', 'import json,sys; print(json.dumps({"implementation":sys.implementation.name,"version":".".join(map(str,sys.version_info[:3]))}))']
+    ? ['-I', '-X', 'utf8', '-c', 'import json,sys; print(json.dumps({"implementation":sys.implementation.name,"version":".".join(map(str,sys.version_info[:3]))}))']
     : ['--version'], processOptions);
   if (probe.reason === 'cancelled') return fail('cancelled', 'Runtime inspection cancelled');
   if (probe.reason || probe.code !== 0) return fail('error', `Runtime probe failed: ${probe.reason ?? probe.stderr}`);

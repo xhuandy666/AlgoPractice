@@ -94,7 +94,7 @@ export async function runCode(request: RunRequest, options: RunOptions = {}): Pr
     const compileDiagnostic=path.join(directory,'compile-diagnostic.json');
     emit('compile');
     const compilation = await runProcess(request.language==='python'?executable:compiler,
-      request.language==='python'?['-I','compile-check.py',request.mode==='acm'?'main.py':'solution.py',compileDiagnostic]:['-XDrawDiagnostics','-encoding','UTF-8','-proc:none',...(request.mode==='acm'?['Main.java']:['Main.java','Solution.java','Nodes.java'])],
+      request.language==='python'?['-I','-X','utf8','compile-check.py',request.mode==='acm'?'main.py':'solution.py',compileDiagnostic]:['-XDrawDiagnostics','-encoding','UTF-8','-proc:none',...(request.mode==='acm'?['Main.java']:['Main.java','Solution.java','Nodes.java'])],
       {...processOptions,timeoutMs:request.compileTimeoutMs ?? 30000});
     result.stdout=compilation.stdout;result.stderr=compilation.stderr;
     if(compilation.reason || compilation.code!==0) {
@@ -113,7 +113,7 @@ export async function runCode(request: RunRequest, options: RunOptions = {}): Pr
       const output=path.join(directory,`result-${index}.json`);
       const diagnosticFile=path.join(directory,`diagnostic-${index}.json`);
       const args=request.language==='python'
-        ? request.mode==='acm'?['-I','wrapper.py',diagnosticFile]:['-I','wrapper.py',String(index),output,String(remaining),diagnosticFile]
+        ? request.mode==='acm'?['-I','-X','utf8','wrapper.py',diagnosticFile]:['-I','-X','utf8','wrapper.py',String(index),output,String(remaining),diagnosticFile]
         : request.mode==='acm'?['-Xmx256m','-cp',directory,'Main']:['-Xmx256m','-cp',directory,'Main',String(index),output,String(remaining)];
       emit('run',{caseIndex:index});
       const run=await runProcess(executable,args,{...processOptions,signal:executionSignal,stdin:tests[index].stdin ?? request.stdin,outputLimitBytes:remaining});

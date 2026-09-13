@@ -139,7 +139,9 @@ try {
   const environment = await api('environment');
   assert.equal(resolve(environment.dataDirectory), dataDirectory);
   assert.ok(environment.python && environment.java, 'Install both runtimes with npm run runtime:install, or set ALGOPRACTICE_RUNTIME_DIR to a prepared runtime directory.');
-  assert.equal(await app.evaluate(({ app }) => app.getName()), '题炼');
+  assert.equal(await app.evaluate(({ app }) => app.getName()), 'AlgoPractice', 'Keep the existing macOS credential identity');
+  assert.equal(await page.title(), '题炼 · 练习工作台');
+  assert.equal(await page.locator('.sidebar .wordmark span').last().innerText(), '题炼');
   assert.equal(await page.evaluate(() => typeof window.require), 'undefined');
   assert.deepEqual((await api('libraryIndex')).problems.map(problem => problem.id).sort(), ['array-total', 'mirror-text', 'sum-stdin']);
   await page.getByRole('heading', { name: '今天，从需要回忆的题开始', exact: true }).waitFor();

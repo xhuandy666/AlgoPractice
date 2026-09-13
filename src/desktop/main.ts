@@ -30,7 +30,9 @@ import type { Language, RunResult } from '../runner/types';
 
 // Keep the existing learning-data directory when the display name changes.
 app.setPath('userData', process.env.ALGOPRACTICE_DATA_DIR ? resolve(process.env.ALGOPRACTICE_DATA_DIR) : join(app.getPath('appData'), 'AlgoPractice'));
-app.setName('题炼');
+// The internal name also identifies existing macOS Keychain credentials.
+app.setName('AlgoPractice');
+app.setAboutPanelOptions({ applicationName: '题炼', applicationVersion: app.getVersion() });
 app.setAppUserModelId('local.algopractice.desktop');
 protocol.registerSchemesAsPrivileged([{ scheme: 'algopractice', privileges: { standard: true, secure: true, supportFetchAPI: true, corsEnabled: true } }]);
 let win: BrowserWindow;
@@ -277,7 +279,7 @@ else {
     tray.setContextMenu(Menu.buildFromTemplate([{ label: '打开工作台', click: () => reveal() }, { label: '今日复习与提醒', click: () => reveal('today') }, { type: 'separator' }, { label: '完全退出', click: () => app.quit() }]));
     tray.on('click', () => reveal());
     Menu.setApplicationMenu(Menu.buildFromTemplate([
-      ...(process.platform === 'darwin' ? [{ label: '题炼', submenu: [{ role: 'about' as const }, { type: 'separator' as const }, { role: 'hide' as const }, { label: '完全退出题炼', accelerator: 'CmdOrCtrl+Q', click: () => app.quit() }] }] : []),
+      ...(process.platform === 'darwin' ? [{ label: '题炼', submenu: [{ role: 'about' as const, label: '关于题炼' }, { type: 'separator' as const }, { role: 'hide' as const, label: '隐藏题炼' }, { label: '完全退出题炼', accelerator: 'CmdOrCtrl+Q', click: () => app.quit() }] }] : []),
       { label: '编辑', submenu: [{ role: 'undo' }, { role: 'redo' }, { type: 'separator' }, { role: 'cut' }, { role: 'copy' }, { role: 'paste' }, { role: 'selectAll' }] },
       { label: '窗口', submenu: [{ role: 'minimize' }, { role: 'close' }, { label: '完全退出', click: () => app.quit() }] },
     ]));
