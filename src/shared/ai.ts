@@ -1,6 +1,6 @@
 /** Renderer-visible AI data. Credentials never appear in these structures. */
 export const AI_POLICY_VERSION = 'tilian-ai-policy-v2';
-export const AI_PROMPT_VERSION = 'tilian-adaptive-coach-v2.1';
+export const AI_PROMPT_VERSION = 'tilian-adaptive-coach-v2.3';
 /** Historical record compatibility only. New coach requests have no help levels. */
 export const AI_LEVELS = ['L0', 'L1', 'L2', 'L3', 'L4'] as const;
 export type AiLevel = typeof AI_LEVELS[number];

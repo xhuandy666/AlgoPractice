@@ -107,3 +107,67 @@ test('An explicit single-hint request constrains every response field ahead of d
   assert.ok(system.indexOf('First obey any explicit limit') < system.indexOf('Choose the teaching approach'));
   assert.match(system, /without saying which line to move/);
 });
+
+test('Empty adaptive-coach requests with actual failure omit the explicit-one-hint restriction and require an actionable diagnosis', () => {
+  const source = context();
+  for (const question of ['', ' \n ']) {
+    const snapshot = buildRequestSnapshot({ ...input(), question }, source, config());
+    const system = snapshot.messages[0].content, payload = JSON.parse(snapshot.messages[1].content);
+    assert.equal(payload.userRequest, ''); assert.equal(payload.kind, 'hint'); assert.equal(payload.learningContext.run.status, 'wrong_answer');
+    assert.match(system, /kind=hint is a legacy internal route name.*NOT a user instruction to give only a hint/);
+    assert.match(system, /give a brief concrete diagnosis/); assert.match(system, /smallest actionable correction that preserves the current algorithm/);
+    assert.match(system, /Do not stop at a leading question/);
+    assert.ok(!system.includes('ONE small conceptual nudge')); assert.ok(!system.includes('1–2 short sentences'));
+    assert.ok(!system.includes('Keep nextSteps:[], evidence:[], inferences:[]'));
+    assert.equal(snapshot.promptVersion, 'tilian-adaptive-coach-v2.3');
+  }
+});
+test('An empty request does not create a program-selected help tier; template and implemented code retain the same adaptive policy', () => {
+  const source = context();
+  const blank = buildRequestSnapshot(input(), { ...source, code: 'class Solution:\n    def solve(self, nums):\n        pass\n', run: null }, config());
+  const implemented = buildRequestSnapshot(input(), source, config());
+  assert.equal(blank.messages[0].content, implemented.messages[0].content);
+  assert.match(blank.messages[0].content, /For empty\/template-only work, use the starting guidance below instead/);
+  assert.match(blank.messages[0].content, /Never invent a failure when none is supported/);
+  assert.equal(JSON.parse(blank.messages[1].content).learningContext.run, null);
+  assert.equal(JSON.parse(implemented.messages[1].content).learningContext.run.status, 'wrong_answer');
+});
+test('An empty note-draft request preserves the note-writing action instead of activating ordinary failure diagnosis', () => {
+  for (const question of ['', ' \n ', '只总结我容易写错的地方']) {
+    const snapshot = buildRequestSnapshot({ ...input(), kind: 'note-draft', question }, context(), config());
+    const system = snapshot.messages[0].content, payload = JSON.parse(snapshot.messages[1].content);
+    assert.equal(payload.kind, 'note-draft'); assert.equal(payload.userRequest, question.trim());
+    assert.equal(payload.learningContext.run.status, 'wrong_answer');
+    assert.match(system, /The user chose 总结为笔记草稿/); assert.match(system, /Produce a concise reusable noteDraft/);
+    assert.match(system, /following any explicit userRequest about its focus or length/);
+    assert.match(system, /For kind=note-draft, use the note-writing action above/);
+    assert.match(system, /Only kind=note-draft may return a non-null noteDraft, and then it is required/);
+    assert.ok(!system.includes('The user clicked 帮我看看'));
+    assert.ok(!system.includes('give a brief concrete diagnosis'));
+    assert.ok(!system.includes('ONE small conceptual nudge'));
+  }
+});
+test('Default starting guidance is bounded across all fields and cannot split a complete answer or promise execution success', () => {
+  for (const code of ['', 'class Solution:\n    def solve(self, nums):\n        pass\n', 'class Solution:\n    def solve(self, nums):\n        seen = {}\n']) {
+    const snapshot = buildRequestSnapshot(input(), { ...context(), code, run: null }, config());
+    const system = snapshot.messages[0].content, payload = JSON.parse(snapshot.messages[1].content);
+    assert.equal(payload.learningContext.code, code); assert.equal(payload.learningContext.run, null);
+    assert.match(system, /ENTIRE response to at most one core concept, one small illustrative example and one actionable next step/);
+    assert.match(system, /at most one nextSteps item/); assert.match(system, /Keep patch:null and completeSolution:null by default/);
+    assert.match(system, /Do not reconstruct the whole function, the complete algorithm or complete pseudocode/);
+    assert.match(system, /fragments that together reveal the entire solution/);
+    assert.match(system, /Do not claim an approach will pass, meets a time limit or has a guaranteed execution time without supplied evidence/);
+    assert.match(system, /an input-size estimate alone cannot establish that it will pass/);
+  }
+});
+test('Starting-guide limits remain subordinate to explicit full-answer requests and do not restrict substantive-code diagnosis', () => {
+  const request = { ...input(), question: '我现在需要完整解法和完整代码，请直接给出。' };
+  const snapshot = buildRequestSnapshot(request, { ...context(), code: '', run: null }, config());
+  assert.equal(JSON.parse(snapshot.messages[1].content).userRequest, request.question);
+  assert.match(snapshot.messages[0].content, /An explicit request for a full solution or code takes priority over this starting-guide limit/);
+  assert.match(snapshot.messages[0].content, /This default applies only to work that has not meaningfully started, not to diagnosis of a substantive implementation/);
+  const diagnosis = buildRequestSnapshot(input(), context(), config());
+  assert.equal(JSON.parse(diagnosis.messages[1].content).learningContext.run.status, 'wrong_answer');
+  assert.match(diagnosis.messages[0].content, /give a brief concrete diagnosis/);
+  assert.match(diagnosis.messages[0].content, /smallest actionable correction that preserves the current algorithm/);
+});
