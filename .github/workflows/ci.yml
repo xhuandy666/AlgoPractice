@@ -66,6 +66,7 @@ jobs:
           path: |
             release/AlgoPractice-*-win-x64.exe
             release/AlgoPractice-*-win-x64.zip
+            dist/build-info.json
           if-no-files-found: error
           compression-level: 0
           retention-days: 7

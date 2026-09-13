@@ -63,8 +63,9 @@
         "zip"
       ],
       "category": "public.app-category.education",
-      "identity": null,
-      "minimumSystemVersion": "14.0"
+      "identity": "-",
+      "minimumSystemVersion": "14.0",
+      "hardenedRuntime": true
     },
     "win": {
       "target": [
