@@ -76,3 +76,128 @@ test('Empty-code invented Run evidence gets a fixed evidence-empty repair hint a
   const result = await fixture.service.request(request); assert.equal(result.status, 'completed'); assert.equal(result.usage?.calls, 2); assert.equal(calls, 2); assert.deepEqual(result.response?.evidence, []);
   assert.ok(!canonicalJson([result, fixture.events]).includes('PRIVATE-PROVIDER')); assert.ok(!canonicalJson([result, fixture.events]).includes('repairHint'));
 });
+
+function officialContext() {
+  const source = context(); source.run = null;
+  source.official = { id: 'official-synthetic', attemptId: source.attemptId, problemVersion: source.problemVersion, codeHash: sha256(source.code),
+    status: 'accepted', statusMessage: 'Accepted', passedCases: 5, totalCases: 5, runtime: '1 ms', memory: '18 MB' };
+  return source;
+}
+
+test('Official JSON projections can reorder fields, normalize nullable caseIndex, and survive persisted cache reads', async () => {
+  const projections = [
+    '{ "totalCases": 5, "status": "accepted", "passedCases": 5 }',
+    '"status": "accepted", "totalCases": 5, "passedCases": 5',
+  ];
+  for (const quote of projections) {
+    const source = officialContext(), request = input(); let calls = 0;
+    const wireAnswer = { ...answer(request, source), explanation: '官方已通过全部用例。当前没有本地运行记录。',
+      evidence: [{ runId: source.official!.id, kind: 'official', quote, caseIndex: null }] };
+    const fixture = setup(async () => { calls++; return sseCompletion(JSON.stringify(wireAnswer)); });
+    Object.assign(fixture.source, source);
+    const first = await fixture.service.request(request);
+    assert.equal(first.status, 'completed', JSON.stringify(first.error)); assert.equal(calls, 1);
+    const expectedEvidence = [{ runId: source.official!.id, kind: 'official', quote: canonicalJson({ passedCases: 5, status: 'accepted', totalCases: 5 }) }];
+    assert.deepEqual(first.response?.evidence, expectedEvidence);
+    assert.deepEqual(fixture.repository.getAIRequest(first.id)?.response?.evidence, expectedEvidence);
+    assert.ok(!fixture.events.some(event => event.phase === 'repairing'));
+
+    // A new service has no in-memory request state: both idempotent reads and
+    // a new request must validate the persisted normalized answer again.
+    const restarted = new AiService(fixture.options);
+    assert.deepEqual(await restarted.request(request), first);
+    const cached = await restarted.request({ ...request, requestId: `${request.requestId}-cached` });
+    assert.equal(cached.status, 'completed'); assert.equal(cached.cachedFromRequestId, first.id);
+    assert.equal(cached.usage, null); assert.deepEqual(cached.response, first.response); assert.equal(calls, 1);
+    assert.deepEqual(fixture.repository.getAIRequest(cached.id)?.response?.evidence, expectedEvidence);
+  }
+});
+
+test('Compiler and exception evidence with caseIndex null completes and persists without a case index', async () => {
+  for (const [kind, status, quote] of [
+    ['compiler', 'compile_error', 'SyntaxError: expected colon'],
+    ['exception', 'runtime_error', 'IndexError: list index out of range'],
+  ] as const) {
+    const source = context(), request = { ...input(), kind: 'diagnosis' as const }; let calls = 0;
+    source.run = { ...source.run!, status, diagnostics: [{ source: 'user', message: quote }], caseResults: [] };
+    const wireAnswer = { ...answer(request, { ...source, run: null }), evidence: [{ runId: source.run.id, kind, quote, caseIndex: null }] };
+    const fixture = setup(async () => { calls++; return sseCompletion(JSON.stringify(wireAnswer)); });
+    Object.assign(fixture.source, source);
+    const result = await fixture.service.request(request);
+    assert.equal(result.status, 'completed', JSON.stringify(result.error)); assert.equal(calls, 1);
+    assert.deepEqual(result.response?.evidence, [{ runId: source.run.id, kind, quote }]);
+    const stored = fixture.repository.getAIRequest(result.id)!;
+    assert.ok(!Object.hasOwn(stored.response!.evidence[0], 'caseIndex'));
+    assert.deepEqual((await new AiService(fixture.options).request(request)).response, stored.response);
+    assert.equal(calls, 1);
+  }
+});
+
+test('Forged official citations fail after one repair with a safe validation reason and no raw model answer in persisted state', async () => {
+  const cases = [
+    { quote: '{"totalCases":5,"passedCases":4}', runId: 'official-synthetic', reason: 'quote' },
+    { quote: '{"totalCases":"5","passedCases":5}', runId: 'official-synthetic', reason: 'quote' },
+    { quote: '{"status":"accepted","inventedField":"SYNTHETIC-RAW-MODEL-RESPONSE"}', runId: 'official-synthetic', reason: 'quote' },
+    { quote: '{"totalCases":5,"passedCases":5}', runId: 'SYNTHETIC-RAW-MODEL-RESPONSE', reason: 'officialRun' },
+  ];
+  for (const candidate of cases) {
+    const source = officialContext(), request = input(), marker = 'SYNTHETIC-RAW-MODEL-RESPONSE'; let calls = 0;
+    const wireAnswer = { ...answer(request, source), title: marker,
+      evidence: [{ runId: candidate.runId, kind: 'official', quote: candidate.quote, caseIndex: null }] };
+    const fixture = setup(async (_url, init) => {
+      calls++;
+      const messages = JSON.parse(String(init?.body)).messages;
+      assert.ok(!JSON.stringify(messages).includes(marker));
+      if (calls === 2) {
+        const parts = messages.at(-1).content.split('\n\n'); assert.equal(parts.length, 2);
+        const repair = JSON.parse(parts[1]);
+        assert.equal(repair.reason, 'POLICY_VIOLATION'); assert.equal(typeof repair.repairHint, 'string');
+        assert.deepEqual(Object.keys(repair).sort(), ['reason', 'repairHint', 'task']);
+      }
+      return sseCompletion(JSON.stringify(wireAnswer));
+    });
+    Object.assign(fixture.source, source);
+    const result = await fixture.service.request(request);
+    assert.equal(result.status, 'failed'); assert.equal(result.response, null); assert.equal(result.cachedFromRequestId, null);
+    assert.equal(result.error?.code, 'POLICY_VIOLATION'); assert.equal(result.error?.validationReason, candidate.reason);
+    assert.equal(result.error?.retryable, false);
+    assert.deepEqual(Object.keys(result.error!).sort(), ['code', 'message', 'retryable', 'validationReason']);
+    assert.deepEqual(result.error, new AiServiceError('POLICY_VIOLATION', { validationReason: candidate.reason as 'quote' | 'officialRun' }).detail);
+    assert.equal(calls, 2); assert.equal(result.usage?.calls, 2);
+    assert.equal(fixture.events.filter(event => event.phase === 'repairing').length, 1);
+    assert.equal(fixture.events.filter(event => event.phase === 'failed').length, 1);
+    assert.ok(!fixture.events.some(event => event.phase === 'completed'));
+    const stored = fixture.repository.listAIRequests(source.attemptId);
+    assert.equal(stored.length, 1); assert.deepEqual(stored[0].error, result.error); assert.equal(stored[0].response, null);
+    const published = canonicalJson([result, stored, fixture.events]);
+    assert.ok(!published.includes(marker)); assert.ok(!published.includes('repairHint'));
+    assert.deepEqual(await new AiService(fixture.options).request(request), result); assert.equal(calls, 2);
+  }
+});
+
+test('A nullable case index does not authorize a local test citation without a real case index', async () => {
+  const source = context(), request = { ...input(), kind: 'diagnosis' as const }; let calls = 0;
+  const wireAnswer = { ...answer(request, source), evidence: [{ runId: source.run!.id, kind: 'test', quote: canonicalJson(source.run!.caseResults[0]), caseIndex: null }] };
+  const fixture = setup(async () => { calls++; return sseCompletion(JSON.stringify(wireAnswer)); });
+  const result = await fixture.service.request(request);
+  assert.equal(result.status, 'failed'); assert.equal(result.error?.validationReason, 'testCase');
+  assert.equal(result.response, null); assert.equal(calls, 2);
+});
+
+test('Official evidence still rejects a numeric case index and results from another code revision', async () => {
+  for (const mismatch of ['case-index', 'code-revision'] as const) {
+    const source = officialContext(), request = input(); let calls = 0;
+    if (mismatch === 'code-revision') source.official!.codeHash = sha256('synthetic other revision');
+    const wireAnswer = { ...answer(request, source), evidence: [{ runId: source.official!.id, kind: 'official', quote: 'Accepted', caseIndex: mismatch === 'case-index' ? 0 : null }] };
+    const fixture = setup(async () => { calls++; return sseCompletion(JSON.stringify(wireAnswer)); });
+    Object.assign(fixture.source, source);
+    if (mismatch === 'code-revision') {
+      await assert.rejects(fixture.service.request(request), error => error instanceof AiServiceError && error.detail.code === 'INVALID_REQUEST');
+      assert.equal(calls, 0); assert.equal(fixture.repository.records.size, 0);
+      continue;
+    }
+    const result = await fixture.service.request(request);
+    assert.equal(result.status, 'failed'); assert.equal(result.error?.validationReason, 'officialRun');
+    assert.equal(result.response, null); assert.equal(calls, 2);
+  }
+});

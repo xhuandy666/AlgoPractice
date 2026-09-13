@@ -136,7 +136,10 @@ export type AiErrorCode = 'NOT_CONFIGURED' | 'CREDENTIAL_UNAVAILABLE' | 'INVALID
   | 'STRICT_MODE' | 'L4_LOCKED' | 'AUTH' | 'RATE_LIMITED' | 'TIMEOUT' | 'NETWORK' | 'PROVIDER'
   | 'UNSUPPORTED_RESPONSE' | 'RESPONSE_TOO_LARGE' | 'FORMAT_INVALID' | 'POLICY_VIOLATION'
   | 'CANCELLED' | 'INTERRUPTED' | 'STALE_PATCH' | 'REQUEST_CONFLICT' | 'STORAGE';
-export interface AiError { code: AiErrorCode; message: string; retryable: boolean; httpStatus?: number; retryAfterMs?: number; }
+/** Fixed diagnostic categories only; never include provider text or credentials. */
+export const AI_VALIDATION_REASONS = ['shape', 'schemaKind', 'localRun', 'officialRun', 'testCase', 'quote', 'evidenceKind', 'patchHash', 'patchClipped', 'patchGrounding', 'patchRange', 'patchKind', 'codeConflict', 'noteKind', 'guarantee', 'officialSuccess', 'localSuccess'] as const;
+export type AiValidationReason = typeof AI_VALIDATION_REASONS[number];
+export interface AiError { code: AiErrorCode; message: string; retryable: boolean; httpStatus?: number; retryAfterMs?: number; validationReason?: AiValidationReason; }
 export interface AiUsage {
   source: 'provider'; inputTokens: number | null; outputTokens: number | null; totalTokens: number | null;
   /** Includes a possible single format-repair call. Missing provider usage is not estimated. */
