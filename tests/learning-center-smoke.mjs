@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { _electron as electron } from 'playwright';
 import { createRequire } from 'node:module';
+import { pathToFileURL } from 'node:url';
 import { createHash, randomUUID } from 'node:crypto';
 import { cp, mkdir, mkdtemp, readFile, writeFile } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
@@ -19,7 +20,7 @@ const directory = await mkdtemp(join(os.tmpdir(), '题炼-学习中心验收-'))
 const captureDirectory = resolve(process.env.ALGOPRACTICE_SCREENSHOT_DIR || join(directory, 'screenshots'));
 const fixturePath = join(directory, 'fixture.json'), screenshotOnly = process.env.ALGOPRACTICE_SCREENSHOT_ONLY === '1';
 await mkdir(captureDirectory, { recursive: true });
-execFileSync(process.execPath, ['--import', require.resolve('tsx'), join(root, 'tests/learning-center-fixture.ts'), dataDirectory, fixturePath], { cwd: root, stdio: 'pipe' });
+execFileSync(process.execPath, ['--import', pathToFileURL(require.resolve('tsx')).href, join(root, 'tests/learning-center-fixture.ts'), dataDirectory, fixturePath], { cwd: root, stdio: 'pipe' });
 const fixture = JSON.parse(await readFile(fixturePath, 'utf8'));
 if (!packaged) {
   await mkdir(launchDirectory);
