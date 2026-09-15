@@ -5,6 +5,9 @@ import type { AiEvent } from '../shared/ai';
 import type { RunEvent } from '../runner/types';
 function listen<T>(channel: string, callback: (value: T) => void) { const handler = (_: unknown, value: T) => callback(value); ipcRenderer.on(channel, handler); return () => ipcRenderer.removeListener(channel, handler); }
 const bridge: DesktopBridge = {
+  submissionHistory: filter => ipcRenderer.invoke('submission:history', filter),
+  submissionHistoryDetail: (source, id) => ipcRenderer.invoke('submission:detail', source, id),
+  saveSubmissionRemark: input => ipcRenderer.invoke('submission:save-remark', input),
   interviewState: (...args) => ipcRenderer.invoke('interview:state', ...args),
   previewInterview: (...args) => ipcRenderer.invoke('interview:preview', ...args),
   startInterview: (...args) => ipcRenderer.invoke('interview:start', ...args),

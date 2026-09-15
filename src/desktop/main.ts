@@ -20,6 +20,7 @@ import { demoProblems } from '../shared/demo-problems';
 import { demoContent, capability } from '../shared/presentation';
 import { LearningController } from './learning-controller';
 import { MaintenanceGate } from './maintenance-gate';
+import type { SaveSubmissionRemarkInput, SubmissionHistoryFilter, SubmissionHistorySource } from '../shared/submission-history';
 import { recoverInterruptedRestore } from './backup-service';
 import type { ProblemPageFilter, NotePageFilter, AttemptPageFilter, RunPageFilter } from '../shared/learning';
 import type { Page } from '../shared/bridge';
@@ -132,8 +133,8 @@ function trusted(event: Electron.IpcMainInvokeEvent | Electron.IpcMainEvent) {
   if (event.sender !== win.webContents || event.senderFrame !== win.webContents.mainFrame || event.senderFrame?.url !== 'algopractice://app/index.html') throw new Error('IPC 来源无效。');
 }
 function handle(channel: string, handler: (...args: unknown[]) => unknown) { ipcMain.handle(channel, async (event, ...args) => {
-  trusted(event); if (quitting && !['draft:save', 'note:save', 'interview:save'].includes(channel)) throw new Error('应用正在退出。');
-  try { interviews?.assertChannel(channel, args); const epoch = interviews?.epoch ?? 0; const result = await maintenance.run(channel, () => handler(...args)); interviews?.assertResponse(channel, args, epoch); if (/^(note:|archive:|app:open|source:open)/.test(channel)) interviews?.recordHelp(channel, typeof args[0] === 'string' ? args[0].slice(0,512) : null); return result; } catch (error) { log('ipc.failed', { operation: channel, category: error instanceof SourceError ? error.code : error instanceof Error ? error.name : 'Error' }); throw error; }
+  trusted(event); if (quitting && !['draft:save', 'note:save', 'interview:save', 'submission:save-remark'].includes(channel)) throw new Error('应用正在退出。');
+  try { interviews?.assertChannel(channel, args); const epoch = interviews?.epoch ?? 0; const result = await maintenance.run(channel, () => handler(...args)); interviews?.assertResponse(channel, args, epoch); if (/^(note:|archive:|submission:|app:open|source:open)/.test(channel)) interviews?.recordHelp(channel, typeof args[0] === 'string' ? args[0].slice(0,512) : null); return result; } catch (error) { log('ipc.failed', { operation: channel, category: error instanceof SourceError ? error.code : error instanceof Error ? error.name : 'Error' }); throw error; }
 }); }
 async function stopAndQuit() {
   activeRun?.controller.abort(); installing?.controller.abort();
@@ -307,6 +308,9 @@ else {
     handle('archive:page', filter => store.listAttemptPage(filter as AttemptPageFilter));
     handle('archive:run-page', filter => store.listRunPage(filter as RunPageFilter));
     handle('archive:run-detail', id => { const row = store.getRun(idValue(id)); if (!row || row.status === 'queued') throw new Error('运行快照不存在或尚未完成。'); return toArchive(row); });
+    handle('submission:history', filter => store.listSubmissionHistory(filter as SubmissionHistoryFilter));
+    handle('submission:detail', (source, id) => store.getSubmissionHistoryDetail(source as SubmissionHistorySource, idValue(id)));
+    handle('submission:save-remark', input => { const result = store.saveSubmissionRemark(input as SaveSubmissionRemarkInput); changed(); return result; });
     handle('archive:overview', id => { const attempt = store.getAttempt(idValue(id)); if (!attempt) throw new Error('练习档案不存在。'); return { attempt, runCount: store.listRunPage({ attemptId: attempt.id, limit: 1 }).total, activeMs: store.getArchiveStatistics({ attemptId: attempt.id }).activeMs, interviewId: store.getInterviewForAttempt(attempt.id)?.id ?? null }; });
     handle('archive:learning', id => { const key = idValue(id); if (!store.getAttempt(key)) throw new Error('练习档案不存在。'); return { aiRequests: store.listAIRequests(key), noteVersions: store.getAttemptNoteVersions(key) }; });
     handle('library:list', () => ({ problems: store.listProblems(), lists: store.listLists(), jobs: store.listImportJobs().map(publicJob) }));

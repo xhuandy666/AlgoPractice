@@ -162,9 +162,9 @@ test('P5-04: conflicting migration preserves all original schema/data and its ba
   const raw = new DatabaseSync(dbPath);
   try { raw.exec('CREATE TABLE interview_sessions(conflicting_fixture TEXT) STRICT;'); } finally { raw.close(); }
   const before = inspectLegacy(dbPath);
-  assert.throws(() => new PracticeStore(dbPath), /Schema v6 migration failed/);
+  assert.throws(() => new PracticeStore(dbPath), /Schema v7 migration failed/);
   assert.deepEqual(inspectLegacy(dbPath), before);
-  const backups = readdirSync(path).filter(name => name.includes('.before-v6-') && name.endsWith('.sqlite'));
+  const backups = readdirSync(path).filter(name => name.includes('.before-v7-') && name.endsWith('.sqlite'));
   assert.equal(backups.length, 1);
   assert.equal(readdirSync(path).some(name => name.endsWith('.partial')), false);
   const backupPath = join(path, backups[0]);

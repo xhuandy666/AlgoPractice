@@ -9,6 +9,10 @@ import type { ProblemListItem, ReviewItem } from '../shared/learning';
 import type { AiHelpDecision } from '../shared/ai';
 import { TodayPage } from './TodayPage';
 import { NotesPage } from './NotesPage';
+import { WorkbenchNoteDialog } from './WorkbenchNoteDialog';
+import { SubmissionHistory } from './SubmissionHistory';
+import { HistoricalCodePanel } from './HistoricalCodePanel';
+import type { SubmissionHistoryDetail, SubmissionHistoryItem } from '../shared/submission-history';
 import { LearningSettingsPage } from './LearningSettingsPage';
 import { AiPanel } from './AiPanel';
 import { OfficialJudgePanel } from './OfficialJudgePanel';
@@ -21,7 +25,7 @@ import { ImportPage } from './ImportPage';
 import { ArchivePage } from './ArchivePage';
 import { EnvironmentPage } from './EnvironmentPage';
 import { usePractice } from './usePractice';
-import { dateTime, errorText, formatValue, Icon, type IconName, Statement, statusClass, statusText } from './ui';
+import { errorText, formatValue, Icon, type IconName, Statement, statusClass, statusText } from './ui';
 
 const pages: { id: Page; label: string; icon: IconName }[] = [
   { id: 'today', label: '学习中心', icon: 'home' },
@@ -44,8 +48,20 @@ export function App() {
   const [initialImport, setInitialImport] = useState<string | undefined>(); const [importPageKey, setImportPageKey] = useState(0);
   const practice = usePractice(api, setError);
   const [running, setRunning] = useState(false); const [runEvent, setRunEvent] = useState<RunEvent | null>(null); const runId = useRef<string | null>(null);
+  const [finishing, setFinishing] = useState(false); const finishAction = useRef(false);
   const runCancelled = useRef(false);
   const [selectedRun, setSelectedRun] = useState<RunArchive | null>(null);
+  const [historicalCode, setHistoricalCode] = useState<SubmissionHistoryDetail | null>(null);
+  const [historyOpening, setHistoryOpening] = useState(false); const historyAction = useRef(false);
+  const historyRequest = useRef(0);
+  const [historyRevision, setHistoryRevision] = useState(0);
+  const [noteDialog, setNoteDialog] = useState<{ problem: { id: string; title: string }; initialNoteId?: string } | null>(null);
+  const remarkSaved = useCallback(() => setHistoryRevision(value => value + 1), []);
+  const closeHistoricalCode = useCallback(() => {
+    if (editsFrozen() || historyAction.current) return;
+    historyAction.current = true; setHistoryOpening(true);
+    void flushPendingSaves().then(() => setHistoricalCode(null)).catch(error => setError(errorText(error))).finally(() => { historyAction.current = false; setHistoryOpening(false); });
+  }, []);
   const [resultTab, setResultTab] = useState<'local' | 'official'>('local');
   const [officialRecords, setOfficialRecords] = useState<OfficialSubmission[]>([]);
   const [officialFocus, setOfficialFocus] = useState('');
@@ -78,8 +94,8 @@ export function App() {
   const [endedAttempt, setEndedAttempt] = useState<Attempt | null>(null); const [reviewItem, setReviewItem] = useState<ReviewItem | null>(null);
   const [help, setHelp] = useState<AiHelpDecision | null>(null);
   async function setPage(next: Page) {
-    if (navigationBusy.current || editsFrozen()) return false; navigationBusy.current = true; setEditsFrozen(true, 'navigation');
-    try { await flushPendingSaves(); if (next === 'archives') setArchiveDate(undefined); if (next === 'workbench') setWorkbenchMounted(true); setPageRaw(next); return true; } catch (error) { setError(errorText(error)); return false; }
+    if (navigationBusy.current || finishAction.current || editsFrozen()) return false; navigationBusy.current = true; setEditsFrozen(true, 'navigation');
+    try { await flushPendingSaves(); if (next === 'archives') setArchiveDate(undefined); if (next === 'workbench') setWorkbenchMounted(true); else { historyRequest.current++; setHistoricalCode(null); } setPageRaw(next); return true; } catch (error) { setError(errorText(error)); return false; }
     finally { navigationBusy.current = false; setEditsFrozen(false, 'navigation'); }
   }
   const refreshLibrary = useCallback(async () => { if (api) setLibrary(await api.libraryIndex()); }, [api]);
@@ -108,19 +124,31 @@ export function App() {
   }, [api, page, practice.workspace?.attempt?.id, practice.workspace?.attempt?.isActive]);
   useEffect(() => { let alive = true; setHelp(null); if (api && practice.workspace?.attempt) void api.takeAiHelp(practice.workspace.attempt.id).then(value => { if (alive && value.show) setHelp(value); }).catch(error => { if (alive) setError(errorText(error)); }); return () => { alive = false; }; }, [api, practice.workspace?.attempt?.id, practice.workspace?.history.length]);
   useEffect(() => api?.onRunEvent(event => { if (event.runId === runId.current) setRunEvent(event); }), [api]);
-  useEffect(() => { setSelectedRun(null); setReveal(null); setNotice(''); setEndedAttempt(null); }, [practice.key]);
+  useEffect(() => { setSelectedRun(null); setHistoricalCode(null); setReveal(null); setNotice(''); setEndedAttempt(null); }, [practice.key]);
   useEffect(() => { if (selectedRun && practice.workspace && !practice.workspace.history.some(run => run.id === selectedRun.id)) { setSelectedRun(null); setReveal(null); } }, [practice.workspace, selectedRun]);
-  useEffect(() => { const handler = (event: KeyboardEvent) => { if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 'k') { event.preventDefault(); setCommand(''); setCommandIndex(0); commandDialog.current?.showModal(); } }; window.addEventListener('keydown', handler); return () => window.removeEventListener('keydown', handler); }, []);
+  useEffect(() => { const handler = (event: KeyboardEvent) => { if (event.defaultPrevented) return; if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 'k') { event.preventDefault(); setCommand(''); setCommandIndex(0); commandDialog.current?.showModal(); } }; window.addEventListener('keydown', handler); return () => window.removeEventListener('keydown', handler); }, []);
 
   async function openProblem(id: string, language = practice.target.language, scope = 'practice') { if (!await setPage('workbench')) return; setReviewItem(null); setEndedAttempt(null); const opened = await practice.open({ id, language, scope }); if (opened) { setNotice(''); } }
   async function openArchives(date?: string) { if (await setPage('archives')) setArchiveDate(date); }
+  async function openHistoricalCode(item: SubmissionHistoryItem) {
+    if (!api || editsFrozen() || historyAction.current || running || officialBusy || practice.switching) return;
+    const key = practice.currentKey.current; const request = ++historyRequest.current;
+    historyAction.current = true; setHistoryOpening(true);
+    try {
+      await flushPendingSaves();
+      const record = await api.submissionHistoryDetail(item.source, item.id);
+      if (practice.currentKey.current === key && historyRequest.current === request) setHistoricalCode(record);
+    } catch (error) { setError(errorText(error)); }
+    finally { historyAction.current = false; setHistoryOpening(false); }
+  }
   async function submitOfficial() {
     const attempt = practice.workspace?.attempt;
-    if (!api || !attempt?.isActive || !practice.ready || practice.switching || editsFrozen() || officialAction.current || officialBusy) return;
+    if (!api || !attempt?.isActive || !practice.ready || practice.switching || editsFrozen() || officialAction.current || officialBusy || historyAction.current || finishAction.current) return;
     officialAction.current = true; setSubmitting(true); setError(''); setResultTab('official');
     const snapshot = practice.snapshot(); const expectedKey = practice.currentKey.current;
     try {
-      await practice.flush();
+      await flushPendingSaves();
+      setHistoricalCode(null);
       // Read the saved revision after flushing, then let main validate both code and revision.
       let saved = await api.workspace(snapshot.target.id, snapshot.target.language, snapshot.target.scope);
       if (!saved.draft && practice.currentKey.current === expectedKey && practice.snapshot().code === snapshot.code) {
@@ -144,11 +172,12 @@ export function App() {
   }
   function openImport(url?: string) { setInitialImport(url); setImportPageKey(value => value + 1); setPage('sources'); }
   async function run() {
-    if (editsFrozen() || !api || running || runId.current || !practice.ready || practice.switching || !practice.workspace) return;
+    if (editsFrozen() || !api || running || runId.current || !practice.ready || practice.switching || !practice.workspace || historyAction.current || finishAction.current) return;
     const snapshot = practice.snapshot(); const expectedKey = practice.key; const version = practice.workspace.problem.version;
     const request = crypto.randomUUID(); runId.current = request; runCancelled.current = false; setRunning(true); setResultTab('local'); setRunEvent(null); setError(''); setNotice('');
     try {
-      await practice.flush();
+      await flushPendingSaves();
+      setHistoricalCode(null);
       if (runCancelled.current) return;
       const archive = await api.run(snapshot.target.id, snapshot.target.language, snapshot.code, snapshot.target.scope, request, version);
       if (practice.currentKey.current === expectedKey) { practice.acceptRun(archive, expectedKey); setSelectedRun(archive); await practice.refresh(expectedKey); }
@@ -156,7 +185,10 @@ export function App() {
     } catch (error) { setError(errorText(error)); } finally { setRunning(false); runId.current = null; }
   }
   async function finish() {
-    if (running || officialBusy || editsFrozen()) return; await flushPendingSaves(); const ended = await practice.finish(); if (ended) { setEndedAttempt(ended); setNotice('本次练习已归档。'); await refreshLibrary(); }
+    if (running || officialBusy || editsFrozen() || finishAction.current || historyAction.current) return;
+    finishAction.current = true; setFinishing(true);
+    try { await flushPendingSaves(); const ended = await practice.finish(); if (ended) { setEndedAttempt(ended); setNotice('本次练习已归档。'); await refreshLibrary(); } }
+    finally { finishAction.current = false; setFinishing(false); }
   }
   const commands = [
     ...pages.map(item => ({ label: item.label, action: () => setPage(item.id) })),
@@ -189,24 +221,25 @@ export function App() {
       {workbenchMounted && <div className="workbench-screen" hidden={page !== 'workbench'}>{problem ? <>
         {endedAttempt && <ReviewRating key={endedAttempt.id} api={api} problemId={endedAttempt.problemId} language={endedAttempt.language} attemptId={endedAttempt.id} existingItem={reviewItem} onSaved={() => { void refreshLibrary(); }} onDismiss={() => setEndedAttempt(null)} onError={setError} />}
         {help?.show && <div className="help-prompt"><span>{help.reason === 'compile-error' ? '遇到了编译错误。' : '连续三次运行没有通过。'}需要一起梳理吗？</span><button className="button" onClick={() => { setPanel('ai'); setShowHistory(true); setHelp(null); }}>打开 AI 帮助</button><button className="text-button" onClick={() => { if (workspace?.attempt) void api?.dismissAiHelp(workspace.attempt.id); setHelp(null); }}>先自己想想</button></div>}
-        <div className="workbench-toolbar"><div className="topic-line"><span>{difficultyLabel(problem.difficulty)}</span><span>{problem.mode === 'function' ? '函数题' : 'ACM'}</span><span>{available?.label}</span></div><div className="view-controls"><button aria-pressed={showStatement} onClick={() => setShowStatement(!showStatement)}>{showStatement ? '收起题面' : '展开题面'}</button><button aria-pressed={showHistory} onClick={() => setShowHistory(!showHistory)}>{showHistory ? '收起记录' : '展开记录'}</button>{workspace?.attempt ? <button disabled={frozen || running || officialBusy || practice.switching || !practice.ready} onClick={() => { void finish().catch(error => setError(errorText(error))); }}>结束练习</button> : <button disabled={!api || practice.switching || !practice.ready} onClick={() => { void openProblem(practice.target.id, practice.target.language, practice.target.scope); }}>开始新练习</button>}</div></div>
+        <div className="workbench-toolbar"><div className="topic-line"><span>{difficultyLabel(problem.difficulty)}</span><span>{problem.mode === 'function' ? '函数题' : 'ACM'}</span><span>{available?.label}</span></div><div className="view-controls"><button aria-pressed={showStatement} onClick={() => setShowStatement(!showStatement)}>{showStatement ? '收起题面' : '展开题面'}</button><button aria-pressed={showHistory} onClick={() => setShowHistory(!showHistory)}>{showHistory ? '收起记录' : '展开记录'}</button>{workspace?.attempt ? <button disabled={frozen || finishing || historyOpening || running || officialBusy || practice.switching || !practice.ready} onClick={() => { void finish().catch(error => setError(errorText(error))); }}>结束练习</button> : <button disabled={!api || practice.switching || !practice.ready} onClick={() => { void openProblem(practice.target.id, practice.target.language, practice.target.scope); }}>开始新练习</button>}</div></div>
         {workspace?.latestVersion !== workspace?.problem.version && <div className="version-notice">此练习使用开始时的题面；结束后，新练习将使用已缓存的新版。</div>}
         {practice.target.scope !== 'practice' && <div className="version-notice">当前是从档案恢复的独立草稿。<button className="text-button" onClick={() => { void openProblem(practice.target.id, practice.target.language); }}>回到普通草稿</button></div>}
         <div className="workbench workbench-p2" data-statement={showStatement} data-history={showHistory} style={{ '--statement-size': `${statementWidth}%`, '--history-size': `${panel === 'ai' ? Math.max(300, historyWidth) : historyWidth}px` } as CSSProperties}>
           {showStatement && <><section className="statement" aria-label="题目描述"><h2>{problem.title}</h2><Statement content={problem} /><div className="statement-footnote">{available?.reason}{problem.sourceUrl && <button className="text-button" onClick={() => api?.openSource(problem.sourceUrl!).catch(error => setError(errorText(error)))}>打开原站</button>}</div></section><Splitter side="statement" value={statementWidth} onChange={setStatementWidth} /></>}
           <section className="coding-pane" aria-label="代码与测试"><div className="editor-toolbar"><label className="language-label"><span className="sr-only">编程语言</span><select aria-label="编程语言" value={practice.target.language} disabled={!practice.ready || practice.switching || running} onChange={event => { void openProblem(practice.target.id, event.target.value as Language, practice.target.scope); }}><option value="python">Python</option><option value="java">Java</option></select></label><span className={practice.saving === '保存失败' ? 'save-state error-text' : 'save-state'} role="status">{practice.saving}</span>{practice.saving === '保存失败' && <button className="text-button" onClick={() => { void practice.flush().catch(() => {}); }}>重试保存</button>}<div className="run-actions">{canSubmitOfficial && <button className="button official-judge" disabled={!api || !practice.ready || practice.switching || frozen || officialBusy || !workspace?.attempt?.isActive} title="以当前力扣账号提交代码，结果将保存在练习档案" onClick={() => { void submitOfficial(); }}>{officialBusy ? '正在判题…' : '提交到力扣'}</button>}{running ? <button className="button primary" onClick={() => { runCancelled.current = true; void api?.cancel().catch(error => setError(errorText(error))); }}><Icon name="stop" />停止</button> : <button className="button primary" disabled={!api || !practice.ready || practice.switching || !available?.canRun} onClick={() => { void run(); }}><Icon name="play" />运行</button>}</div></div>
-            {practice.ready ? <Editor key={practice.key} code={practice.code} language={practice.target.language} readOnly={practice.switching || frozen} onChange={practice.edit} onRun={run} diagnostics={sameVersion ? result?.diagnostics : []} reveal={reveal} /> : <div className="editor-loading">正在读取草稿…</div>}
-            <section className="results-pane" aria-label="测试结果"><div className="results-heading"><div className="panel-tabs" role="group" aria-label="判题来源"><button aria-pressed={resultTab === 'local'} onClick={() => setResultTab('local')}>本地运行</button>{(canSubmitOfficial || activeOfficialRecords.length > 0) && <button aria-pressed={resultTab === 'official'} onClick={() => setResultTab('official')}>力扣官方{officialBusy ? ' · 判题中' : ''}</button>}</div>{resultTab === 'local' && <span>{running ? `${phase}${runEvent?.caseIndex === undefined ? '' : ` · 用例 ${runEvent.caseIndex + 1}`}` : `${problem.cases.length} 个本地用例`}</span>}</div>
+            {practice.ready ? <Editor key={practice.key} code={practice.code} language={practice.target.language} readOnly={practice.switching || frozen || finishing} onChange={practice.edit} onRun={run} diagnostics={sameVersion ? result?.diagnostics : []} reveal={reveal} /> : <div className="editor-loading">正在读取草稿…</div>}
+            {historicalCode && api ? <HistoricalCodePanel key={`${historicalCode.source}:${historicalCode.id}`} api={api} record={historicalCode} busy={historyOpening || practice.switching || !practice.ready || running || submitting || finishing} onClose={closeHistoricalCode} onRemarkSaved={remarkSaved} /> : <section className="results-pane" aria-label="测试结果"><div className="results-heading"><div className="panel-tabs" role="group" aria-label="判题来源"><button aria-pressed={resultTab === 'local'} onClick={() => setResultTab('local')}>本地运行</button>{(canSubmitOfficial || activeOfficialRecords.length > 0) && <button aria-pressed={resultTab === 'official'} onClick={() => setResultTab('official')}>力扣官方{officialBusy ? ' · 判题中' : ''}</button>}</div>{resultTab === 'local' && <span>{running ? `${phase}${runEvent?.caseIndex === undefined ? '' : ` · 用例 ${runEvent.caseIndex + 1}`}` : `${problem.cases.length} 个本地用例`}</span>}</div>
               {resultTab === 'official' ? <OfficialJudgePanel key={attemptId} records={activeOfficialRecords} currentCode={practice.code} problemVersion={workspace?.problem.version} focusId={officialFocus} busy={officialBusy || frozen} onResume={id => { void resumeOfficial(id); }} onLogin={() => { void api?.loginSource().catch(error => setError(errorText(error))); }} onOpen={url => { void api?.openWebLink(url).catch(error => setError(errorText(error))); }} onCoach={() => { setPanel('ai'); setShowHistory(true); }} /> : <>
               {result ? <><div className="result-summary"><strong className={statusClass(result.status)}>{result.status === 'passed' ? '✓ ' : '· '}{statusText[result.status]}</strong><span>{Math.round(result.durationMs)} ms</span>{!sameVersion && <span className="old-version">针对先前代码或题面版本</span>}</div><div className="case-list">{result.caseResults.map(test => <details className="case-detail" key={test.index}><summary><span>用例 {test.index + 1}</span><span className={statusClass(test.status)}>{statusText[test.status]}</span><code>{formatValue(test.actual).slice(0, 120)}</code></summary><dl><dt>实际输出</dt><dd><pre>{formatValue(test.actual)}</pre></dd><dt>期望输出</dt><dd><pre>{formatValue(test.expected)}</pre></dd>{test.stdout && <><dt>标准输出</dt><dd><pre>{test.stdout}</pre></dd></>}{test.stderr && <><dt>标准错误</dt><dd><pre>{test.stderr}</pre></dd></>}</dl></details>)}</div>{result.diagnostics.map((diagnostic, index) => <div key={index} className="diagnostic-item">{diagnostic.line && diagnostic.source === 'user' && <button className="text-button" disabled={!sameVersion} onClick={() => setReveal({ line: diagnostic.line!, column: diagnostic.column ?? 1, serial: Date.now() })}>定位第 {diagnostic.line} 行{diagnostic.column ? `，第 ${diagnostic.column} 列` : ''}</button>}<pre className="diagnostic">{diagnostic.message}</pre></div>)}{result.stdout && <details><summary>标准输出</summary><pre className="diagnostic">{result.stdout}</pre></details>}</> : <div className="results-empty"><span className="empty-mark">›_</span><p>{available?.canRun ? '写下解法，运行一次看看。' : '此题尚未准备好本地运行。'}<br /><span>{available?.canRun ? '⌘ / Ctrl + Enter 运行，每次执行保存独立快照。' : available?.reason}</span></p></div>}
               </>}
-            </section>
+            </section>}
           </section>
-          {showHistory && <><Splitter side="history" value={historyWidth} onChange={setHistoryWidth} /><aside className="history-pane" aria-label="练习记录与 AI"><div className="panel-tabs"><button aria-pressed={panel === 'history'} onClick={() => setPanel('history')}>运行记录</button><button aria-pressed={panel === 'ai'} onClick={() => setPanel('ai')}>AI 教练</button><button onClick={() => { void setPage('notes'); }}>记笔记</button></div>{panel === 'ai' ? <AiPanel key={workspace?.attempt?.id ?? 'none'} active={page === 'workbench'} api={api} attempt={workspace?.attempt ?? null} code={practice.code} selectedRun={selectedRun} flush={flushPendingSaves} onApply={async requestId => { if (!api || editsFrozen()) return; const key = practice.currentKey.current; setEditsFrozen(true, 'patch'); try { await flushPendingSaves(); const draft = await api.applyAiPatch(requestId); practice.acceptDraft(draft.code, key); await practice.refresh(key); } finally { setEditsFrozen(false, 'patch'); } }} onNoteSaved={() => { void setPage('notes'); }} onSettings={() => { void setPage('learning-settings'); }} onError={setError} /> : <><h2>本次练习 <span>{workspace?.historyTotal ?? workspace?.history.length ?? 0} 次运行</span></h2><p className="muted">{workspace?.attempt ? `开始于 ${dateTime(workspace.attempt.startedAt)}` : '下一次运行会开始新的练习'}</p>{workspace?.history.length ? <ol>{workspace.history.map((row, index) => <li key={row.id}><button className={selectedRun?.id === row.id ? 'active' : ''} onClick={() => { setSelectedRun(row); setResultTab('local'); setReveal(null); }}><span className="history-row"><strong>第 {(workspace.historyTotal ?? workspace.history.length) - index} 次运行</strong><time>{new Date(row.createdAt).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' })}</time></span><span className={statusClass(row.result.status)}>{statusText[row.result.status]}</span></button></li>)}</ol> : <div className="history-empty"><span className="history-line" /><p>还没有运行记录</p></div>}<button className="text-button" onClick={() => setPage('archives')}>查看所有练习档案</button></>}</aside></>}
+          {showHistory && <><Splitter side="history" value={historyWidth} onChange={setHistoryWidth} /><aside className="history-pane" aria-label="练习记录与 AI"><div className="panel-tabs"><button aria-pressed={panel === 'history'} onClick={() => setPanel('history')}>运行记录</button><button aria-pressed={panel === 'ai'} onClick={() => setPanel('ai')}>AI 教练</button><button disabled={!api || frozen || practice.switching || finishing} onClick={() => setNoteDialog({ problem: { id: practice.target.id, title: problem.title } })}>记笔记</button></div>{panel === 'ai' ? <AiPanel key={workspace?.attempt?.id ?? 'none'} active={page === 'workbench'} api={api} attempt={workspace?.attempt ?? null} code={practice.code} selectedRun={selectedRun} flush={flushPendingSaves} onApply={async requestId => { if (!api || editsFrozen()) return; const key = practice.currentKey.current; setEditsFrozen(true, 'patch'); try { await flushPendingSaves(); const draft = await api.applyAiPatch(requestId); practice.acceptDraft(draft.code, key); await practice.refresh(key); } finally { setEditsFrozen(false, 'patch'); } }} onNoteSaved={note => setNoteDialog({ problem: { id: practice.target.id, title: problem.title }, initialNoteId: note.id })} onSettings={() => { void setPage('learning-settings'); }} onError={setError} /> : <SubmissionHistory key={practice.key} active={page === 'workbench'} api={api} problemId={practice.target.id} language={practice.target.language} refreshKey={`${workspace?.history[0]?.id ?? ''}:${activeOfficialRecords.map(record => `${record.id}:${record.updatedAt}`).join(',')}:${historyRevision}`} selectedKey={historicalCode ? `${historicalCode.source}:${historicalCode.id}` : undefined} busy={historyOpening || frozen || running || officialBusy || practice.switching || finishing} onSelect={item => { void openHistoricalCode(item); }} onArchives={() => { void setPage('archives'); }} />}</aside></>}
         </div>
       </> : <div className="empty-state"><h2>正在读取工作台</h2><p>可先从题库中选择需要练习的题目。</p><button className="text-button" onClick={() => setPage('library')}>打开题库</button></div>}</div>}
       <footer className="status-bar"><span>{running ? `${phase} · 本地执行` : '题炼 / 先理解，再熟练。'}</span><span>{library.jobs.some(job => job.status === 'running') ? '题单正在后台准备' : `${library.totalProblems} 道题目保存在本机`}</span></footer>
     </main>
+    {noteDialog && api && <WorkbenchNoteDialog key={`${noteDialog.problem.id}:${noteDialog.initialNoteId ?? 'new'}`} api={api} problem={noteDialog.problem} initialNoteId={noteDialog.initialNoteId} onClose={() => setNoteDialog(null)} onError={setError} />}
     <dialog ref={commandDialog} className="command-dialog" aria-labelledby="command-title" onClick={event => { if (event.target === commandDialog.current) commandDialog.current.close(); }}><h2 id="command-title">快速切换</h2><label htmlFor="command-search" className="sr-only">搜索页面或题目</label><input id="command-search" autoFocus placeholder="搜索页面或题目" value={command} onChange={event => { setCommand(event.target.value); setCommandIndex(0); }} onKeyDown={event => { if (event.key === 'ArrowDown') { event.preventDefault(); setCommandIndex(index => Math.max(0, Math.min(index + 1, commands.length - 1))); } if (event.key === 'ArrowUp') { event.preventDefault(); setCommandIndex(index => Math.max(0, index - 1)); } if (event.key === 'Enter' && commands[commandIndex]) { event.preventDefault(); void commands[commandIndex].action(); commandDialog.current?.close(); } }} /><div className="command-list">{commands.map((item, index) => <button key={item.label} className={index === commandIndex ? 'selected' : ''} onClick={() => { void item.action(); commandDialog.current?.close(); }}>{item.label}<span>↵</span></button>)}{!commands.length && <p>没有匹配的页面或题目。</p>}</div><button className="text-button" onClick={() => commandDialog.current?.close()}>关闭 <kbd>Esc</kbd></button></dialog>
   </div>;
 }

@@ -344,7 +344,7 @@ test('P1 migration takes a consistent pre-migration WAL snapshot and preserves e
     assert.deepEqual(upgraded.getProblem('p1-demo', 'p1-fixtures-v1')?.content.tags, ['数组']);
     assert.deepEqual(p1.prepare('SELECT * FROM runs ORDER BY id').all(), beforeRuns);
     assert.deepEqual(p1.prepare('SELECT snapshot_json FROM problem_versions').get(), beforeSnapshot);
-    assert.equal(p1.prepare('PRAGMA user_version').get()?.user_version, 6);
+    assert.equal(p1.prepare('PRAGMA user_version').get()?.user_version, 7);
     const backup = new DatabaseSync(upgraded.migrationBackupPath!, { readOnly: true });
     try {
       assert.equal(backup.prepare('PRAGMA user_version').get()?.user_version, 1);
@@ -375,7 +375,7 @@ test('failed v4 migration rolls every schema change back and retains a usable v1
   const p1 = createP1Database(dbPath);
   p1.exec('CREATE TABLE library_problem_heads (conflicting_fixture TEXT) STRICT');
   const before = p1.prepare('SELECT * FROM runs ORDER BY id').all();
-  assert.throws(() => new PracticeStore(dbPath), /Schema v6 migration failed/);
+  assert.throws(() => new PracticeStore(dbPath), /Schema v7 migration failed/);
   try {
     assert.equal(p1.prepare('PRAGMA user_version').get()?.user_version, 1);
     assert.equal(p1.prepare('PRAGMA table_info(attempts)').all().length, 6);
@@ -383,7 +383,7 @@ test('failed v4 migration rolls every schema change back and retains a usable v1
     assert.ok(p1.prepare("SELECT name FROM sqlite_master WHERE name = 'immutable_attempt'").get());
     assert.deepEqual(p1.prepare('SELECT * FROM runs ORDER BY id').all(), before);
     assert.equal(p1.prepare('SELECT code FROM drafts').get()?.code, '最新草稿尚未运行');
-    const backups = readdirSync(directory).filter((name) => name.includes('.before-v6-') && name.endsWith('.sqlite'));
+    const backups = readdirSync(directory).filter((name) => name.includes('.before-v7-') && name.endsWith('.sqlite'));
     assert.equal(backups.length, 1);
     const backup = new DatabaseSync(join(directory, backups[0]), { readOnly: true });
     try {
