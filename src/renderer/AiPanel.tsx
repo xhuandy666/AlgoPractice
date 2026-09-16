@@ -26,7 +26,7 @@ export function AiPanel({ api, attempt, code, selectedRun, onApply, onNoteSaved,
   const load = useCallback(async () => {
     if (!api || !active) return; const token = ++generation.current;
     const [state, records] = await Promise.all([api.aiProvider(), attempt ? api.aiRequests(attempt.id) : Promise.resolve([])]);
-    if (token !== generation.current) return; setProvider(state); setRequests(records); 
+    if (token !== generation.current) return; setProvider(state); setRequests(records);
     const activeRequest = records.find(record => ['pending', 'streaming', 'repairing'].includes(record.status)); setActiveId(activeRequest?.id ?? null);
   }, [api, attempt?.id, active]);
   useEffect(() => { if (!active) return; void load().catch(error => onError(errorText(error))); const remove = api?.onLibraryChanged(() => { void load().catch(error => onError(errorText(error))); }); const unlisten = api?.onAiEvent(next => {
@@ -60,15 +60,54 @@ export function AiPanel({ api, attempt, code, selectedRun, onApply, onNoteSaved,
     try { onNoteSaved(await api.saveAiNoteDraft(record.id)); } catch (error) { onError(errorText(error)); } finally { setBusy(''); }
   }
   if (!active) return null;
-  return <section className="ai-panel" aria-label="AI 教练"><h3>AI 教练</h3><p className="field-help">一起读懂题目，沿着你的思路把代码改好。</p>
-    {!provider?.hasKey && <div className="empty-state"><p>先配置你自己的模型接口与 Key。</p><button className="button" onClick={onSettings}>配置 AI</button></div>}
-    {!attempt?.isActive && !reviewMode && <p className="field-help">开始一次练习后，可以向 AI 教练提问。已结束练习的回答保留在档案中。</p>}
-    <label className="p3-field"><span>想问什么 <span className="field-help">（选填）</span></span><textarea aria-label="AI 提问" value={question} maxLength={4000} disabled={Boolean(activeId || busy) || frozen} placeholder="例如：这个边界情况为什么不对？" onChange={change => setQuestion(change.target.value)} /></label>
-    <details><summary>本次发送的上下文</summary><div className="p3-form"><p className="field-help">题面、当前代码，以及这份代码的本地运行和力扣判题结果。</p><label className="checkbox-field"><input type="checkbox" checked={includeHistory} disabled={Boolean(activeId || busy) || frozen} onChange={change => setIncludeHistory(change.target.checked)} />带上最近四次已完成的对话</label>{selectedRun && selectedRun.attemptId === attempt?.id && <label className="checkbox-field"><input type="checkbox" checked={useSelectedRun} disabled={Boolean(activeId || busy) || frozen} onChange={change => setUseSelectedRun(change.target.checked)} />附上选中的运行记录{selectedRun.code !== code ? '（旧代码，仅作对照）' : ''}</label>}<p className="field-help">最多选择 3 篇已确认笔记（当前 {noteIds.length} 篇）。</p><label>搜索已确认笔记<input type="search" aria-label="搜索引用笔记" value={noteSearch} onChange={event => { setNoteSearch(event.target.value); setNotePage(0); }} /></label>{notes.map(note => <label className="checkbox-field" key={note.id}><input type="checkbox" checked={noteIds.includes(note.id)} disabled={Boolean(activeId || busy) || frozen || (!noteIds.includes(note.id) && noteIds.length >= 3)} onChange={change => setNoteIds(previous => change.target.checked ? [...previous, note.id] : previous.filter(id => id !== note.id))} />{note.confirmed!.title}</label>)}<div className="pagination"><span>{noteTotal} 篇 · 第 {notePage + 1} / {Math.max(1, Math.ceil(noteTotal / 20))} 页</span><button disabled={notePage === 0} onClick={() => setNotePage(notePage - 1)}>上一页</button><button disabled={(notePage + 1) * 20 >= noteTotal} onClick={() => setNotePage(notePage + 1)}>下一页</button></div>{noteIds.length > 0 && <button className="text-button" disabled={Boolean(activeId || busy) || frozen} onClick={() => setNoteIds([])}>清空已选笔记</button>}</div></details>
-    <div className="button-row">{activeId ? <button className="button" onClick={() => { void api?.cancelAi(activeId).catch(error => onError(errorText(error))); }}>停止 AI 请求</button> : <button className="button primary" disabled={!canAsk} onClick={() => { void ask(); }}>帮我看看</button>}</div>
-    <div className="compact-actions"><button className="text-button" disabled={!canAsk} onClick={() => { void ask('diagnosis'); }}>检查代码</button><button className="text-button" disabled={!canAsk} onClick={() => { void ask('note-draft'); }}>总结为笔记草稿</button></div>
-    {event && activeId && <p role="status" className="ai-status">{phaseLabels[event.phase]}{event.receivedBytes === undefined ? '' : ` · 已接收 ${Math.ceil(event.receivedBytes / 1024)} KiB`}。内容通过检查后展示。</p>}
-    {message && <p role="status" className="success-text">{message}</p>}
-    <div className="ai-request-list">{[...requests].reverse().map(record => <article className="ai-request" key={record.id}><header><strong>{statusLabels[record.status]}</strong><time>{dateTime(record.createdAt)}</time></header><p className="ai-question">{record.snapshot.question || (record.snapshot.kind === 'note-draft' ? '整理练习笔记' : '帮我看看当前思路')}</p>{record.snapshot.code !== code && <p className="ai-status warning-text">针对先前代码版本</p>}{record.snapshot.previousRun && <p className="ai-status">包含旧代码的运行记录，仅作对照</p>}{record.response ? <><h3>{record.response.title}</h3><Markdown text={record.response.explanation} onOpenLink={url => { void api?.openWebLink(url).catch(error => onError(errorText(error))); }} />{record.response.nextSteps.length > 0 && <ol>{record.response.nextSteps.map((step, index) => <li key={index}><Markdown text={step} /></li>)}</ol>}{record.response.evidence.length > 0 && <details><summary>使用的运行证据</summary>{record.response.evidence.map((evidence, index) => <pre className="diagnostic" key={index}>{evidence.quote}</pre>)}</details>}{record.response.inferences.length > 0 && <details><summary>需要验证的判断</summary>{record.response.inferences.map((inference, index) => <div key={index}><Markdown text={inference.text} /><p className="field-help">依据：{inference.reason}</p></div>)}</details>}{record.response.completeSolution && <details><summary>查看完整解法</summary><Markdown text={record.response.completeSolution.explanation} /><pre className="archive-code">{record.response.completeSolution.code}</pre></details>}{!reviewMode && (record.response.patch || record.response.completeSolution) && <button className="button" disabled={Boolean(busy) || frozen} onClick={() => { void preview(record); }}>预览修改建议</button>}{record.response.noteDraft && <div><h4>{record.response.noteDraft.title}</h4><Markdown text={record.response.noteDraft.markdown} /><button className="button" disabled={Boolean(busy) || frozen} onClick={() => { void saveNote(record); }}>保存为笔记草稿</button></div>}{patch && patch.requestId === record.id && <div><p className="field-help">应用前会再次核对代码版本。修改本身不会自动运行或判为正确。</p><CodeComparison before={record.snapshot.code} after={patch.code} language={patch.language} label="AI 修改差异" /><div className="compact-actions"><button className="button primary" disabled={Boolean(busy) || frozen} onClick={() => { void apply(); }}>应用到当前草稿</button><button className="text-button" onClick={() => setPatch(null)}>收起差异</button></div></div>}</> : record.error ? <p role="alert" className="error-text">{record.error.message}</p> : <p className="ai-status">正在等待可用的回答。</p>}{record.cachedFromRequestId && <p className="ai-status">复用了完全相同请求的已完成回答。</p>}<p className="ai-status">{record.usage?.totalTokens === null || !record.usage ? '用量未知' : `供应商报告 ${record.usage.totalTokens} Token`} · {record.snapshot.provider.model}</p></article>)}</div>
+  return <section className="ai-panel" aria-label="AI 教练">
+    <div className="ai-conversation">
+      <header className="ai-panel-intro"><h3>AI 教练</h3><p className="field-help">一起读懂题目，沿着你的思路把代码改好。</p></header>
+      {!provider?.hasKey && <div className="empty-state"><p>先配置你自己的模型接口与 Key。</p><button className="button" onClick={onSettings}>配置 AI</button></div>}
+      {!attempt?.isActive && !reviewMode && <p className="field-help">开始一次练习后，可以向 AI 教练提问。已结束练习的回答保留在档案中。</p>}
+      {message && <p role="status" className="success-text">{message}</p>}
+      <div className="ai-request-list">{[...requests].reverse().map(record => <article className="ai-request" key={record.id}>
+        <header><strong>{statusLabels[record.status]}</strong><time>{dateTime(record.createdAt)}</time></header>
+        <p className="ai-question">{record.snapshot.question || (record.snapshot.kind === 'note-draft' ? '整理练习笔记' : '帮我看看当前思路')}</p>
+        {record.snapshot.code !== code && <p className="ai-status warning-text">针对先前代码版本</p>}
+        {record.snapshot.previousRun && <p className="ai-status">包含旧代码的运行记录，仅作对照</p>}
+        {record.response ? <>
+          <h3>{record.response.title}</h3>
+          <Markdown text={record.response.explanation} onOpenLink={url => { void api?.openWebLink(url).catch(error => onError(errorText(error))); }} />
+          {record.response.nextSteps.length > 0 && <ol>{record.response.nextSteps.map((step, index) => <li key={index}><Markdown text={step} /></li>)}</ol>}
+          {record.response.evidence.length > 0 && <details><summary>使用的运行证据</summary>{record.response.evidence.map((evidence, index) => <pre className="diagnostic" key={index}>{evidence.quote}</pre>)}</details>}
+          {record.response.inferences.length > 0 && <details><summary>需要验证的判断</summary>{record.response.inferences.map((inference, index) => <div key={index}><Markdown text={inference.text} /><p className="field-help">依据：{inference.reason}</p></div>)}</details>}
+          {record.response.completeSolution && <details><summary>查看完整解法</summary><Markdown text={record.response.completeSolution.explanation} /><pre className="archive-code">{record.response.completeSolution.code}</pre></details>}
+          {!reviewMode && (record.response.patch || record.response.completeSolution) && <button className="button" disabled={Boolean(busy) || frozen} onClick={() => { void preview(record); }}>预览修改建议</button>}
+          {record.response.noteDraft && <div><h4>{record.response.noteDraft.title}</h4><Markdown text={record.response.noteDraft.markdown} /><button className="button" disabled={Boolean(busy) || frozen} onClick={() => { void saveNote(record); }}>保存为笔记草稿</button></div>}
+          {patch && patch.requestId === record.id && <div>
+            <p className="field-help">应用前会再次核对代码版本。修改本身不会自动运行或判为正确。</p>
+            <CodeComparison before={record.snapshot.code} after={patch.code} language={patch.language} label="AI 修改差异" />
+            <div className="compact-actions"><button className="button primary" disabled={Boolean(busy) || frozen} onClick={() => { void apply(); }}>应用到当前草稿</button><button className="text-button" onClick={() => setPatch(null)}>收起差异</button></div>
+          </div>}
+        </> : record.error ? <p role="alert" className="error-text">{record.error.message}</p> : <p className="ai-status">正在等待可用的回答。</p>}
+        {record.cachedFromRequestId && <p className="ai-status">复用了完全相同请求的已完成回答。</p>}
+        <p className="ai-status">{record.usage?.totalTokens === null || !record.usage ? '用量未知' : `供应商报告 ${record.usage.totalTokens} Token`} · {record.snapshot.provider.model}</p>
+      </article>)}</div>
+    </div>
+    <div className="ai-composer">
+      <label className="p3-field"><span>向 AI 教练提问 <span className="field-help">（选填）</span></span><textarea aria-label="AI 提问" value={question} maxLength={4000} disabled={Boolean(activeId || busy) || frozen} placeholder="例如：这个边界情况为什么不对？" onChange={change => setQuestion(change.target.value)} /></label>
+      <details><summary>本次发送的上下文</summary><div className="p3-form">
+        <p className="field-help">题面、当前代码，以及这份代码的本地运行和力扣判题结果。</p>
+        <label className="checkbox-field"><input type="checkbox" checked={includeHistory} disabled={Boolean(activeId || busy) || frozen} onChange={change => setIncludeHistory(change.target.checked)} />带上最近四次已完成的对话</label>
+        {selectedRun && selectedRun.attemptId === attempt?.id && <label className="checkbox-field"><input type="checkbox" checked={useSelectedRun} disabled={Boolean(activeId || busy) || frozen} onChange={change => setUseSelectedRun(change.target.checked)} />附上选中的运行记录{selectedRun.code !== code ? '（旧代码，仅作对照）' : ''}</label>}
+        <p className="field-help">最多选择 3 篇已确认笔记（当前 {noteIds.length} 篇）。</p>
+        <label>搜索已确认笔记<input type="search" aria-label="搜索引用笔记" value={noteSearch} onChange={event => { setNoteSearch(event.target.value); setNotePage(0); }} /></label>
+        {notes.map(note => <label className="checkbox-field" key={note.id}><input type="checkbox" checked={noteIds.includes(note.id)} disabled={Boolean(activeId || busy) || frozen || (!noteIds.includes(note.id) && noteIds.length >= 3)} onChange={change => setNoteIds(previous => change.target.checked ? [...previous, note.id] : previous.filter(id => id !== note.id))} />{note.confirmed!.title}</label>)}
+        <div className="pagination"><span>{noteTotal} 篇 · 第 {notePage + 1} / {Math.max(1, Math.ceil(noteTotal / 20))} 页</span><button disabled={notePage === 0} onClick={() => setNotePage(notePage - 1)}>上一页</button><button disabled={(notePage + 1) * 20 >= noteTotal} onClick={() => setNotePage(notePage + 1)}>下一页</button></div>
+        {noteIds.length > 0 && <button className="text-button" disabled={Boolean(activeId || busy) || frozen} onClick={() => setNoteIds([])}>清空已选笔记</button>}
+      </div></details>
+      {event && activeId && <p role="status" className="ai-status">{phaseLabels[event.phase]}{event.receivedBytes === undefined ? '' : ` · 已接收 ${Math.ceil(event.receivedBytes / 1024)} KiB`}。内容通过检查后展示。</p>}
+      <div className="ai-composer-actions">
+        <button className="button" disabled={!canAsk} onClick={() => { void ask('diagnosis'); }}>检查代码</button>
+        {activeId ? <button className="button" onClick={() => { void api?.cancelAi(activeId).catch(error => onError(errorText(error))); }}>停止 AI 请求</button> : <button className="button primary" disabled={!canAsk} onClick={() => { void ask(); }}>帮我看看</button>}
+      </div>
+      <div className="compact-actions ai-composer-secondary"><button className="text-button" disabled={!canAsk} onClick={() => { void ask('note-draft'); }}>总结为笔记草稿</button></div>
+    </div>
   </section>;
 }

@@ -58,7 +58,7 @@ async function load() {
       if (url === 'https://workbench-coach.invalid/v1/chat/completions') {
         const request = JSON.parse(init.body); globalThis.workbenchSmoke.providerRequests.push(request);
         const payload = JSON.parse(request.messages.find(message => message.role === 'user').content);
-        const content = { schemaVersion: 2, kind: payload.kind, title: '合成上下文验收', explanation: '请手动跟踪累加变量随循环的变化。',
+        const content = { schemaVersion: 2, kind: payload.kind, title: '合成上下文验收', explanation: '请手动跟踪累加变量随循环的变化。\n\n'.repeat(45),
           nextSteps: ['检查空数组和负数。'], evidence: [], inferences: [], patch: null, completeSolution: null, noteDraft: null };
         return new Response(JSON.stringify({ model: 'synthetic-workbench', choices: [{ index: 0, message: { role: 'assistant', content: JSON.stringify(content) }, finish_reason: 'stop' }],
           usage: { prompt_tokens: 10, completion_tokens: 10, total_tokens: 20 } }), { status: 200, headers: { 'content-type': 'application/json' } });
@@ -143,6 +143,13 @@ try {
   await load(); await openWorkbench();
   assert.ok((await api('environment')).python, 'Set ALGOPRACTICE_RUNTIME_DIR to a prepared Python runtime');
   const editorBefore = await page.locator('.coding-pane > .editor-host .view-lines').innerText();
+  await page.getByRole('button', { name: '收起题目描述', exact: true }).focus();
+  await page.keyboard.press('Enter');
+  await page.getByRole('button', { name: '展开题面', exact: true }).waitFor();
+  assert.equal(await page.evaluate(() => document.activeElement?.textContent), '展开题面');
+  await page.keyboard.press('Enter');
+  await page.getByRole('region', { name: '题目描述', exact: true }).waitFor();
+  pass('Collapsing the statement by keyboard restores focus to its visible toggle and can reopen it');
   const initialHistory = await api('submissionHistory', { problemId: fixture.problem.id, language: 'python', offset: 0, limit: 20 });
   assert.equal(initialHistory.total, 48); assert.equal(initialHistory.items.length, 20);
   const secondHistory = await api('submissionHistory', { problemId: fixture.problem.id, language: 'python', offset: 20, limit: 20 });
@@ -295,6 +302,18 @@ try {
   const answer = (await api('aiRequests', fixture.active.id)).find(record => record.status === 'completed');
   assert.equal(answer.snapshot.code, fixture.code); assert.equal(answer.snapshot.run, null); assert.equal(answer.snapshot.official ?? null, null); assert.equal(answer.snapshot.previousRun ?? null, null);
   pass('Viewing another practice code does not inject it or its verdict into the current AI context');
+  await page.getByRole('heading', { name: '合成上下文验收', exact: true }).waitFor();
+  const coachLayout = await page.evaluate(() => {
+    const conversation = document.querySelector('.ai-conversation'), composer = document.querySelector('.ai-composer');
+    const input = document.querySelector('textarea[aria-label="AI 提问"]'), send = [...composer.querySelectorAll('button')].find(button => button.textContent === '帮我看看');
+    return { conversationHeight: conversation.clientHeight, conversationScroll: conversation.scrollHeight,
+      composerHeight: composer.clientHeight, inputBottom: input.getBoundingClientRect().bottom,
+      sendBottom: send.getBoundingClientRect().bottom, composerBottom: composer.getBoundingClientRect().bottom, viewportHeight: innerHeight };
+  });
+  assert.ok(coachLayout.conversationScroll > coachLayout.conversationHeight, 'Long answers scroll inside the conversation');
+  assert.ok(coachLayout.composerHeight >= 220 && coachLayout.inputBottom <= coachLayout.composerBottom && coachLayout.sendBottom <= coachLayout.composerBottom && coachLayout.composerBottom < coachLayout.viewportHeight, JSON.stringify(coachLayout));
+  await shot('ai-coach-long-answer.png');
+  pass('A long AI answer keeps the question and send controls visible in the desktop composer');
 
   await page.getByRole('button', { name: '运行', exact: true }).click();
   await until(async () => (await api('history', fixture.problem.id, 'python')).some(run => run.attemptId === fixture.active.id && run.result.status === 'passed'), 'real Python run succeeds', 60000);

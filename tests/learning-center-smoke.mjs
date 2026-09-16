@@ -206,7 +206,9 @@ try {
   const initial = await api('learningDashboard');
   assert.equal(initial.totals.completedAttempts, fixture.dashboard.totals.completedAttempts);
   assert.equal(initial.days.find(day => day.date === fixture.today).completedProblems, fixture.dashboard.days.at(-1).completedProblems);
-  await page.getByRole('img', { name: `今日完成 ${fixture.dashboard.days.at(-1).completedProblems} 题，目标 5 题`, exact: true }).waitFor();
+  const dailyProgress = page.getByRole('progressbar', { name: '今日练习目标', exact: true });
+  await dailyProgress.waitFor();
+  assert.equal(await dailyProgress.getAttribute('aria-valuetext'), `今日完成 ${fixture.dashboard.days.at(-1).completedProblems} 题，目标 5 题`);
   pass('Default learning center displays actual fixture aggregates and the sidebar has no quick problem list');
   await captureSizes('home');
   await resize(1440, 1100); await screenshot('home-publish-1440x1100.png');

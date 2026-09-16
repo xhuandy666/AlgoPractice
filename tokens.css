@@ -1,28 +1,28 @@
-/* Hallmark · macrostructure: Workbench · genre: modern-minimal · theme: Cobalt · tone: soft technical · anchor hue: 256
- * audience: personal algorithm learner · use: read, code, test · nav: N3 adapted side navigation · footer: Ft2 status line · enrichment: none
- * Hallmark · pre-emit critique: P4 H4 E4 S5 R5 V4 · applicable desktop visual gates reviewed; measured contrast is recorded in evidence. */
+/* Warm paper, graphite and teal. Shared by the desktop UI and Monaco theme. */
 :root {
-  --color-paper: oklch(97.3% 0.008 255);
-  --color-surface: oklch(99.8% 0.001 255);
-  --color-paper-2: oklch(96.5% 0.006 250);
-  --color-paper-3: oklch(93% 0.01 250);
-  --color-ink: oklch(24% 0.02 258);
-  --color-ink-2: oklch(34% 0.018 257);
-  --color-muted: oklch(49% 0.018 257);
-  --color-rule: oklch(90.8% 0.015 255);
-  --color-control-rule: oklch(65% 0.014 250);
-  --color-accent: oklch(51% 0.2 256);
-  --color-accent-soft: oklch(94% 0.027 256);
-  --color-accent-ink: oklch(99% 0.002 250);
-  --color-focus: oklch(50% 0.2 256);
+  --color-paper: oklch(97.8% 0.005 100);
+  --color-surface: oklch(99.8% 0.002 100);
+  --color-paper-2: oklch(96.5% 0.005 165);
+  --color-paper-3: oklch(93.2% 0.008 165);
+  --color-ink: oklch(24% 0.022 245);
+  --color-ink-2: oklch(37% 0.019 245);
+  --color-muted: oklch(49% 0.017 245);
+  --color-rule: oklch(90% 0.01 175);
+  --color-control-rule: oklch(65% 0.017 175);
+  --color-accent: oklch(47% 0.085 180);
+  --color-accent-soft: oklch(94.5% 0.024 175);
+  --color-accent-ink: oklch(100% 0 0);
+  --color-focus: oklch(41% 0.08 180);
   --color-error: oklch(46% 0.16 25);
-  --color-success: oklch(40% 0.085 160);
+  --color-success: oklch(44% 0.09 172);
   --color-warning: oklch(45% 0.095 70);
   --color-backdrop: oklch(24% 0.02 258 / 0.25);
   --color-transparent: oklch(98.5% 0.004 250 / 0);
   --color-code-keyword: oklch(46% 0.15 256);
   --color-code-string: oklch(40% 0.08 160);
   --color-code-number: oklch(43% 0.12 55);
+  --shadow-panel: 0 2px 8px oklch(24% 0.02 175 / 0.025);
+  --shadow-dialog: 0 20px 70px oklch(24% 0.02 175 / 0.16);
   --font-display: 'Inter', 'PingFang SC', 'Microsoft YaHei', sans-serif;
   --font-body: 'Inter', 'PingFang SC', 'Microsoft YaHei', sans-serif;
   --font-mono: 'JetBrains Mono', 'PingFang SC', 'Microsoft YaHei', monospace;
