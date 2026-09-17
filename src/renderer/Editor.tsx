@@ -38,7 +38,7 @@ export function defineEditorTheme() {
 }
 const noDiagnostics: Diagnostic[] = [];
 
-export function Editor({ code, language, readOnly = false, diagnostics = noDiagnostics, reveal, onChange, onRun }: { code: string; language: Language; readOnly?: boolean; diagnostics?: Diagnostic[]; reveal?: { line: number; column: number; serial: number } | null; onChange: (value: string) => void; onRun: () => void }) {
+export function Editor({ code, language, readOnly = false, label = '解题代码', diagnostics = noDiagnostics, reveal, onChange, onRun }: { code: string; language: Language; readOnly?: boolean; label?: string; diagnostics?: Diagnostic[]; reveal?: { line: number; column: number; serial: number } | null; onChange: (value: string) => void; onRun: () => void }) {
   const updatingFromProps = useRef(false);
   const modelValue = useRef(code);
   const hasMarkers = useRef(false);
@@ -55,7 +55,7 @@ export function Editor({ code, language, readOnly = false, diagnostics = noDiagn
       scrollBeyondLastLine: false, wordWrap: 'on', tabSize: 4, insertSpaces: true,
       renderLineHighlight: 'line', overviewRulerLanes: 0, hideCursorInOverviewRuler: true,
       lineNumbersMinChars: 3, glyphMargin: false, folding: false,
-      ariaLabel: '解题代码', accessibilitySupport: 'auto',
+      ariaLabel: label, accessibilitySupport: 'auto', readOnly,
       quickSuggestions: false, fixedOverflowWidgets: true,
     });
     instance.current = editor;

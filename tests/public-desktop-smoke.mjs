@@ -170,9 +170,8 @@ try {
   await page.getByRole('button', { name: '新建题目笔记', exact: true }).click();
   await page.getByRole('textbox', { name: '笔记标题', exact: true }).fill(noteTitle);
   await page.getByRole('textbox', { name: 'Markdown 正文', exact: true }).fill(markdown);
-  await page.getByRole('button', { name: '立即保存', exact: true }).click();
-  await page.getByRole('button', { name: '确认当前版本', exact: true }).click();
-  await page.getByText('此版本已确认', { exact: true }).waitFor();
+  await page.getByRole('button', { name: '保存笔记', exact: true }).click();
+  await page.getByText('笔记已保存', { exact: true }).waitFor();
   confirmedNote = (await api('notes', { search: noteTitle }))[0];
   assert.equal(confirmedNote.subjectId, 'array-total');
   assert.equal(confirmedNote.current.state, 'confirmed'); assert.equal(confirmedNote.confirmed.markdown, markdown);
@@ -213,7 +212,7 @@ try {
   await nav('学习笔记');
   await page.getByRole('complementary', { name: '笔记列表', exact: true }).getByRole('button').filter({ hasText: noteTitle }).click();
   assert.equal(await page.getByRole('textbox', { name: 'Markdown 正文', exact: true }).inputValue(), markdown);
-  assert.equal(await page.getByRole('button', { name: '确认当前版本', exact: true }).isDisabled(), true);
+  assert.equal(await page.getByRole('button', { name: '保存笔记', exact: true }).isDisabled(), true);
   await shot('notes.png');
   assert.equal(await page.locator('.error-banner').count(), 0);
   pass('A full quit and restart preserves confirmed note, successful runs, reviews and the no-Key preset');

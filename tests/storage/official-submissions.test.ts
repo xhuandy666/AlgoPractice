@@ -81,17 +81,17 @@ test('schema 5 is backed up before migration; backup restores official results a
   const { store, dbPath, input, directory, attempt } = officialFixture(t);
   store.close();
   const legacy = new DatabaseSync(dbPath);
-  legacy.exec(`DROP TABLE official_submissions; PRAGMA user_version=5;`); legacy.close();
+  legacy.exec(`DROP TABLE submission_remarks; DROP INDEX attempts_by_problem_language; DROP TABLE official_submissions; PRAGMA user_version=5;`); legacy.close();
   const upgraded = new PracticeStore(dbPath);
   try {
-    assert.ok(upgraded.migrationBackupPath?.includes('.before-v6-')); assert.ok(existsSync(upgraded.migrationBackupPath!));
+    assert.ok(upgraded.migrationBackupPath?.includes('.before-v7-')); assert.ok(existsSync(upgraded.migrationBackupPath!));
     assert.equal(PracticeStore.inspectBackupSnapshot(upgraded.migrationBackupPath!).schemaVersion, 5);
     assert.equal(upgraded.getDraft(attempt.problemId, 'python')?.code, input.code);
     const record = upgraded.beginOfficialSubmission(input);
     upgraded.updateOfficialSubmission(record.id, { status: 'judging', submissionId: '42' });
     const completed = upgraded.updateOfficialSubmission(record.id, { status: 'completed', result: { status: 'wrong_answer', statusMessage: 'Wrong Answer', passedCases: 3, totalCases: 9 } });
     const backup = join(directory, 'backup.sqlite'); await upgraded.backupTo(backup);
-    assert.equal(PracticeStore.inspectBackupSnapshot(backup).schemaVersion, 6);
+    assert.equal(PracticeStore.inspectBackupSnapshot(backup).schemaVersion, 7);
     const restoredPath = join(directory, 'restored.sqlite'); PracticeStore.restoreBackup(backup, restoredPath);
     const restored = new PracticeStore(restoredPath);
     try { assert.deepEqual(restored.getOfficialSubmission(record.id), completed); restored.integrityCheck(); } finally { restored.close(); }

@@ -1,4 +1,5 @@
 import type { OfficialSubmitInput, OfficialSubmission } from './official';
+import type { SaveSubmissionRemarkInput, SubmissionHistoryDetail, SubmissionHistoryFilter, SubmissionHistoryItem, SubmissionHistorySource, SubmissionRemark } from './submission-history';
 import type { CompanyDataset, CompanyPreview, InterviewRules, InterviewPool, InterviewView, InterviewSaveResult } from './interview';
 import type { Language, RunEvent, RunResult, RunStatus } from '../runner/types';
 import type { Attempt, Draft } from '../storage/practice-store';
@@ -31,6 +32,9 @@ export interface PreparedProblemRefresh { id: string; before: LibraryProblem; af
 export interface BackupState { busy: boolean; backups: BackupSummary[]; lastError: string | null; }
 export interface PreparedRestore { id: string; manifest: BackupManifest; bytes: number; }
 export interface DesktopBridge {
+  submissionHistory(filter: SubmissionHistoryFilter): Promise<PageResult<SubmissionHistoryItem>>;
+  submissionHistoryDetail(source: SubmissionHistorySource, id: string): Promise<SubmissionHistoryDetail>;
+  saveSubmissionRemark(input: SaveSubmissionRemarkInput): Promise<SubmissionRemark>;
   officialSubmit(input: OfficialSubmitInput): Promise<OfficialSubmission>;
   officialSubmissions(attemptId: string): Promise<OfficialSubmission[]>;
   officialResume(id: string): Promise<OfficialSubmission>;

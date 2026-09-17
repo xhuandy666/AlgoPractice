@@ -151,6 +151,7 @@ npm run build
 npm run test:desktop
 npm run test:learning-center
 npm run test:official
+npm run test:workbench
 ```
 
 测试使用隔离数据目录。语言执行测试需要先完成 `npm run runtime:install`。

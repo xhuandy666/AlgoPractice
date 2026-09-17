@@ -7,6 +7,9 @@ import { archiveDateBoundary } from '../shared/archive-date.ts';
 import { pageBounds, pageResult, searchText, literalLike, SQL_TRIM_WHITESPACE } from './pagination.ts';
 import type { AttemptListItem, AttemptPageFilter, NotePageFilter, PageResult, ProblemListItem, ProblemPageFilter, RunListItem, RunPageFilter } from '../shared/learning.ts';
 import { MIGRATE_V5 } from '../interview/schema.ts';
+import { MIGRATE_V7 } from './submission-history-schema.ts';
+import { SUBMISSION_REMARK_LIMIT, type SaveSubmissionRemarkInput, type SubmissionHistoryDetail, type SubmissionHistoryFilter,
+  type SubmissionHistoryItem, type SubmissionHistorySource, type SubmissionRemark } from '../shared/submission-history.ts';
 import type { CompanyDataset, InterviewSession } from '../shared/interview.ts';
 import { MIGRATE_V3, MIGRATE_V4 } from '../learning/schema.ts';
 import type { ActivitySampleInput, AddReviewItemInput, Attachment, BackupSnapshotInfo, ConfirmNoteInput,
@@ -121,7 +124,7 @@ export interface StoredRun {
 }
 
 type Row = Record<string, string | number | null>;
-const SCHEMA_VERSION = 6;
+const SCHEMA_VERSION = 7;
 const MIGRATE_V6 = `
 CREATE TABLE official_submissions (
   id TEXT PRIMARY KEY NOT NULL,
@@ -456,6 +459,19 @@ function checkDatabase(db: DatabaseSync, allowedVersions = [SCHEMA_VERSION]): vo
   if (db.prepare('PRAGMA foreign_key_check').all().length !== 0) throw new Error('SQLite foreign key check failed');
 }
 
+function historySource(value: unknown): SubmissionHistorySource {
+  if (value !== 'local' && value !== 'official') throw new Error('历史记录来源无效。');
+  return value;
+}
+
+function historyItem(row: Row): SubmissionHistoryItem {
+  return { id: row.id as string, source: row.source as SubmissionHistorySource, attemptId: row.attempt_id as string,
+    problemId: row.problem_id as string, problemVersion: row.problem_version as string, language: row.language as Language,
+    createdAt: row.created_at as string, finishedAt: row.finished_at as string | null, codeHash: row.code_hash as string,
+    status: row.status as SubmissionHistoryItem['status'], verdict: row.verdict as SubmissionHistoryItem['verdict'],
+    remark: (row.remark as string | null) ?? '', remarkRevision: (row.remark_revision as number | null) ?? 0 };
+}
+
 /** Local P3 repository. Construct after acquiring the application's single-instance lock. */
 export class PracticeStore {
   readonly dbPath: string;
@@ -472,7 +488,7 @@ export class PracticeStore {
     this.#db = new DatabaseSync(this.dbPath);
     try {
       const version = (this.#db.prepare('PRAGMA user_version').get() as Row).user_version;
-      if (![0, 1, 2, 3, 4, 5, SCHEMA_VERSION].includes(version as number)) throw new Error(`Unsupported schema version: ${version}`);
+      if (![0, 1, 2, 3, 4, 5, 6, SCHEMA_VERSION].includes(version as number)) throw new Error(`Unsupported schema version: ${version}`);
       this.#db.exec('PRAGMA foreign_keys = ON; PRAGMA journal_mode = WAL; PRAGMA synchronous = FULL; PRAGMA busy_timeout = 5000;');
       if (version === 0) this.#transaction(() => {
         this.#db.exec(SCHEMA);
@@ -481,12 +497,13 @@ export class PracticeStore {
         this.#db.exec(MIGRATE_V4);
         this.#db.exec(MIGRATE_V5);
         this.#db.exec(MIGRATE_V6);
+        this.#db.exec(MIGRATE_V7);
         this.#db.prepare('INSERT INTO learning_settings VALUES (1, ?)').run(json({ ...defaultLearningSettings(), updatedAt: new Date().toISOString() }));
         this.#db.exec(`PRAGMA user_version = ${SCHEMA_VERSION}`);
       });
-      if (version === 1 || version === 2 || version === 3 || version === 4 || version === 5) {
+      if (version === 1 || version === 2 || version === 3 || version === 4 || version === 5 || version === 6) {
         checkDatabase(this.#db, [version]);
-        const backupPath = `${this.dbPath}.before-v6-${new Date().toISOString().replace(/[:.]/g, '-')}-${randomUUID()}.sqlite`;
+        const backupPath = `${this.dbPath}.before-v7-${new Date().toISOString().replace(/[:.]/g, '-')}-${randomUUID()}.sqlite`;
         const temporary = `${backupPath}.partial`;
         try {
           // VACUUM INTO is a synchronous, transactionally consistent snapshot including committed WAL pages.
@@ -506,13 +523,14 @@ export class PracticeStore {
             }
             if (version < 4) this.#db.exec(MIGRATE_V4);
             if (version < 5) this.#db.exec(MIGRATE_V5);
-            this.#db.exec(MIGRATE_V6);
+            if (version < 6) this.#db.exec(MIGRATE_V6);
+            this.#db.exec(MIGRATE_V7);
             backfillNoteAttachmentReferences(this.#db);
             this.#db.exec(`PRAGMA user_version = ${SCHEMA_VERSION}`);
             checkDatabase(this.#db);
           });
         } catch (error) {
-          throw new Error(`Schema v6 migration failed; original schema retained. Backup: ${backupPath}`, { cause: error });
+          throw new Error(`Schema v7 migration failed; original schema retained. Backup: ${backupPath}`, { cause: error });
         }
       }
       // Existing schema 2 databases need only a trigger update; table layouts and stored snapshots stay intact.
@@ -756,6 +774,75 @@ export class PracticeStore {
       runtimeVersion: row.runtime_version as string, status: row.status as RunStatus, createdAt: row.created_at as string,
       finishedAt: row.finished_at as string | null, durationMs: typeof row.duration_ms === 'number' ? row.duration_ms : null,
       caseCount: row.case_count as number, passedCaseCount: row.passed_case_count as number })), total, bounds);
+  }
+
+  /** Across attempts for one problem and language, without fetching code or whole judge results. */
+  listSubmissionHistory(filter: SubmissionHistoryFilter): PageResult<SubmissionHistoryItem> {
+    if (!filter || typeof filter !== 'object') throw new Error('请选择题目和语言。');
+    requireText(filter.problemId, 'problem id'); requireLanguage(filter.language);
+    const bounds = pageBounds(filter), values = [filter.problemId, filter.language];
+    const ids = `SELECT r.id, 'local' AS source, r.created_at FROM runs r JOIN attempts a ON a.id = r.attempt_id
+      WHERE a.problem_id = ? AND a.language = ? AND r.status <> 'queued'
+      UNION ALL SELECT s.id, 'official' AS source, s.created_at FROM official_submissions s JOIN attempts a ON a.id = s.attempt_id
+      WHERE a.problem_id = ? AND a.language = ?`;
+    const total = this.#db.prepare(`SELECT COUNT(*) AS total FROM (${ids})`).get(...values, ...values)!.total as number;
+    // Select a bounded page before decoding even the official verdict field from a potentially large payload.
+    const rows = this.#db.prepare(`WITH selected AS MATERIALIZED (SELECT * FROM (${ids})
+      ORDER BY created_at DESC, source DESC, id DESC LIMIT ? OFFSET ?)
+      SELECT selected.id, selected.source, COALESCE(r.attempt_id, s.attempt_id) AS attempt_id,
+        a.problem_id, a.problem_version, a.language, selected.created_at,
+        COALESCE(r.finished_at, s.finished_at) AS finished_at, COALESCE(r.code_hash, s.code_hash) AS code_hash,
+        COALESCE(r.status, s.status) AS status, json_extract(s.result_json, '$.status') AS verdict,
+        m.remark, m.revision AS remark_revision
+      FROM selected
+      LEFT JOIN runs r ON selected.source = 'local' AND r.id = selected.id
+      LEFT JOIN official_submissions s ON selected.source = 'official' AND s.id = selected.id
+      JOIN attempts a ON a.id = COALESCE(r.attempt_id, s.attempt_id)
+      LEFT JOIN submission_remarks m ON (selected.source = 'local' AND m.local_run_id = selected.id)
+        OR (selected.source = 'official' AND m.official_submission_id = selected.id)
+      ORDER BY selected.created_at DESC, selected.source DESC, selected.id DESC`)
+      .all(...values, ...values, bounds.limit, bounds.offset) as Row[];
+    return pageResult(rows.map(historyItem), total, bounds);
+  }
+
+  /** Read-only comparison: this path never saves a draft or restores a run. */
+  getSubmissionHistoryDetail(source: SubmissionHistorySource, id: string): SubmissionHistoryDetail {
+    historySource(source); requireText(id, 'history id');
+    const table = source === 'local' ? 'runs' : 'official_submissions';
+    const reference = source === 'local' ? 'local_run_id' : 'official_submission_id';
+    const row = this.#db.prepare(`SELECT r.id, ? AS source, r.attempt_id, a.problem_id, a.problem_version, a.language,
+      r.created_at, r.finished_at, r.code_hash, r.status, r.code,
+      ${source === 'official' ? "json_extract(r.result_json, '$.status')" : 'NULL'} AS verdict,
+      m.remark, m.revision AS remark_revision
+      FROM ${table} r JOIN attempts a ON a.id = r.attempt_id LEFT JOIN submission_remarks m ON m.${reference} = r.id
+      WHERE r.id = ? ${source === 'local' ? "AND r.status <> 'queued'" : ''}`).get(source, id) as Row | undefined;
+    if (!row) throw new Error('历史记录不存在或尚未完成。');
+    return { ...historyItem(row), code: row.code as string };
+  }
+
+  saveSubmissionRemark(input: SaveSubmissionRemarkInput): SubmissionRemark {
+    if (!input || typeof input !== 'object') throw new Error('备注内容无效。');
+    const source = historySource(input.source); requireText(input.id, 'history id');
+    if (typeof input.remark !== 'string' || input.remark.includes('\0') || [...input.remark].length > SUBMISSION_REMARK_LIMIT) {
+      throw new Error(`备注最多 ${SUBMISSION_REMARK_LIMIT} 个字。`);
+    }
+    if (!Number.isSafeInteger(input.expectedRevision) || input.expectedRevision < 0) throw new Error('备注版本无效。');
+    const remark = input.remark.trim(), table = source === 'local' ? 'runs' : 'official_submissions';
+    const reference = source === 'local' ? 'local_run_id' : 'official_submission_id';
+    return this.#transaction(() => {
+      const target = this.#db.prepare(`SELECT status FROM ${table} WHERE id = ?`).get(input.id) as Row | undefined;
+      if (!target || (source === 'local' && target.status === 'queued')) throw new Error('历史记录不存在或尚未完成。');
+      const previous = this.#db.prepare(`SELECT remark, revision FROM submission_remarks WHERE ${reference} = ?`).get(input.id) as Row | undefined;
+      const revision = (previous?.revision as number | undefined) ?? 0;
+      if (revision !== input.expectedRevision) throw new Error('备注已在其他位置更新，请重新打开后再保存。');
+      if ((previous?.remark ?? '') === remark) return { source, id: input.id, remark, remarkRevision: revision };
+      // Keep an empty annotation row after clearing, so an older editor cannot recreate a discarded remark.
+      if (previous) this.#db.prepare(`UPDATE submission_remarks SET remark = ?, revision = ?, updated_at = ? WHERE ${reference} = ?`)
+        .run(remark, revision + 1, new Date().toISOString(), input.id);
+      else this.#db.prepare(`INSERT INTO submission_remarks (${reference}, remark, revision, updated_at) VALUES (?, ?, 1, ?)`)
+        .run(input.id, remark, new Date().toISOString());
+      return { source, id: input.id, remark, remarkRevision: revision + 1 };
+    });
   }
 
   getList(id: string): StudyList | undefined {
@@ -1463,7 +1550,7 @@ export class PracticeStore {
   static inspectBackupSnapshot(snapshotPath: string): BackupSnapshotInfo {
     const db = new DatabaseSync(resolve(snapshotPath), { readOnly: true });
     try {
-      checkDatabase(db, [1, 2, 3, 4, 5, SCHEMA_VERSION]);
+      checkDatabase(db, [1, 2, 3, 4, 5, 6, SCHEMA_VERSION]);
       const version = (db.prepare('PRAGMA user_version').get() as Row).user_version as number;
       const mediaHashes = new Set<string>();
       for (const row of db.prepare('SELECT snapshot_json FROM problem_versions').all() as Row[]) {
@@ -1514,7 +1601,7 @@ export class PracticeStore {
     try {
       copyFileSync(source, temporary);
       const verification = new DatabaseSync(temporary, { readOnly: true });
-      try { checkDatabase(verification, [1, 2, 3, 4, 5, SCHEMA_VERSION]); } finally { verification.close(); }
+      try { checkDatabase(verification, [1, 2, 3, 4, 5, 6, SCHEMA_VERSION]); } finally { verification.close(); }
       linkSync(temporary, target);
       return target;
     } finally {
