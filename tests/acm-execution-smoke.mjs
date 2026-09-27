@@ -147,7 +147,9 @@ try {
   }
   pass('Four Python/Java × function/ACM drafts coexist under one problem and scope without overwriting each other');
 
-  const echo = { language: 'python', answerFormat: 'acm', code: 'import sys\nsys.stdout.write(sys.stdin.read())\n' }, semanticsScope = 'acm-semantic-smoke';
+  // Echo bytes unchanged: Python text streams translate newlines on Windows,
+  // which would test the fixture's conversion instead of the runner's comparison.
+  const echo = { language: 'python', answerFormat: 'acm', code: 'import sys\nsys.stdout.buffer.write(sys.stdin.buffer.read())\n' }, semanticsScope = 'acm-semantic-smoke';
   const absent = await execute(echo, { version: 1, compare: 'exact', cases: [{ stdin: '' }] }, semanticsScope, 'completed');
   assert.equal(Object.hasOwn(absent.run.testConfig.cases[0], 'expected'), false);
   const empty = await execute(echo, { version: 1, compare: 'exact', cases: [{ stdin: '', expected: '' }] }, semanticsScope, 'passed');
@@ -156,6 +158,10 @@ try {
   const comparisonCases = [{ stdin: '  A \t\r\n\r\n', expected: '  A\n' }];
   const normalized = await execute(echo, { version: 1, compare: 'normalized', cases: comparisonCases }, semanticsScope, 'passed');
   const exact = await execute(echo, { version: 1, compare: 'exact', cases: comparisonCases }, semanticsScope, 'wrong_answer');
+  for (const { run } of [normalized, exact]) {
+    assert.equal(run.result.stdout, comparisonCases[0].stdin, JSON.stringify(run.result));
+    assert.equal(run.result.caseResults[0].actual, comparisonCases[0].stdin, JSON.stringify(run.result));
+  }
   assert.notEqual(normalized.run.testConfigDigest, exact.run.testConfigDigest);
   await execute(echo, { version: 1, compare: 'normalized', cases: [{ stdin: ' A\n', expected: 'A\n' }, { stdin: 'A\n\nB\n', expected: 'A\nB\n' }] }, semanticsScope, 'wrong_answer');
   pass('Normalized comparison handles CRLF, trailing horizontal whitespace/newlines but preserves leading spaces/internal blank lines; exact remains strict');
@@ -174,7 +180,9 @@ try {
   const prepared = await api('prepareRun', problemId, 'python', echo.code, semanticsScope, state.problem.version, 'acm');
   const requestId = randomUUID(), args = [problemId, 'python', echo.code, semanticsScope, requestId, state.problem.version, { answerFormat: 'acm', preparationToken: prepared.token }];
   const concurrent = await page.evaluate(async args => Promise.all([window.algo.run(...args), window.algo.run(...args)]), args);
-  assert.equal(concurrent[0].id, requestId); assert.deepEqual(concurrent[0], concurrent[1]); assert.equal(concurrent[0].result.status, 'passed');
+  assert.equal(concurrent[0].id, requestId); assert.deepEqual(concurrent[0], concurrent[1]); assert.equal(concurrent[0].result.status, 'passed', JSON.stringify(concurrent[0].result));
+  assert.equal(concurrent[0].result.stdout, 'new\n', JSON.stringify(concurrent[0].result));
+  assert.equal(concurrent[0].result.caseResults[0].actual, 'new\n', JSON.stringify(concurrent[0].result));
   assert.deepEqual(await api('run', ...args), concurrent[0]);
   const afterDuplicate = await api('runPage', { problemId, language: 'python', includeQueued: true, limit: 100 });
   assert.equal(afterDuplicate.total, afterRejected.total + 1); assert.equal(afterDuplicate.items.filter(item => item.id === requestId).length, 1);

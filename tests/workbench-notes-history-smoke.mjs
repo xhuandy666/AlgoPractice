@@ -231,14 +231,31 @@ try {
   await history.waitFor();
   for (const source of ['local', 'official']) {
     const row = initialHistory.items.find(item => item.source === source);
-    await history.locator(`[data-submission-id="${row.id}"]`).click();
+    const selectedRow = history.locator(`[data-submission-id="${row.id}"]`);
+    await selectedRow.click();
     const comparison = page.getByRole('region', { name: '历史代码', exact: true });
-    await comparison.waitFor();
     const expectedCode = fixture.rows.find(item => item.id === row.id).code;
     assert.equal((await api('submissionHistoryDetail', row.source, row.id)).code, expectedCode);
-    await comparison.getByRole('textbox', { name: '历史提交代码', exact: false }).waitFor();
+    const expectedSignature = 'defarrayTotal(self,nums:list[int])->int:';
+    try {
+      // A prior panel may still be visible while IPC resolves. The new Monaco
+      // textbox can also exist before automatic layout paints its code lines.
+      await until(async () => await selectedRow.getAttribute('aria-pressed') === 'true', `historical selection ${source}:${row.id} finishes`);
+      await comparison.getByRole('textbox', { name: '历史提交代码', exact: false }).waitFor();
+      await until(async () => {
+        const lines = comparison.locator('.view-lines');
+        return await lines.count() === 1 && await lines.isVisible() && (await lines.innerText()).replace(/\s/g, '').includes(expectedSignature);
+      }, `visible historical editor paints the function signature for ${source}:${row.id}`);
+    } catch (error) {
+      report.historicalRenderFailure = { source, id: row.id, expectedSignature,
+        selected: await selectedRow.getAttribute('aria-pressed').catch(() => null),
+        visibleCode: await comparison.locator('.view-lines').allTextContents().catch(() => []),
+        editorBounds: await comparison.locator('.monaco-editor').boundingBox().catch(() => null),
+        panelText: await comparison.innerText().catch(() => 'unavailable') };
+      throw error;
+    }
     const visibleCode = await comparison.locator('.view-lines').innerText();
-    assert.ok(visibleCode.replace(/\s/g, '').includes('defarrayTotal(self,nums:list[int])->int:'));
+    assert.ok(visibleCode.replace(/\s/g, '').includes(expectedSignature));
     await comparison.locator('.monaco-editor').hover(); await page.mouse.wheel(0, 800);
     await until(async () => (await comparison.locator('.view-lines').innerText()).replace(/\s/g, '').includes(expectedCode.split('\n').find(line => line.startsWith('# archived')).replace(/\s/g, '')), 'last historical code line is rendered');
     const historicalBefore = await comparison.locator('.view-lines').innerText();
