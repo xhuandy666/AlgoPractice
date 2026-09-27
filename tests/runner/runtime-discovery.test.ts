@@ -21,6 +21,27 @@ test('Windows PATH discovery does not probe Store aliases or the current directo
   assert.ok(!candidates.some(item => /WindowsApps/.test(item) || item.startsWith('C:\\work\\')));
   assert.ok(candidates.includes('C:\\Python314\\python.exe'));
 });
+test('platform-specific Python installation roots precede PATH candidates', async () => {
+  const mac = await runtimeDiscoveryPaths('python', { platform: 'darwin', home: '/home/person', cwd: '/work/project', env: { PATH: '/fixture/bin' } });
+  assert.deepEqual(mac, [
+    '/Library/Frameworks/Python.framework/Versions/3.14/bin/python3',
+    '/opt/homebrew/opt/python@3.14/bin/python3.14', '/usr/local/opt/python@3.14/bin/python3.14',
+    '/opt/homebrew/bin/python3.14', '/usr/local/bin/python3.14',
+    '/fixture/bin/python3.14', '/fixture/bin/python3',
+  ]);
+  const windows = await runtimeDiscoveryPaths('python', { platform: 'win32', home: 'C:\\Users\\person', cwd: 'C:\\work',
+    env: { LOCALAPPDATA: 'C:\\Users\\person\\AppData\\Local', ProgramFiles: 'C:\\Program Files', PATH: 'C:\\fixture\\bin' } });
+  assert.deepEqual(windows, [
+    'C:\\Users\\person\\AppData\\Local\\Programs\\Python\\Python314\\python.exe',
+    'C:\\Program Files\\Python314\\python.exe', 'C:\\fixture\\bin\\python.exe', 'C:\\fixture\\bin\\python3.exe',
+  ]);
+});
+test('PATH discovery retains candidate order while enforcing the 64-candidate bound', async () => {
+  const directories = Array.from({ length: 80 }, (_, index) => `/fixture/bin-${index}`);
+  const candidates = await runtimeDiscoveryPaths('python', { platform: 'linux', home: '/home/person', cwd: '/work/project', env: { PATH: directories.join(':') } });
+  assert.equal(candidates.length, 64);
+  assert.deepEqual(candidates, directories.slice(0, 32).flatMap(directory => [`${directory}/python3.14`, `${directory}/python3`]));
+});
 test('GUI launch with root/home cwd does not hide every controlled system installation', async () => {
   for (const cwd of ['/', '/home/person']) {
     const candidates = await runtimeDiscoveryPaths('python', { platform: 'darwin', cwd, home: '/home/person', env: { PATH: '/home/person/.local/bin:/opt/tools' } });
@@ -49,8 +70,15 @@ test('bounded PATH discovery finds a compatible installation after rejecting ano
     const executableName = process.platform === 'win32' ? 'python.exe' : 'python3';
     const first = path.join(root, 'old'), second = path.join(root, 'compatible'); await mkdir(first); await mkdir(second);
     await writeFile(path.join(first, executableName), 'fixture'); await writeFile(path.join(second, executableName), 'fixture');
-    const resolved = await resolveRuntime('python', { root: path.join(root, 'managed'), cwd: path.join(root, 'project'), env: { PATH: [first, second].join(path.delimiter) }, inspect: async (language, options) => result(language, options!.runtimePath!, options!.runtimePath === path.join(second, executableName) ? 'ready' : options!.runtimePath === path.join(first, executableName) ? 'incompatible' : 'missing') });
+    // Exercise PATH-only discovery without probing fixed macOS roots installed on the host.
+    // Windows has no fixed Python roots when LOCALAPPDATA/ProgramFiles are absent from env.
+    const resolved = await resolveRuntime('python', { root: path.join(root, 'managed'), platform: process.platform === 'win32' ? 'win32' : 'linux', cwd: path.join(root, 'project'), env: { PATH: [first, second].join(path.delimiter) }, inspect: async (language, options) => result(language, options!.runtimePath!, options!.runtimePath === path.join(second, executableName) ? 'ready' : options!.runtimePath === path.join(first, executableName) ? 'incompatible' : 'missing') });
     assert.equal(resolved.source, 'system'); assert.equal(resolved.executable, path.join(second, executableName)); assert.equal(resolved.candidates.filter(item => item.source === 'system').length, 2);
+    assert.deepEqual(resolved.candidates.map(item => ({ executable: item.executable, source: item.source, status: item.inspection.status })), [
+      { executable: path.join(root, 'managed', 'python', ...(process.platform === 'win32' ? ['python.exe'] : ['bin', 'python3'])), source: 'managed', status: 'missing' },
+      { executable: path.join(first, executableName), source: 'system', status: 'incompatible' },
+      { executable: path.join(second, executableName), source: 'system', status: 'ready' },
+    ]);
   } finally { await rm(root, { recursive: true, force: true }); }
 });
 test('PATH aliases resolving into the project are never probed', { skip: process.platform === 'win32' ? 'Windows symlink creation requires elevated privilege or Developer Mode.' : false }, async () => {
