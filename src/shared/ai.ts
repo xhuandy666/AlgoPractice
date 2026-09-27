@@ -1,3 +1,4 @@
+import type { AnswerFormat, AcmTestConfig } from './answer-format';
 /** Renderer-visible AI data. Credentials never appear in these structures. */
 export const AI_POLICY_VERSION = 'tilian-ai-policy-v2';
 export const AI_PROMPT_VERSION = 'tilian-adaptive-coach-v2.3';
@@ -69,6 +70,7 @@ export interface AiRunEvidence {
   id: string; attemptId: string; problemVersion: string; codeHash: string;
   status: string; trustworthyExpected: boolean;
   diagnostics: AiDiagnostic[]; caseResults: AiCaseEvidence[]; stdout: string; stderr: string;
+  answerFormat?: AnswerFormat; specVersion?: string; testConfigDigest?: string;
 }
 export interface AiOfficialEvidence {
   id: string; attemptId: string; problemVersion: string; codeHash: string;
@@ -81,6 +83,10 @@ export interface AiTrustedContext {
   attemptId: string; problemId: string; problemVersion: string; language: 'python' | 'java';
   mode: AiMode; isActive: boolean; draftScopeId: string; draftRevision: number;
   code: string;
+  answerFormat?: AnswerFormat; specVersion?: string; testConfigDigest?: string;
+  testConfig?: AcmTestConfig | null;
+  expectedOutputSource?: 'native-samples' | 'user' | 'none';
+  inputDescription?: string; outputDescription?: string;
   reasoning?: string;
   problem: { title: string; description: string; constraints: string[] };
   run: AiRunEvidence | null;
@@ -96,6 +102,7 @@ export interface AiRequestSnapshot {
   attemptId: string; problemId: string; problemVersion: string; language: 'python' | 'java';
   mode: AiMode; isActive: boolean; draftScopeId: string; draftRevision: number;
   codeHash: string; code: string; kind: AiKind; question: string;
+  answerFormat?: AnswerFormat; specVersion?: string; testConfigDigest?: string;
   /** Read-only fields on snapshots saved by the old coach. Never emitted for new requests. */
   level?: AiLevel; unlockCompleteSolution?: boolean;
   runId: string | null; run: AiRunEvidence | null;
@@ -178,6 +185,7 @@ export interface AiEvent {
 export interface AiPatchApplication {
   requestId: string; attemptId: string; problemId: string; problemVersion: string; language: 'python' | 'java';
   draftScopeId: string; expectedDraftRevision: number; baseCodeHash: string; code: string;
+  answerFormat?: AnswerFormat; specVersion?: string; testConfigDigest?: string;
 }
 export interface AiConnectionResult {
   testedAt: string; providerId: string; model: string;

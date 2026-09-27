@@ -1,4 +1,5 @@
 import { prepareWindowsHelper } from './prepare-windows-helper.mjs';
+import { checkPackageBoundary } from './check-package-boundary.mjs';
 import { build as bundle } from 'esbuild';
 import { build as frontend } from 'vite';
 import { mkdir, readFile, readdir, writeFile, copyFile, rm } from 'node:fs/promises';
@@ -47,11 +48,12 @@ async function walk(path) {
   }
   return files;
 }
-const sourcePaths = [...await walk('src'), 'build/icon.png', 'build/icon.icns', 'build/icon.ico', 'runtime-manifest.json', 'tokens.css', 'LICENSE', 'package.json', 'package-lock.json', 'scripts/build.mjs', 'scripts/prepare-windows-helper.mjs', 'vite.config.ts', 'tsconfig.json', 'index.html'].map(path => path.replaceAll('\\', '/')).sort();
+const sourcePaths = [...await walk('src'), 'build/icon.png', 'build/icon.icns', 'build/icon.ico', 'runtime-manifest.json', 'tokens.css', 'LICENSE', 'package.json', 'package-lock.json', 'scripts/build.mjs', 'scripts/check-package-boundary.mjs', 'scripts/prepare-windows-helper.mjs', 'vite.config.ts', 'tsconfig.json', 'index.html'].map(path => path.replaceAll('\\', '/')).sort();
 const inputs = [];
 for (const path of sourcePaths) inputs.push({ path, sha256: hash(await readFile(path)) });
 const pkg = JSON.parse(await readFile('package.json', 'utf8'));
 const sourceHash = hash(JSON.stringify(inputs));
 await writeFile('dist/build-info.json', JSON.stringify({ application: pkg.name, version: pkg.version, sourceHash, sourceInputs: inputs, dependencies: pkg.devDependencies, runtimeManifest: JSON.parse(await readFile('runtime-manifest.json', 'utf8')), noticeInventory: inventory }, null, 2) + '\n');
 await writeFile('dist/THIRD_PARTY_NOTICES.md', `# Third-party notices\n\nAlgoPractice ${pkg.version}. Source SHA-256: ${sourceHash}.\n\nThis directory contains the upstream notices for packages included in the application bundle and the Electron runtime. Build-only dependencies remain described in package-lock.json. Python and Temurin are installed separately from the pinned runtime manifest; their original license files remain in each installation.\n\n` + inventory.map(item => `- ${item.name} ${item.version} (${item.license}): ${item.notices.map(notice => `[${notice.file}](${notice.file})`).join(', ')}`).join('\n') + '\n');
-console.log(`Build ${pkg.version}: ${sourceHash}; ${inventory.length} third-party packages with original notices.`);
+await checkPackageBoundary(root);
+console.log(`Build ${pkg.version}: ${sourceHash}; ${inventory.length} third-party packages with original notices; no bundled language runtime.`);

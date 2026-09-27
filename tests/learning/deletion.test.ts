@@ -48,15 +48,23 @@ function graph(store: PracticeStore) {
   store.beginAIRequest(cachedSeed); const cached = store.finishAIRequest(cachedSeed.id, { ...completed, cachedFromRequestId: sourceSeed.id });
   return { ended, run, note, file, reviewItem: store.getReviewItem(item.id)!, reviewInput, review, finishedChild, activeChild, cached };
 }
-function rows(db: DatabaseSync) {
+function rows(db: DatabaseSync, preV8 = false) {
   const tables = db.prepare("SELECT name FROM sqlite_schema WHERE type = 'table' AND name NOT LIKE 'sqlite_%' ORDER BY name").all();
-  return Object.fromEntries(tables.map(({ name }) => [name, db.prepare(`SELECT * FROM "${name}" ORDER BY rowid`).all()]));
+  return Object.fromEntries(tables.map(({ name }) => [name, db.prepare(`SELECT * FROM "${name}" ORDER BY rowid`).all().map(row => {
+    if (preV8 && ['attempts', 'active_attempts', 'drafts'].includes(name as string)) {
+      const { answer_format, spec_version, test_config_json, final_test_config_json, ...original } = row; return Object.assign(Object.create(null), original);
+    }
+    return row;
+  })]));
 }
 function legacyV3(dbPath: string, populatedPath: string) {
   const db = new DatabaseSync(dbPath); db.exec('PRAGMA journal_mode = WAL; PRAGMA foreign_keys = ON; PRAGMA wal_autocheckpoint = 0;');
   db.exec(readFileSync(new URL('../storage/fixtures/p3-schema.sql', import.meta.url), 'utf8'));
   db.prepare('ATTACH DATABASE ? AS populated').run(populatedPath); db.exec('BEGIN IMMEDIATE; PRAGMA defer_foreign_keys = ON;');
-  for (const { name } of db.prepare("SELECT name FROM main.sqlite_schema WHERE type = 'table' AND name NOT LIKE 'sqlite_%'").all()) db.exec(`INSERT INTO main."${name}" SELECT * FROM populated."${name}"`);
+  for (const { name } of db.prepare("SELECT name FROM main.sqlite_schema WHERE type = 'table' AND name NOT LIKE 'sqlite_%'").all()) {
+    const columns = db.prepare(`PRAGMA main.table_info("${name}")`).all().map(row => `"${row.name}"`).join(',');
+    db.exec(`INSERT INTO main."${name}" (${columns}) SELECT ${columns} FROM populated."${name}"`);
+  }
   db.exec('COMMIT; DETACH DATABASE populated;'); return db;
 }
 
@@ -131,8 +139,8 @@ test('a real schema 3 WAL database upgrades to 7 only after an unchanged schema 
   try {
     const before = rows(legacy), upgraded = new PracticeStore(legacyPath);
     try {
-      assert.ok(upgraded.migrationBackupPath?.includes('.before-v7-')); assert.equal(legacy.prepare('PRAGMA user_version').get()?.user_version, 7);
-      const after = rows(legacy); delete after.attachment_deletion_candidates; delete after.company_datasets; delete after.interview_sessions; delete after.interview_attempts; delete after.official_submissions; delete after.submission_remarks; assert.deepEqual(after, before);
+      assert.ok(upgraded.migrationBackupPath?.includes('.before-v8-')); assert.equal(legacy.prepare('PRAGMA user_version').get()?.user_version, 8);
+      const after = rows(legacy, true); delete after.attachment_deletion_candidates; delete after.company_datasets; delete after.interview_sessions; delete after.interview_attempts; delete after.official_submissions; delete after.submission_remarks; assert.deepEqual(after, before);
       const backup = new DatabaseSync(upgraded.migrationBackupPath!, { readOnly: true });
       try { assert.equal(backup.prepare('PRAGMA user_version').get()?.user_version, 3); assert.deepEqual(rows(backup), before); } finally { backup.close(); }
       assert.equal(PracticeStore.inspectBackupSnapshot(upgraded.migrationBackupPath!).schemaVersion, 3); assert.deepEqual(PracticeStore.inspectBackupSnapshot(upgraded.migrationBackupPath!).attachments, [value.file]);
@@ -149,9 +157,9 @@ test('a failed schema 3 to 7 migration restores every original trigger and row a
   try {
     legacy.exec('CREATE TABLE attachment_deletion_candidates (injected_conflict TEXT)');
     const beforeRows = rows(legacy), beforeSchema = legacy.prepare('SELECT name, sql FROM sqlite_schema ORDER BY name').all();
-    assert.throws(() => new PracticeStore(legacyPath), /Schema v7 migration failed/); assert.equal(legacy.prepare('PRAGMA user_version').get()?.user_version, 3);
+    assert.throws(() => new PracticeStore(legacyPath), /Schema v8 migration failed/); assert.equal(legacy.prepare('PRAGMA user_version').get()?.user_version, 3);
     assert.deepEqual(rows(legacy), beforeRows); assert.deepEqual(legacy.prepare('SELECT name, sql FROM sqlite_schema ORDER BY name').all(), beforeSchema);
-    const backupName = readdirSync(directory).find(name => name.startsWith('failed-v3.sqlite.before-v7-') && name.endsWith('.sqlite')); assert.ok(backupName);
+    const backupName = readdirSync(directory).find(name => name.startsWith('failed-v3.sqlite.before-v8-') && name.endsWith('.sqlite')); assert.ok(backupName);
     const backup = new DatabaseSync(join(directory, backupName!), { readOnly: true });
     try { assert.equal(backup.prepare('PRAGMA user_version').get()?.user_version, 3); assert.deepEqual(rows(backup), beforeRows); } finally { backup.close(); }
   } finally { legacy.close(); }
@@ -160,7 +168,7 @@ test('a failed schema 3 to 7 migration restores every original trigger and row a
 test('a deleted archive stays deleted after schema 4 backup and restore while retained learning data remains exact', async t => {
   const { store, directory } = fixture(t), value = graph(store); store.deleteEndedAttempt(value.ended.id);
   const note = store.getNote(value.note.id), card = store.getReviewItem(value.reviewItem.id), backupPath = join(directory, 'after-delete.sqlite'); await store.backupTo(backupPath);
-  assert.equal(PracticeStore.inspectBackupSnapshot(backupPath).schemaVersion, 7); assert.deepEqual(PracticeStore.inspectBackupSnapshot(backupPath).attachments, [value.file]);
+  assert.equal(PracticeStore.inspectBackupSnapshot(backupPath).schemaVersion, 8); assert.deepEqual(PracticeStore.inspectBackupSnapshot(backupPath).attachments, [value.file]);
   const restoredPath = join(directory, 'restored.sqlite'); PracticeStore.restoreBackup(backupPath, restoredPath); const restored = new PracticeStore(restoredPath);
   try {
     assert.equal(restored.migrationBackupPath, null); assert.equal(restored.getAttempt(value.ended.id), undefined);

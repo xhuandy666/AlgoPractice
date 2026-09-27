@@ -5,6 +5,7 @@ import { join } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import { test, type TestContext } from 'node:test';
 import { PracticeStore, type Attempt } from '../../src/storage/practice-store.ts';
+import { stripAnswerFormatSchema } from './fixtures/pre-v8.ts';
 
 function fixture(t: TestContext) {
   const directory = mkdtempSync(join(tmpdir(), 'tilian-submission-history-')), dbPath = join(directory, 'practice.sqlite');
@@ -95,10 +96,11 @@ test('schema 6 receives a verified original snapshot before upgrading; restoring
   const { store, dbPath, directory, attempt, problem, draft } = fixture(t);
   const run = local(store, attempt, 'legacy-run'), submission = official(store, attempt, 'legacy-official'); store.close();
   const old = new DatabaseSync(dbPath);
+  stripAnswerFormatSchema(old);
   old.exec('DROP TABLE submission_remarks; DROP INDEX attempts_by_problem_language; PRAGMA user_version=6;'); old.close();
   const upgraded = new PracticeStore(dbPath);
   try {
-    assert.ok(upgraded.migrationBackupPath?.includes('.before-v7-')); assert.ok(existsSync(upgraded.migrationBackupPath!));
+    assert.ok(upgraded.migrationBackupPath?.includes('.before-v8-')); assert.ok(existsSync(upgraded.migrationBackupPath!));
     assert.equal(PracticeStore.inspectBackupSnapshot(upgraded.migrationBackupPath!).schemaVersion, 6);
     const original = new DatabaseSync(upgraded.migrationBackupPath!, { readOnly: true });
     try { assert.equal(original.prepare("SELECT name FROM sqlite_schema WHERE name='submission_remarks'").get(), undefined); } finally { original.close(); }
@@ -123,7 +125,7 @@ test('remark backup round trip is exact and deleting an archive cascades only it
   store.saveSubmissionRemark({ source: 'local', id: retained.id, remark: '保留', expectedRevision: 0 });
   const note = store.saveNote({ requestId: 'keep-note', kind: 'problem', subjectId: problem.id, title: '笔记', markdown: '独立内容' });
   const target = join(directory, 'annotated.sqlite'); await store.backupTo(target);
-  assert.equal(PracticeStore.inspectBackupSnapshot(target).schemaVersion, 7);
+  assert.equal(PracticeStore.inspectBackupSnapshot(target).schemaVersion, 8);
   const copyPath = join(directory, 'restored.sqlite'); PracticeStore.restoreBackup(target, copyPath); const copy = new PracticeStore(copyPath);
   try {
     for (const remark of [localRemark, officialRemark]) { const detail = copy.getSubmissionHistoryDetail(remark.source, remark.id); assert.equal(detail.remark, remark.remark); assert.equal(detail.remarkRevision, remark.remarkRevision); }
@@ -140,14 +142,15 @@ test('remark backup round trip is exact and deleting an archive cascades only it
 test('failed schema 7 migration rolls back every change and leaves a usable original backup', t => {
   const { store, dbPath, directory, draft, problem } = fixture(t); store.close();
   const old = new DatabaseSync(dbPath);
+  stripAnswerFormatSchema(old);
   try {
     old.exec('DROP TABLE submission_remarks; DROP INDEX attempts_by_problem_language; CREATE TABLE submission_remarks(conflicting_column TEXT); PRAGMA user_version=6;');
     const before = old.prepare('SELECT name, sql FROM sqlite_schema ORDER BY name').all();
-    assert.throws(() => new PracticeStore(dbPath), /Schema v7 migration failed/);
+    assert.throws(() => new PracticeStore(dbPath), /Schema v8 migration failed/);
     assert.equal(old.prepare('PRAGMA user_version').get()?.user_version, 6);
     assert.deepEqual(old.prepare('SELECT name, sql FROM sqlite_schema ORDER BY name').all(), before);
     assert.equal(old.prepare('SELECT code FROM drafts WHERE problem_id=?').get(problem.id)?.code, draft.code);
-    const backups = readdirSync(directory).filter(name => name.includes('.before-v7-') && name.endsWith('.sqlite'));
+    const backups = readdirSync(directory).filter(name => name.includes('.before-v8-') && name.endsWith('.sqlite'));
     assert.equal(backups.length, 1); assert.equal(PracticeStore.inspectBackupSnapshot(join(directory, backups[0])).schemaVersion, 6);
     assert.equal(readdirSync(directory).some(name => name.endsWith('.partial')), false);
   } finally { old.close(); }

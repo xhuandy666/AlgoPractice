@@ -1,4 +1,6 @@
 import type { OfficialSubmitInput, OfficialSubmission } from './official';
+import type { RuntimeState } from './runtime';
+import type { AnswerFormat, AcmTestConfig, PracticeSpec } from './answer-format';
 import type { SaveSubmissionRemarkInput, SubmissionHistoryDetail, SubmissionHistoryFilter, SubmissionHistoryItem, SubmissionHistorySource, SubmissionRemark } from './submission-history';
 import type { CompanyDataset, CompanyPreview, InterviewRules, InterviewPool, InterviewView, InterviewSaveResult } from './interview';
 import type { Language, RunEvent, RunResult, RunStatus } from '../runner/types';
@@ -13,6 +15,7 @@ export type Page = 'today' | 'library' | 'workbench' | 'sources' | 'notes' | 'ar
 export interface RunArchive {
   id: string; attemptId: string; problemId: string; problemVersion: string; code: string; language: Language; createdAt: string;
   result: Omit<RunResult, 'status'> & { status: RunStatus | 'interrupted' };
+  answerFormat?: AnswerFormat; specVersion?: string; testConfigDigest?: string | null; testConfig?: AcmTestConfig;
 }
 export interface RuntimeProgress { language: Language; phase: 'download' | 'copy' | 'verify' | 'extract' | 'validate' | 'commit' | 'ready'; receivedBytes: number; totalBytes: number; }
 export interface EnvironmentInfo {
@@ -20,17 +23,24 @@ export interface EnvironmentInfo {
   python: string | null; java: string | null; dataDirectory: string;
   runtimeNotices: string[];
   installation: { language: Language; progress: RuntimeProgress | null } | null;
+  runtimeStates: Record<Language, RuntimeState>;
+  installations: Partial<Record<Language, { progress: RuntimeProgress | null }>>;
+  autoInstallRuntimes: boolean;
   notificationSupported: boolean; reminder: { dueAt: string; deliveredAt?: string } | null;
 }
 export interface LibraryData { problems: LibraryProblem[]; lists: StudyList[]; jobs: ImportJob[]; }
 export interface LibraryIndex { problems: ProblemListItem[]; totalProblems: number; lists: StudyList[]; jobs: ImportJob[]; }
-export interface WorkspaceData { problem: LibraryProblem; latestVersion: string; draft: Draft | null; attempt: Attempt | null; history: RunArchive[]; historyTotal?: number; }
+export interface WorkspaceData { problem: LibraryProblem; latestVersion: string; draft: Draft | null; attempt: Attempt | null; history: RunArchive[]; historyTotal?: number; spec?: PracticeSpec; }
 export interface ArchiveSummary { attempt: Attempt; title: string; runCount: number; lastStatus: RunArchive['result']['status'] | null; activeMs?: number; helpLevel?: string | null; }
 export interface ArchiveDetail { attempt: Attempt; runs: RunArchive[]; aiRequests?: AiRequestRecord[]; noteVersions?: NoteVersion[]; activeMs?: number; }
 export interface PreparedImport { id: string; preview: ImportPreview; membership: ListRefreshPreview | null; }
+export interface Hot100ImportResult { listId: string; job: ImportJob | null; }
 export interface PreparedProblemRefresh { id: string; before: LibraryProblem; after: LibraryProblem['content']; changed: boolean; }
 export interface BackupState { busy: boolean; backups: BackupSummary[]; lastError: string | null; }
 export interface PreparedRestore { id: string; manifest: BackupManifest; bytes: number; }
+export interface RunPreparation { token: string; runtime: RuntimeState; autoInstall: boolean; }
+export interface RunOptions { answerFormat?: 'function' | 'acm'; preparationToken?: string; }
+export interface DraftOptions { answerFormat?: AnswerFormat; testConfig?: AcmTestConfig; expectedRevision?: number; }
 export interface DesktopBridge {
   submissionHistory(filter: SubmissionHistoryFilter): Promise<PageResult<SubmissionHistoryItem>>;
   submissionHistoryDetail(source: SubmissionHistorySource, id: string): Promise<SubmissionHistoryDetail>;
@@ -112,20 +122,23 @@ export interface DesktopBridge {
   archiveOverview(id: string): Promise<{ attempt: Attempt; runCount: number; activeMs: number; interviewId: string | null }>;
   archiveLearning(id: string): Promise<{ aiRequests: AiRequestRecord[]; noteVersions: NoteVersion[] }>;
   library(): Promise<LibraryData>;
-  workspace(problemId: string, language: Language, scopeId?: string): Promise<WorkspaceData>;
-  startPractice(problemId: string, language: Language, scopeId?: string): Promise<WorkspaceData>;
+  workspace(problemId: string, language: Language, scopeId?: string, answerFormat?: AnswerFormat): Promise<WorkspaceData>;
+  startPractice(problemId: string, language: Language, scopeId?: string, answerFormat?: AnswerFormat): Promise<WorkspaceData>;
   finishPractice(attemptId: string, code: string): Promise<Attempt>;
   archives(): Promise<ArchiveSummary[]>;
   deleteArchive(id: string): Promise<boolean>;
   archive(id: string): Promise<ArchiveDetail>;
   restoreRun(runId: string, requestId: string): Promise<{ draft: Draft; attempt: Attempt }>;
-  loadDraft(problemId: string, language: Language, scopeId?: string): Promise<Draft | null>;
-  saveDraft(problemId: string, language: Language, code: string, scopeId?: string): Promise<{ revision: number }>;
-  run(problemId: string, language: Language, code: string, scopeId?: string, requestId?: string, problemVersion?: string): Promise<RunArchive>;
+  loadDraft(problemId: string, language: Language, scopeId?: string, answerFormat?: AnswerFormat): Promise<Draft | null>;
+  saveDraft(problemId: string, language: Language, code: string, scopeId?: string, options?: DraftOptions): Promise<{ revision: number }>;
+  run(problemId: string, language: Language, code: string, scopeId?: string, requestId?: string, problemVersion?: string, options?: RunOptions): Promise<RunArchive>;
+  prepareRun(problemId: string, language: Language, code: string, scopeId?: string, problemVersion?: string, answerFormat?: 'function' | 'acm'): Promise<RunPreparation>;
+  cancelPreparedRun(token: string): Promise<void>;
   cancel(): Promise<void>;
   onRunEvent(callback: (event: RunEvent) => void): () => void;
   history(problemId: string, language: Language, scopeId?: string): Promise<RunArchive[]>;
   previewImport(input: ImportInput): Promise<PreparedImport>;
+  importHot100(): Promise<Hot100ImportResult>;
   selectImportFile(): Promise<ImportInput | null>;
   startImport(previewId: string, requestId: string): Promise<ImportJob>;
   importJob(id: string): Promise<ImportJob>;
@@ -138,9 +151,13 @@ export interface DesktopBridge {
   sourceSession(): Promise<{ hasSession: boolean }>;
   loginSource(): Promise<void>;
   logoutSource(): Promise<void>;
-  setRuntime(language: Language): Promise<void>;
-  installRuntime(language: Language, offline?: boolean): Promise<void>;
-  cancelInstall(): Promise<void>;
+  setRuntime(language: Language): Promise<boolean | void>;
+  resetRuntime(language: Language): Promise<void>;
+  runtimePreflight(language: Language): Promise<RuntimeState>;
+  setAutoInstallRuntimes(enabled: boolean): Promise<void>;
+  uninstallRuntime(language: Language): Promise<void>;
+  installRuntime(language: Language, offline?: boolean): Promise<boolean | void>;
+  cancelInstall(language?: Language): Promise<void>;
   onRuntimeProgress(callback: (progress: RuntimeProgress) => void): () => void;
   notifyAfter(seconds: number): Promise<void>;
   clearReminder(): Promise<void>;

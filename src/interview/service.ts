@@ -28,8 +28,8 @@ export class InterviewService {
     if (active && ['backup:restore','interview:preview','company:preview','company:commit','company:select-file','company:complete'].includes(channel)) throw new Error('请先结束当前面试。');
     if (active && ['interview:get','interview:save','interview:finish','interview:coach','interview:run'].includes(channel) && args[0] !== active.id) throw new Error('只能访问当前面试。');
     // Legacy workbench/restore/patch entry points cannot mutate an interview-owned scope or final snapshot.
-    if (['draft:save','practice:start','practice:workspace','draft:load','run:history','runner:run'].includes(channel)) {
-      const scope = channel === 'draft:save' || channel === 'runner:run' ? args[3] : args[2];
+    if (['draft:save','practice:start','practice:workspace','draft:load','run:history','runner:run','runner:prepare'].includes(channel)) {
+      const scope = channel === 'draft:save' || channel === 'runner:run' || channel === 'runner:prepare' ? args[3] : args[2];
       if (typeof scope === 'string' && /^(interview|interview-recap):/.test(scope)) throw new Error('面试草稿请通过面试工作台操作。');
     }
     if (channel === 'ai:apply-patch' && typeof args[0] === 'string') { const request = this.options.store().getAIRequest(args[0]); if (request && this.options.store().getInterviewForAttempt(request.attemptId)) throw new Error('面试代码修改必须通过面试工作台确认保存。'); }
@@ -99,10 +99,13 @@ export class InterviewService {
   save(key:string,problemId:string,code:unknown,reasoning:unknown):InterviewSaveResult {
     this.tick();const session=this.#session(key),item=session.items.find(i=>i.problem.id===id(problemId));if(!item)throw new Error('题目不属于本场。'); const content=codeText(code);
     if(typeof reasoning!=='string'||reasoning.length>12000)throw new Error('思路记录最多 12000 字。');const store=this.options.store(),language=session.pool.rules.language;
-    const recap=()=>{store.saveDraft({problemId,language,scopeId:`interview-recap:${session.id}:reasoning`,code:reasoning});return store.saveDraft({problemId,language,scopeId:`interview-recap:${session.id}`,code:content});};
+    const attempt=store.getAttempt(item.attemptId);if(!attempt)throw new Error('面试练习不存在。');
+    // Bind all answer and recap writes to the immutable attempt, never the current library head.
+    const format={answerFormat:attempt.answerFormat,specVersion:attempt.specVersion};
+    const recap=()=>{store.saveDraft({problemId,language,scopeId:`interview-recap:${session.id}:reasoning`,code:reasoning,...format});return store.saveDraft({problemId,language,scopeId:`interview-recap:${session.id}`,code:content,...format});};
     if(session.endedAt)return {counted:false,answer:item.final!,recap:recap()};
     // First commit the actual code; only then take the trusted completion time. A late commit never enters accepted.
-    const draft=store.saveDraft({problemId,language,scopeId:item.scopeId,code:content}); const completedAt=this.#now(); this.tick();
+    const draft=store.saveDraft({problemId,language,scopeId:item.scopeId,code:content,...format}); const completedAt=this.#now(); this.tick();
     const fresh=this.#session(key);
     if(fresh.endedAt||completedAt>=Date.parse(session.deadlineAt)){if(!fresh.endedAt)this.#freeze(fresh,'deadline',Date.parse(session.deadlineAt));return {counted:false,answer:fresh.items.find(i=>i.problem.id===problemId)!.accepted,recap:recap()};}
     const answer:InterviewAnswer={code:content,codeHash:draft.codeHash,revision:draft.revision,savedAt:iso(completedAt),reasoning};fresh.items.find(i=>i.problem.id===problemId)!.accepted=answer;fresh.lastObservedAt=iso(completedAt);store.updateInterview(fresh);
@@ -115,7 +118,10 @@ export class InterviewService {
   addReview(key:string,problemId:string){this.tick();const session=this.#session(key);if(!session.endedAt||!session.items.some(i=>i.problem.id===id(problemId)))throw new Error('请先结束本场，再加入复习。');return this.options.store().addReviewItem({problemId,language:session.pool.rules.language,target:'rewrite'});}
   view(key:string):InterviewView {
     this.tick();const session=this.#session(key),store=this.options.store();const active=store.getActiveInterview();if(active?.mode==='strict'&&active.id!==key)throw new Error('严格模式无法访问历史面试。');
-    const items=session.items.map(item=>({item,attempt:store.getAttempt(item.attemptId)!,draft:store.getDraft(item.problem.id,session.pool.rules.language,item.scopeId)??null,runs:store.listRuns(item.attemptId),aiHelp:store.listAIRequests(item.attemptId).map(request=>({requestId:request.id,status:request.status,createdAt:request.createdAt,finishedAt:request.finishedAt,duringSession:request.status==='completed'&&Boolean(request.finishedAt)&&(!session.endedAt||Date.parse(request.finishedAt!)<=Date.parse(session.endedAt))})),recap:store.getDraft(item.problem.id,session.pool.rules.language,`interview-recap:${session.id}`)??null,recapReasoning:store.getDraft(item.problem.id,session.pool.rules.language,`interview-recap:${session.id}:reasoning`)?.code??null}));
+    const items=session.items.map(item=>{
+      const attempt=store.getAttempt(item.attemptId)!;
+      return {item,attempt,draft:store.getDraft(item.problem.id,session.pool.rules.language,item.scopeId,attempt.answerFormat)??null,runs:store.listRuns(item.attemptId),aiHelp:store.listAIRequests(item.attemptId).map(request=>({requestId:request.id,status:request.status,createdAt:request.createdAt,finishedAt:request.finishedAt,duringSession:request.status==='completed'&&Boolean(request.finishedAt)&&(!session.endedAt||Date.parse(request.finishedAt!)<=Date.parse(session.endedAt))})),recap:store.getDraft(item.problem.id,session.pool.rules.language,`interview-recap:${session.id}`,attempt.answerFormat)??null,recapReasoning:store.getDraft(item.problem.id,session.pool.rules.language,`interview-recap:${session.id}:reasoning`,attempt.answerFormat)?.code??null};
+    });
     const result:InterviewView={session,items,remainingMs:session.endedAt?0:Math.max(0,Date.parse(session.deadlineAt)-this.#now())};
     if(!session.endedAt&&session.mode==='strict'){
       session.pool={...session.pool,rules:{...session.pool.rules,tags:[],company:null,datasetId:null},candidates:[],dataset:null,exclusions:[]};

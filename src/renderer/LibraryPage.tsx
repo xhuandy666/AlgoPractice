@@ -3,6 +3,7 @@ import type { DesktopBridge, LibraryIndex, PreparedProblemRefresh } from '../sha
 import type { PageResult, ProblemListItem } from '../shared/learning';
 import { capability, difficultyLabel, sourceLabel } from '../shared/presentation';
 import { dateTime, errorText, Statement } from './ui';
+import { Hot100Card } from './Hot100Card';
 
 export function LibraryPage({ api, data, onOpen, onImport, onChanged, onError }: {
   api: DesktopBridge | undefined; data: LibraryIndex; onOpen: (id: string) => void; onImport: (url?: string) => void; onChanged: () => Promise<void>; onError: (error: string) => void;
@@ -22,6 +23,7 @@ export function LibraryPage({ api, data, onOpen, onImport, onChanged, onError }:
   const operation = async (key: string, action: () => Promise<void>) => { setBusy(key); try { await action(); } catch (error) { onError(errorText(error)); } finally { setBusy(''); } };
   return <section className="library-page scroll-page">
     <div className="page-intro"><div><h2>我的题库</h2></div><button className="button primary" onClick={() => onImport()}>导入题单</button></div>
+    <Hot100Card api={api} lists={data.lists} jobs={data.jobs} onChanged={onChanged} onView={id => { setListId(id); setChapterId(''); setQuery(''); setDifficulty(''); setSupport(''); setPage(0); }} />
     <div className="library-filters">
       <label className="search-field">搜索题目<input type="search" placeholder="题名、编号或标签" value={query} onChange={event => { setQuery(event.target.value); setPage(0); }} /></label>
       <label>题库范围<select value={listId} onChange={event => { setListId(event.target.value); setChapterId(''); setPage(0); }}><option value="">全部题目 · {data.totalProblems}</option>{data.lists.map(item => <option key={item.id} value={item.id}>{item.title} · {item.items.length}</option>)}</select></label>

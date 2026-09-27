@@ -1,40 +1,48 @@
-import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from 'react';
+import { useCallback, useEffect, useId, useRef, useState, useSyncExternalStore } from 'react';
+import type { Language } from '../runner/types';
 import type { DesktopBridge, EnvironmentInfo, RuntimeProgress } from '../shared/bridge';
 import { errorText } from './ui';
 import { getPerformanceState, performanceReport, startPerformanceRecording, stopPerformanceRecording, subscribePerformance } from './performance-monitor';
+import { RuntimeArtifactDetails, RuntimeInstallProgress } from './RuntimePreparation';
+import { runtimeBytes, runtimeSourceLabels } from './runtime-presentation';
 
-const phaseLabels: Record<RuntimeProgress['phase'], string> = {
-  download: '正在下载', copy: '正在读取离线包', verify: '正在校验', extract: '正在解压',
-  validate: '正在验证运行时', commit: '正在启用', ready: '已安装',
-};
+type Installations = Partial<Record<Language, { progress: RuntimeProgress | null }>>;
+type LanguageMessages = Partial<Record<Language, string>>;
 
 export function EnvironmentPage({ api, onChanged, onError }: {
   api: DesktopBridge | undefined; onChanged: () => void; onError: (message: string) => void;
 }) {
   const [environment, setEnvironment] = useState<EnvironmentInfo | null>(null);
-  const [busyAction, setBusyAction] = useState(false);
+  const [actions, setActions] = useState<LanguageMessages>({});
+  const [errors, setErrors] = useState<LanguageMessages>({});
+  const [installations, setInstallations] = useState<Installations>({});
+  const [starting, setStarting] = useState<Partial<Record<Language, boolean>>>({});
+  const [cancelling, setCancelling] = useState<Partial<Record<Language, boolean>>>({});
+  const [preferenceBusy, setPreferenceBusy] = useState(false);
+  const [preferenceError, setPreferenceError] = useState('');
+  const [reminderBusy, setReminderBusy] = useState(false);
   const performanceState = useSyncExternalStore(subscribePerformance, getPerformanceState);
   const [performanceNotice, setPerformanceNotice] = useState('');
-  const [installation, setInstallation] = useState<EnvironmentInfo['installation']>(null);
-  const [startingLanguage, setStartingLanguage] = useState<RuntimeProgress['language'] | null>(null);
-  const [cancelling, setCancelling] = useState(false);
+  const preferenceId = useId();
   const mounted = useRef(false);
-  const currentInstallation = useRef<EnvironmentInfo['installation']>(null);
+  const currentInstallations = useRef<Installations>({});
+  const actionLocks = useRef(new Set<Language>());
+  const snapshotGeneration = useRef(0);
   const callbacks = useRef({ onChanged, onError });
   callbacks.current = { onChanged, onError };
 
   const refreshEnvironment = useCallback(async (notifyChanged = false) => {
     if (!api) return;
+    const generation = ++snapshotGeneration.current;
     const snapshot = await api.environment();
-    const nextInstallation = snapshot.installation ?? null;
-    const installationFinished = Boolean(currentInstallation.current) && !nextInstallation;
-    if (mounted.current) {
-      currentInstallation.current = nextInstallation;
-      setEnvironment(snapshot);
-      setInstallation(nextInstallation);
-      if (!nextInstallation) setCancelling(false);
-    }
-    if (notifyChanged || installationFinished) callbacks.current.onChanged();
+    if (!mounted.current || generation !== snapshotGeneration.current) return;
+    const next = snapshot.installations ?? (snapshot.installation ? { [snapshot.installation.language]: { progress: snapshot.installation.progress } } : {});
+    const finished = (['python', 'java'] as const).some(language => currentInstallations.current[language] && !next[language]);
+    currentInstallations.current = next;
+    setEnvironment(snapshot);
+    setInstallations(next);
+    setCancelling(previous => ({ python: Boolean(next.python && previous.python), java: Boolean(next.java && previous.java) }));
+    if (notifyChanged || finished) callbacks.current.onChanged();
   }, [api]);
 
   useEffect(() => {
@@ -53,72 +61,129 @@ export function EnvironmentPage({ api, onChanged, onError }: {
     };
     const stopProgress = api.onRuntimeProgress(progress => {
       if (!mounted.current) return;
-      const next = { language: progress.language, progress };
-      currentInstallation.current = next;
-      setInstallation(next);
+      // A snapshot already in flight must not erase a newer progress event.
+      snapshotGeneration.current++;
+      const next = { ...currentInstallations.current, [progress.language]: { progress } };
+      currentInstallations.current = next;
+      setInstallations(next);
       if (progress.phase === 'ready') void refresh();
     });
     void refresh();
-    // Poll only this page's environment; App is notified after a real change.
-    const timer = setInterval(() => { void refresh(); }, 1000);
-    return () => { mounted.current = false; clearInterval(timer); stopProgress(); };
+    const timer = setInterval(() => { void refresh(); }, 1500);
+    return () => { mounted.current = false; snapshotGeneration.current++; clearInterval(timer); stopProgress(); };
   }, [api, refreshEnvironment]);
 
-  async function environmentAction(action: () => Promise<void>, starting?: RuntimeProgress['language']) {
-    setBusyAction(true);
-    if (starting) setStartingLanguage(starting);
+  async function environmentAction(language: Language, label: string, action: () => Promise<unknown>, installation = false) {
+    if (actionLocks.current.has(language)) return;
+    actionLocks.current.add(language);
+    setActions(previous => ({ ...previous, [language]: label }));
+    setErrors(previous => ({ ...previous, [language]: '' }));
+    if (installation) setStarting(previous => ({ ...previous, [language]: true }));
     try { await action(); }
-    catch (error) { callbacks.current.onError(errorText(error)); }
-    finally {
-      if (mounted.current) { setBusyAction(false); setStartingLanguage(null); }
-      try { await refreshEnvironment(true); }
-      catch (error) { callbacks.current.onError(errorText(error)); }
+    catch (error) {
+      if (mounted.current) setErrors(previous => ({ ...previous, [language]: errorText(error) }));
+    } finally {
+      actionLocks.current.delete(language);
+      if (mounted.current) {
+        setActions(previous => ({ ...previous, [language]: '' }));
+        setStarting(previous => ({ ...previous, [language]: false }));
+        try { await refreshEnvironment(true); }
+        catch (error) { if (mounted.current) setErrors(previous => ({ ...previous, [language]: errorText(error) })); }
+      }
     }
   }
 
-  async function cancelInstallation() {
-    if (!api || cancelling) return;
-    setCancelling(true);
-    try { await api.cancelInstall(); await refreshEnvironment(); }
-    catch (error) { setCancelling(false); callbacks.current.onError(errorText(error)); }
+  async function cancelInstallation(language: Language) {
+    if (!api || cancelling[language]) return;
+    setCancelling(previous => ({ ...previous, [language]: true }));
+    try { await api.cancelInstall(language); await refreshEnvironment(); }
+    catch (error) {
+      if (mounted.current) {
+        setCancelling(previous => ({ ...previous, [language]: false }));
+        setErrors(previous => ({ ...previous, [language]: errorText(error) }));
+      }
+    }
   }
 
-  const activeInstallation = installation ?? (startingLanguage ? { language: startingLanguage, progress: null } : null);
-  const busyEnvironment = busyAction || Boolean(activeInstallation);
-  const progress = activeInstallation?.progress;
-  const percentage = progress && progress.totalBytes > 0 && Number.isFinite(progress.receivedBytes / progress.totalBytes)
-    ? `${Math.min(100, Math.max(0, Math.round(progress.receivedBytes / progress.totalBytes * 100)))}%` : '';
+  async function saveAutoInstall(enabled: boolean) {
+    if (!api || preferenceBusy) return;
+    setPreferenceBusy(true); setPreferenceError('');
+    try { await api.setAutoInstallRuntimes(enabled); await refreshEnvironment(true); }
+    catch (error) { if (mounted.current) setPreferenceError(errorText(error)); }
+    finally { if (mounted.current) setPreferenceBusy(false); }
+  }
+
+  async function reminderAction(action: () => Promise<void>) {
+    if (reminderBusy) return;
+    setReminderBusy(true);
+    try { await action(); await refreshEnvironment(); }
+    catch (error) { if (mounted.current) callbacks.current.onError(errorText(error)); }
+    finally { if (mounted.current) setReminderBusy(false); }
+  }
+
   const notices = (environment?.runtimeNotices ?? []).filter(notice => notice.trim());
 
   return <section className="settings-page">
     <h2>把练习环境准备好。</h2>
-    <p className="lede">Python 与 Java 使用应用管理的独立目录，也可以选择已有的解释器或 JDK。不会修改系统 PATH。</p>
-    <div className="environment-rows">{(['python', 'java'] as const).map(lang => <div className="environment-row" key={lang}>
-      <div><h3>{lang === 'python' ? 'Python 3.14' : 'Java 25'}</h3><p>{environment?.[lang] || '尚未配置运行时'}</p></div>
-      <div className="button-row">
-        <button className="button" disabled={!api || busyEnvironment} onClick={() => environmentAction(() => api!.installRuntime(lang), lang)}>
-          {activeInstallation?.language === lang ? '正在安装…' : busyAction ? '正在处理…' : '安装托管运行时'}
-        </button>
-        <button className="text-button" disabled={!api || busyEnvironment} onClick={() => environmentAction(() => api!.installRuntime(lang, true))}>安装离线包</button>
-        <button className="text-button" disabled={!api || busyEnvironment} onClick={() => environmentAction(() => api!.setRuntime(lang))}>选择本机路径</button>
-      </div>
-    </div>)}</div>
-    {notices.length > 0 && <div className="note-row" role="status">{notices.map((notice, index) => <p key={`${index}:${notice}`}>{notice}</p>)}</div>}
-    <div className="note-row">
-      {activeInstallation && <p role="status">
-        {activeInstallation.language === 'python' ? 'Python' : 'Java'} · {progress ? phaseLabels[progress.phase] : '正在准备安装…'} {percentage}
-        <button className="text-button" disabled={!api || cancelling} onClick={() => void cancelInstallation()}>{cancelling ? '正在取消…' : '取消安装'}</button>
-      </p>}
-      <strong>托管运行时安装</strong>
-      <p>点击安装后下载固定版本，并校验 SHA-256。首次下载通常需要数分钟；完成后无需联网即可运行本地样例。</p>
+    <p className="lede">优先使用已安装的兼容环境；没有时，只准备你需要的语言。安装到题炼独立目录，不修改系统 PATH。</p>
+    <div className="runtime-preference-card">
+      <label className="runtime-auto-install" htmlFor={preferenceId}>
+        <input id={preferenceId} type="checkbox" checked={environment?.autoInstallRuntimes ?? false} disabled={!api || !environment || preferenceBusy} onChange={event => void saveAutoInstall(event.target.checked)} />
+        <span>允许按需自动安装语言环境<small>默认关闭。开启后，仅在你主动运行且当前语言缺失时下载；打开应用、题目或切换语言不会下载。</small></span>
+      </label>
+      {preferenceError && <p className="runtime-inline-error" role="alert">{preferenceError}</p>}
     </div>
+    <div className="runtime-settings-grid">{(['python', 'java'] as const).map(language => {
+      const label = language === 'python' ? 'Python' : 'Java';
+      const state = environment?.runtimeStates?.[language];
+      const installation = installations[language] ?? (starting[language] ? { progress: null } : null);
+      const busy = Boolean(actions[language] || installation);
+      const status = installation ? '正在安装' : actions[language] || (!state ? '正在检查' : {
+        ready: '已就绪', missing: '尚未准备', incompatible: '版本不兼容', error: '检测异常',
+      }[state.status]);
+      return <section className="runtime-environment-card" key={language} aria-labelledby={`runtime-heading-${language}`}>
+        <div className="runtime-environment-heading">
+          <h3 id={`runtime-heading-${language}`}>{label}{state?.version ? ` ${state.version}` : language === 'python' ? ' · CPython 3.14.x' : ' · OpenJDK 25'}</h3>
+          <span className="runtime-state-label" data-state={state?.status} role="status" aria-live="polite">{label} · {status}</span>
+        </div>
+        <p className="runtime-environment-message">{state?.message || environment?.[language] || '正在有界地检查本机兼容环境，不会自动下载。'}</p>
+        {state?.path && <code className="runtime-environment-path">{state.path}</code>}
+        <div className="runtime-environment-meta">
+          {state?.source && <span>当前来源：{runtimeSourceLabels[state.source]}</span>}
+          {state?.managedInstalled && <span>托管环境实际占用：{runtimeBytes(state.installedBytes)}</span>}
+          <span>用途：{language === 'python' ? 'Python 解释执行与标准库' : 'Java 编译与执行（含 javac）'}，不同题目共享</span>
+        </div>
+        {installation && <RuntimeInstallProgress language={language} progress={installation.progress} cancelling={Boolean(cancelling[language])} onCancel={() => void cancelInstallation(language)} />}
+        {errors[language] && <p className="runtime-inline-error" role="alert">{errors[language]}</p>}
+        <div className="button-row">
+          <button className="button" disabled={!api || busy || !state?.artifact} onClick={() => void environmentAction(language, '正在准备安装', () => api!.installRuntime(language), true)}>{state?.managedInstalled ? '修复托管环境' : '安装托管环境'}</button>
+          <button className="text-button" disabled={!api || busy} onClick={() => void environmentAction(language, '正在选择环境', () => api!.setRuntime(language))}>使用已有环境</button>
+          <button className="text-button" disabled={!api || busy} onClick={() => void environmentAction(language, '正在重新检测', async () => { await api!.runtimePreflight(language); })}>重新检测</button>
+        </div>
+        <details className="runtime-more-options">
+          <summary>{label} 下载信息与更多操作</summary>
+          {state ? <RuntimeArtifactDetails artifact={state.artifact} /> : <p className="field-help">正在获取当前平台的环境信息…</p>}
+          <div className="button-row">
+            <button className="text-button" disabled={!api || busy || !state?.artifact} onClick={() => void environmentAction(language, '正在读取离线包', () => api!.installRuntime(language, true), true)}>导入匹配的离线包</button>
+            {state?.source === 'selected' && <button className="text-button" disabled={!api || busy} onClick={() => void environmentAction(language, '正在恢复自动发现', () => api!.resetRuntime(language))}>清除手动选择，重新发现</button>}
+          </div>
+          <p className="runtime-policy-help">下载后先校验大小与 SHA-256，再验证解释 / 编译能力。未测量的安装占用不会用压缩包大小代替。网络不可用时可导入清单匹配的原始归档。</p>
+          {state?.managedInstalled && <div className="runtime-removal">
+            <button className="text-button" disabled={!api || busy} onClick={() => void environmentAction(language, '正在卸载托管环境', () => api!.uninstallRuntime(language))}>卸载 {label} 托管环境…</button>
+            <p className="field-help">操作前需要确认；使用中无法卸载。只移除应用管理的环境，不删除本机外部环境、离线源文件、代码或学习记录。</p>
+          </div>}
+        </details>
+      </section>;
+    })}</div>
+    {notices.length > 0 && <div className="note-row" role="status">{notices.map((notice, index) => <p key={`${index}:${notice}`}>{notice}</p>)}</div>}
+    <div className="note-row"><strong>环境与代码分开管理</strong><p>准备一种语言不妨碍使用另一种已就绪的语言。安装完成后可离线运行本地测试；学习备份不携带大型环境，换电脑后会重新检测。本地执行不会自动上传代码，也不是安全沙箱。</p></div>
     <section className="reminder-section">
       <h3>后台提醒验证</h3>
       <p>创建一条 10 秒后的测试提醒，然后关闭窗口。应用留在菜单栏 / 托盘；完全退出后暂停提醒，下次启动保留逾期状态。</p>
       <div className="button-row">
-        <button className="button" disabled={!api || busyEnvironment} onClick={() => environmentAction(() => api!.notifyAfter(10))}>创建测试提醒</button>
-        <button className="button" disabled={!api || busyEnvironment || !environment?.reminder} onClick={() => environmentAction(() => api!.clearReminder())}>清除测试提醒</button>
-        <button className="text-button" onClick={() => refreshEnvironment(true).catch(error => onError(errorText(error)))}>刷新状态</button>
+        <button className="button" disabled={!api || reminderBusy} onClick={() => void reminderAction(() => api!.notifyAfter(10))}>创建测试提醒</button>
+        <button className="button" disabled={!api || reminderBusy || !environment?.reminder} onClick={() => void reminderAction(() => api!.clearReminder())}>清除测试提醒</button>
+        <button className="text-button" disabled={!api} onClick={() => refreshEnvironment(true).catch(error => onError(errorText(error)))}>刷新状态</button>
       </div>
       <p className="field-help" role="status">{environment?.reminder ? `测试提醒：${new Date(environment.reminder.dueAt).toLocaleString('zh-CN')}${environment.reminder.deliveredAt ? ' · 已请求系统投递' : new Date(environment.reminder.dueAt).getTime() <= Date.now() ? ' · 已逾期' : ' · 等待到期'}` : '尚未安排测试提醒。'}系统是否显示通知受通知权限与专注模式影响。</p>
     </section>

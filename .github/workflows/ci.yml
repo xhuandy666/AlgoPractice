@@ -24,8 +24,12 @@ jobs:
         include:
           - os: macos-15
             target: macOS Apple Silicon
+            architecture: arm64
+            bundle-directory: mac-arm64
           - os: macos-15-intel
             target: macOS Intel
+            architecture: x64
+            bundle-directory: mac
           - os: windows-2022
             target: Windows x64
     env:
@@ -56,6 +60,38 @@ jobs:
         run: npm run test:official
       - name: Check workbench notes and historical code comparison
         run: npm run test:workbench
+      - name: Check missing-runtime preparation and ACM editing
+        run: npm run test:onboarding
+      - name: Run Python and Java in function and ACM formats
+        run: npm run test:acm
+      - name: Check Hot100 import and restart with isolated synthetic content
+        run: npm run test:hot100
+      - name: Package macOS installer and portable archive
+        if: runner.os == 'macOS'
+        run: npx electron-builder --mac --${{ matrix.architecture }} --publish never
+      - name: Verify macOS application and archives
+        if: runner.os == 'macOS'
+        run: |
+          codesign --verify --deep --strict "release/${{ matrix.bundle-directory }}/题炼.app"
+          hdiutil verify "release/AlgoPractice-$(node -p 'require("./package.json").version')-mac-${{ matrix.architecture }}.dmg"
+          unzip -tq "release/AlgoPractice-$(node -p 'require("./package.json").version')-mac-${{ matrix.architecture }}.zip"
+      - name: Launch packaged macOS desktop
+        if: runner.os == 'macOS'
+        env:
+          ALGOPRACTICE_PACKAGED_APP: ${{ github.workspace }}/release/${{ matrix.bundle-directory }}/题炼.app/Contents/MacOS/题炼
+        run: npm run test:desktop
+      - name: Upload verified macOS packages
+        if: runner.os == 'macOS'
+        uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5
+        with:
+          name: macos-${{ matrix.architecture }}-packages-${{ github.sha }}
+          path: |
+            release/AlgoPractice-*-mac-${{ matrix.architecture }}.dmg
+            release/AlgoPractice-*-mac-${{ matrix.architecture }}.zip
+            dist/build-info.json
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 7
       - name: Package Windows installer and portable archive
         if: runner.os == 'Windows'
         run: npx electron-builder --win --x64 --publish never

@@ -4,7 +4,7 @@
 
 **把做过的题，变成下次还会的题。**
 
-离线算法练习 · 学习日历 · AI 教练 · 间隔复习 · 模拟面试
+Hot100 一键导入 · 函数式 / ACM · 本地算法练习 · AI 教练 · 间隔复习
 
 [下载安装](https://github.com/xhuandy666/AlgoPractice/releases/latest) · [快速开始](#三步开始练习) · [反馈问题](https://github.com/xhuandy666/AlgoPractice/issues)
 
@@ -15,6 +15,14 @@
 *界面截图使用示例学习数据、判题结果和辅导内容。*
 
 **题炼是一个保存在自己电脑上的算法学习工作台。** 整理力扣题单，用 Python / Java 练习，按需获取 AI 提示，再通过笔记和间隔复习巩固掌握。无需注册题炼账号。
+
+## 少一些准备，直接开始练习
+
+在题库点击 **“一键导入 Hot100”**，即可读取[力扣官方热题 100](https://leetcode.cn/studyplan/top-100-liked/)并逐题缓存，不用再寻找和粘贴题单链接。支持暂停、继续和失败重试；已有同源题单直接复用，用户移出的题目不会因重启或继续任务被重新加入。
+
+![题炼 v0.85.0：题库中的 Hot100 一键导入入口](.github/assets/screenshots/hot100.png)
+
+首次导入需要联网，已缓存内容可离线阅读。应用不携带完整 Hot100 题面，不下载隐藏测试集，也不绕过登录、会员权限或站点验证。
 
 ## 打开学习中心，看到自己的进步
 
@@ -30,7 +38,9 @@
 
 在工作台直接打开题目笔记，边练习边记录思路，草稿自动保存。提交历史同时收录本地运行和官方提交，可只读回看代码、比较差异，并给记录添加备注；历史代码不会因回看而被覆盖。
 
-![题炼工作台：题面、代码、运行结果与 AI 教练](.github/assets/screenshots/workbench.png)
+普通练习可自由选择 **函数式 / ACM**。Python 与 Java 的两种格式分别保存代码；ACM 支持多组标准输入、可选期望输出和比较规则。切换格式不会覆盖另一份草稿；没有填写期望输出时，结果只表示“运行完成”，不会冒充“通过”。
+
+![题炼 v0.85.0：ACM 工作台、测试输入与期望输出](.github/assets/screenshots/acm-workbench.png)
 
 登录力扣国服后，在工作台点击 **“提交到力扣”**，即可提交当前 Python / Java 代码，在题炼查看官方判题结果、返回的通过用例数及错误信息。每次提交保存代码快照，也能在练习档案中回看。
 
@@ -52,21 +62,25 @@
 
 题库、练习档案、笔记、复习记录和附件可一起备份，迁移电脑时恢复即可。Python / Java 运行环境支持应用内安装和离线包安装。
 
+点击运行时，题炼先检测本机兼容环境。缺少环境时，可选择 **安装并运行**、已有环境或离线包；仅准备当前需要的语言，不修改系统 PATH。Python/JDK 不随应用安装包打包，“按需自动安装”默认关闭，由你决定是否开启。
+
+![题炼 v0.85.0：按语言管理本机运行环境](.github/assets/screenshots/runtime-environments.png)
+
 ## 用企业题单练一场模拟面试
 
 导入企业题单，选择题数、难度与时长，开始限时训练。可选**严格模式或辅导模式**；结束后回看当时的作答记录，并把需要重练的题加入对应语言的复习。
 
 ## 下载
 
-**v0.8.0** · 全新暖白与青绿色界面，新增工作台笔记和历史代码对照。直接下载安装包，无需安装 Node.js 或下载源码。
+**v0.85.0** · Hot100 一键导入、语言环境按需准备、函数式 / ACM 双格式工作台。直接下载安装包，无需安装 Node.js 或下载源码。
 
 | 你的电脑 | 安装包 | 便携归档 |
 | --- | --- | --- |
-| Mac · Apple Silicon（M 系列） | [下载 DMG](https://github.com/xhuandy666/AlgoPractice/releases/download/v0.8.0/AlgoPractice-0.8.0-mac-arm64.dmg) | [下载 ZIP](https://github.com/xhuandy666/AlgoPractice/releases/download/v0.8.0/AlgoPractice-0.8.0-mac-arm64.zip) |
-| Mac · Intel | [下载 DMG](https://github.com/xhuandy666/AlgoPractice/releases/download/v0.8.0/AlgoPractice-0.8.0-mac-x64.dmg) | [下载 ZIP](https://github.com/xhuandy666/AlgoPractice/releases/download/v0.8.0/AlgoPractice-0.8.0-mac-x64.zip) |
-| Windows · x64 | [下载安装程序](https://github.com/xhuandy666/AlgoPractice/releases/download/v0.8.0/AlgoPractice-0.8.0-win-x64.exe) | [下载 ZIP](https://github.com/xhuandy666/AlgoPractice/releases/download/v0.8.0/AlgoPractice-0.8.0-win-x64.zip) |
+| Mac · Apple Silicon（M 系列） | [下载 DMG](https://github.com/xhuandy666/AlgoPractice/releases/download/v0.85.0/AlgoPractice-0.85.0-mac-arm64.dmg) | [下载 ZIP](https://github.com/xhuandy666/AlgoPractice/releases/download/v0.85.0/AlgoPractice-0.85.0-mac-arm64.zip) |
+| Mac · Intel | [下载 DMG](https://github.com/xhuandy666/AlgoPractice/releases/download/v0.85.0/AlgoPractice-0.85.0-mac-x64.dmg) | [下载 ZIP](https://github.com/xhuandy666/AlgoPractice/releases/download/v0.85.0/AlgoPractice-0.85.0-mac-x64.zip) |
+| Windows · x64 | [下载安装程序](https://github.com/xhuandy666/AlgoPractice/releases/download/v0.85.0/AlgoPractice-0.85.0-win-x64.exe) | [下载 ZIP](https://github.com/xhuandy666/AlgoPractice/releases/download/v0.85.0/AlgoPractice-0.85.0-win-x64.zip) |
 
-Mac 需要 **macOS 14 或更新版本**；Windows 需要 **Windows 10 / 11 x64**。Linux 与 Windows ARM 暂不提供安装包。版本说明见 [Release 页面](https://github.com/xhuandy666/AlgoPractice/releases/tag/v0.8.0)。
+Mac 需要 **macOS 14 或更新版本**；Windows 需要 **Windows 10 / 11 x64**。Linux 与 Windows ARM 暂不提供安装包。版本说明见 [Release 页面](https://github.com/xhuandy666/AlgoPractice/releases/tag/v0.85.0)。
 
 应用目前没有正式开发者签名，也未完成 Apple 公证。Mac 首次打开可能显示“Apple could not verify 题炼 is free of malware”。请从本仓库 Release 下载，并按需核对其中的 SHA-256 校验文件。
 
@@ -80,16 +94,27 @@ Windows 首次打开可能出现 SmartScreen 提示。
 
 ## 三步开始练习
 
-1. **准备运行环境。** 打开“运行环境”，分别安装 Python 和 Java；已有环境也可手动选择路径（CPython 3.14.x、完整 JDK 25）。安装不会修改系统 PATH。
-2. **加入想练的题。** 打开“导入题单”，粘贴力扣国服链接，或导入 [CSV 链接示例](examples/leetcode-links.csv) / [JSON 自建练习](examples/practice.json)，预览后确认导入。
-3. **开始练习。** 从学习中心进入题库，选择题目。用 `⌘ / Ctrl + Enter` 运行、`⌘ / Ctrl + K` 快速切换。结束练习后确认自评，下次从复习日历继续。
+1. **加入想练的题。** 在题库点击“一键导入 Hot100”；也可粘贴力扣链接，或导入 [CSV 链接示例](examples/leetcode-links.csv) / [JSON 自建练习](examples/practice.json)。
+2. **选择语言和答题格式。** 打开题目，选择 Python / Java 与函数式 / ACM，开始写代码。ACM 的标准输入与期望输出由你设置，不自动转换官方用例。
+3. **运行并复习。** 用 `⌘ / Ctrl + Enter` 运行。缺少环境时按提示安装，或选择已有环境（CPython 3.14.x、完整 JDK 25）；结束练习后确认自评，下次从复习日历继续。
 
 想使用 AI，在“学习设置”选择服务、填写自己的 Key 并测试连接即可。
+
+### v0.85.0 使用说明
+
+- 题库和导入页内置 **“一键导入 Hot100”**，无需寻找或粘贴链接。点击后从[力扣官方热题 100](https://leetcode.cn/studyplan/top-100-liked/)读取题单并逐题缓存；可暂停、继续和重试。已有同源题单直接复用，更新成员仍需显式预览确认。
+- 点击运行前检测本机兼容环境；缺少环境时原位选择“安装并运行”、已有环境或离线包。只准备需要的语言，Python/JDK 不随应用打包；按需自动安装默认关闭。环境准备失败与代码编译失败分开显示。
+- 安装期间可以继续编辑。修改代码或输入、切换题目/语言/格式、结束练习或关闭窗口后，旧请求不会自动执行，环境就绪后请重新运行。
+- 普通工作台可选择函数式或 ACM，分别保存每种语言的代码与输入。ACM 支持多组 stdin、可选期望输出与精确/归一化比较；没有期望输出时只表示运行完成，不代表通过。自由 ACM 的输入约定和自定义期望不属于力扣官方判题。
+- 历史记录保留原格式与测试快照；ACM 不能直接提交到力扣。模拟面试暂保留题目原生格式，不在计时中切换格式。
+- 语言环境始终在本机执行，不是文件或网络沙箱。请只运行理解且信任的代码。新设备首次断网且没有环境时只能阅读与编辑，不能执行。
+
+升级首次启动会备份并迁移学习数据库；不要用旧版直接打开升级后的数据库。需要降级时使用升级前备份，并保留新数据副本。Hot100 是官方题单导入快捷入口，不是随安装包分发完整题面；首次导入需要联网，未缓存内容不能离线阅读。
 
 <details>
 <summary><strong>运行时下载不方便？使用离线安装包</strong></summary>
 
-在 [Release 附件](https://github.com/xhuandy666/AlgoPractice/releases/tag/v0.8.0) 下载与你的系统和架构匹配的两个文件：
+在 [Release 附件](https://github.com/xhuandy666/AlgoPractice/releases/tag/v0.85.0) 下载你需要的语言所对应的文件（系统和架构必须匹配）：
 
 | 系统 | Python | Java |
 | --- | --- | --- |
@@ -154,6 +179,9 @@ npm run test:desktop
 npm run test:learning-center
 npm run test:official
 npm run test:workbench
+npm run test:onboarding
+npm run test:acm
+npm run test:hot100
 ```
 
 测试使用隔离数据目录。语言执行测试需要先完成 `npm run runtime:install`。

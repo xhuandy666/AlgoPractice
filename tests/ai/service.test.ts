@@ -8,6 +8,24 @@ import { answer, config, context, input, jsonCompletion, MemoryRepository, mockV
 
 function setup(fetcher?: typeof fetch) { const repository = new MemoryRepository(), source = context(), events: AiEvent[] = []; let calls = 0; const options: AiServiceOptions = { repository, vault: mockVault(), resolveContext: (_input: AiRequestInput) => source, resolveProvider: () => config() as AiProviderConfig | null, onEvent: (event: AiEvent) => { events.push(event); }, fetchImpl: fetcher ?? (async (_url, init) => { calls++; const messages = JSON.parse(String(init?.body)).messages; const sent = JSON.parse(messages[1].content); return sseCompletion(JSON.stringify(answer({ ...input(), kind: sent.kind }, source))); }) as typeof fetch }; const service = new AiService(options); return { service, repository, source, events, options, get calls() { return calls; } }; }
 
+test('unchanged code cannot apply an AI patch after tests, format, specification or revision changes', async () => {
+  for (const mutation of ['tests', 'format', 'specification', 'revision'] as const) {
+    const request = { ...input(), kind: 'diagnosis' as const }, source = { ...context(), run: null };
+    const response = answer(request, source);
+    response.patch = { baseCodeHash: sha256(source.code), edits: [{ startLine: 6, endLine: 6, replacement: '        return total' }] };
+    const fixture = setup(async () => sseCompletion(JSON.stringify(response)));
+    Object.assign(fixture.source, source, { answerFormat: 'acm', specVersion: 'acm-free-v1', testConfigDigest: 'a'.repeat(64) });
+    const result = await fixture.service.request(request);
+    assert.equal(result.status, 'completed');
+    assert.equal((await fixture.service.preparePatch(result.id)).answerFormat, 'acm');
+    if (mutation === 'tests') fixture.source.testConfigDigest = 'b'.repeat(64);
+    if (mutation === 'format') fixture.source.answerFormat = 'function';
+    if (mutation === 'specification') fixture.source.specVersion = 'acm-free-v2';
+    if (mutation === 'revision') fixture.source.draftRevision++;
+    await assert.rejects(fixture.service.preparePatch(result.id), error => error instanceof AiServiceError && error.detail.code === 'STALE_PATCH');
+  }
+});
+
 test('A validated streaming response is persisted with original hashes and provider usage; events contain no raw content', async () => { const fixture = setup(); const request = input(); const result = await fixture.service.request(request); assert.equal(result.status, 'completed'); assert.equal(result.snapshot.codeHash, sha256(fixture.source.code)); assert.equal(result.snapshot.runId, 'run-a'); assert.deepEqual(result.usage, { source: 'provider', inputTokens: 10, outputTokens: 20, totalTokens: 30, calls: 1 }); assert.ok(fixture.events.some(event => event.phase === 'receiving')); assert.ok(fixture.events.every(event => event.requestId === request.requestId && !Object.hasOwn(event, 'content') && !Object.hasOwn(event, 'response'))); assert.ok(!canonicalJson(fixture.repository.listAIRequests('attempt-a')).includes('synthetic-unit-key')); });
 test('Same complete canonical request can reuse a completed answer, but new question or context cannot', async () => { const fixture = setup(), request = input(); const first = await fixture.service.request(request); const cached = await fixture.service.request({ ...request, requestId: 'request-cache' }); assert.equal(fixture.calls, 1); assert.equal(cached.cachedFromRequestId, first.id); assert.equal(cached.usage, null); await fixture.service.request({ ...request, requestId: 'request-new-question', question: '另一个问题' }); assert.equal(fixture.calls, 2); fixture.source.code += '# change'; fixture.source.run = null; await fixture.service.request({ ...request, requestId: 'request-new-code' }); assert.equal(fixture.calls, 3); });
 test('A reused request ID is idempotent and cannot bind a different question', async () => { const fixture = setup(), request = input(); const first = await fixture.service.request(request); fixture.source.code += '# edited after request'; fixture.source.run = null; assert.deepEqual(await fixture.service.request(request), first); assert.equal(fixture.calls, 1); await assert.rejects(fixture.service.request({ ...request, question: 'different' }), error => error instanceof AiServiceError && error.detail.code === 'REQUEST_CONFLICT'); });

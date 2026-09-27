@@ -3,10 +3,12 @@ import { setTimeout as delay } from 'node:timers/promises';
 import { previewImport, type ImportInput, type ImportPreview, type ImportPreviewItem, LeetCodeCnSourceAdapter, SourceError, parseSource } from '../source/index';
 import { PracticeStore } from '../storage/practice-store';
 import type { ImportJob, ListSnapshotInput, ProblemContent } from '../shared/library';
-import type { PreparedImport, PreparedProblemRefresh } from '../shared/bridge';
+import type { Hot100ImportResult, PreparedImport, PreparedProblemRefresh } from '../shared/bridge';
+import { HOT100 } from '../shared/builtin-lists';
 import { cacheProblemMedia } from './media-cache';
 
 const hash = (text: string) => createHash('sha256').update(text).digest('hex');
+const HOT100_REQUEST_KEY = `builtin:${HOT100.id}:v1`;
 const hasPreparedContent = (content: ProblemContent) => Boolean(content.description.trim() || content.cases.length || Object.values(content.starter).some(text => text?.trim()) || content.adapter);
 const asError = (error: unknown) => error instanceof SourceError ? { code: error.code, message: error.message, retryable: error.retryable } : { code: 'IMPORT_ERROR', message: error instanceof Error ? error.message : String(error), retryable: true };
 function placeholder(item: ImportPreviewItem): ProblemContent {
@@ -21,9 +23,47 @@ export class ImportService {
   #problemPreviews = new Map<string, PreparedProblemRefresh>();
   #active: { id: string; controller: AbortController; promise: Promise<void> } | null = null;
   #fetches = new Set<AbortController>();
+  #hot100: Promise<Hot100ImportResult> | null = null;
+  #stopGeneration = 0;
   constructor(private store: PracticeStore, private adapter: LeetCodeCnSourceAdapter, private mediaDirectory: string,
     private changed: () => void, private log: (event: string, fields?: Record<string, string | number | boolean | null>) => void,
     private requestDelayMs = 600) {}
+
+  importHot100(beforeCommit: () => void = () => {}): Promise<Hot100ImportResult> {
+    if (this.#hot100) return this.#hot100;
+    const generation = this.#stopGeneration;
+    const task = (async () => {
+      beforeCommit();
+      const existing = this.existingHot100();
+      if (existing) return existing;
+      if (this.#active) throw new Error('已有导入任务正在运行，请等待或暂停后再导入 Hot100。');
+      const prepared = await this.prepare({ kind: 'url', text: HOT100.url });
+      try {
+        if (generation !== this.#stopGeneration) throw new Error('Hot100 导入准备已取消，请重新点击导入。');
+        beforeCommit();
+        // A normal import may have created the same list while the request was in flight.
+        const current = this.existingHot100();
+        if (current) return current;
+        const { preview, membership } = prepared;
+        if (!preview.complete || preview.errors.length || preview.duplicates.length || preview.items.length !== HOT100.expectedCount ||
+          new Set(preview.items.map(item => item.problemId)).size !== HOT100.expectedCount || membership?.listId !== HOT100.id) {
+          throw new Error(preview.errors[0]?.message || '官方 Hot100 未返回完整的 100 个唯一成员，本次未导入；请重试或通过普通导入检查来源。');
+        }
+        return { listId: HOT100.id, job: this.start(prepared.id, HOT100_REQUEST_KEY) };
+      } finally { this.#previews.delete(prepared.id); }
+    })().finally(() => { if (this.#hot100 === task) this.#hot100 = null; });
+    this.#hot100 = task;
+    return task;
+  }
+  private existingHot100(): Hot100ImportResult | null {
+    const jobs = this.store.listImportJobs();
+    const owned = jobs.find(job => job.requestKey === HOT100_REQUEST_KEY);
+    if (owned && (owned.source !== 'leetcode-cn' || owned.sourceUrl !== HOT100.url)) throw new Error('Hot100 导入记录身份冲突，请先检查现有任务。');
+    const list = this.store.getList(HOT100.id);
+    if (!list && !owned) return null;
+    // Existing membership is user-owned. Refreshing it requires the ordinary diff preview.
+    return { listId: HOT100.id, job: jobs.find(job => job.source === 'leetcode-cn' && job.sourceUrl === HOT100.url) ?? owned ?? null };
+  }
 
   async prepare(input: ImportInput): Promise<PreparedImport> {
     if (!input || typeof input !== 'object' || !['url', 'links', 'csv', 'json'].includes(input.kind) || typeof input.text !== 'string' || Buffer.byteLength(input.text) > 5 * 1024 * 1024) throw new Error('导入内容格式无效或超过 5 MiB。');
@@ -87,7 +127,7 @@ export class ImportService {
   }
   job(id: string): ImportJob { const job = this.store.getImportJob(id); if (!job) throw new Error('导入任务不存在。'); return job; }
   async pause(id: string) { if (this.#active?.id === id) { const active = this.#active; active.controller.abort(); await active.promise; } }
-  async stop() { for (const controller of this.#fetches) controller.abort(); if (this.#active) await this.pause(this.#active.id); }
+  async stop() { this.#stopGeneration++; for (const controller of this.#fetches) controller.abort(); if (this.#active) await this.pause(this.#active.id); }
 
   private async process(id: string, preview: ImportPreview, signal: AbortSignal) {
     let current: ImportPreviewItem | null = null;

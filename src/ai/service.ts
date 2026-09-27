@@ -163,10 +163,13 @@ export class AiService {
     const snapshot = record.snapshot, response = this.#validatedStored(record).response!;
     const current = await this.#context({ requestId, attemptId: snapshot.attemptId, kind: snapshot.kind, question: snapshot.question });
     assertMode(current);
-    if (!current.isActive || current.attemptId !== snapshot.attemptId || current.problemId !== snapshot.problemId || current.problemVersion !== snapshot.problemVersion || current.language !== snapshot.language || current.draftScopeId !== snapshot.draftScopeId || sha256(current.code) !== snapshot.codeHash) throw new AiServiceError('STALE_PATCH');
+    if (!current.isActive || current.attemptId !== snapshot.attemptId || current.problemId !== snapshot.problemId || current.problemVersion !== snapshot.problemVersion || current.language !== snapshot.language || current.draftScopeId !== snapshot.draftScopeId || sha256(current.code) !== snapshot.codeHash
+      || current.draftRevision !== snapshot.draftRevision || current.answerFormat !== snapshot.answerFormat
+      || current.specVersion !== snapshot.specVersion || current.testConfigDigest !== snapshot.testConfigDigest) throw new AiServiceError('STALE_PATCH');
     const code = response.patch ? patchCode(current.code, response.patch) : response.completeSolution ? response.completeSolution.code : null;
     if (code === null) throw new AiServiceError('INVALID_REQUEST');
     return { requestId, attemptId: current.attemptId, problemId: current.problemId, problemVersion: current.problemVersion, language: current.language, draftScopeId: current.draftScopeId,
-      expectedDraftRevision: current.draftRevision, baseCodeHash: snapshot.codeHash, code };
+      expectedDraftRevision: current.draftRevision, baseCodeHash: snapshot.codeHash, code,
+      ...(current.answerFormat !== undefined ? { answerFormat: current.answerFormat, specVersion: current.specVersion, testConfigDigest: current.testConfigDigest } : {}) };
   }
 }

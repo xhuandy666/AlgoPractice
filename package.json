@@ -1,7 +1,7 @@
 {
   "name": "algopractice",
   "productName": "题炼",
-  "version": "0.8.0",
+  "version": "0.85.0",
   "private": true,
   "description": "题炼：算法练习、力扣官方提交、AI 教练与间隔复习",
   "author": "xhuandy666",
@@ -21,6 +21,9 @@
     "test:ai": "node tests/p5-ai-protocol-smoke.mjs",
     "test:official": "node tests/official-judge-smoke.mjs",
     "test:workbench": "node tests/workbench-notes-history-smoke.mjs",
+    "test:onboarding": "node tests/onboarding-acm-smoke.mjs",
+    "test:acm": "node tests/acm-execution-smoke.mjs",
+    "test:hot100": "node tests/hot100-desktop-smoke.mjs",
     "dist:mac": "npm run build && electron-builder --mac --arm64 --publish never",
     "dist:mac:intel": "npm run build && electron-builder --mac --x64 --publish never",
     "dist:win": "npm run build && electron-builder --win --x64 --publish never",

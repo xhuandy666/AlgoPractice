@@ -4,18 +4,17 @@ import { lstat, mkdir, readdir, rename, unlink, writeFile } from 'node:fs/promis
 import { basename, dirname, join } from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { performance } from 'node:perf_hooks';
-import { PracticeStore, type StoredRun } from '../storage/practice-store';
-import { AiService, CredentialVault, normalizeProviderConfig, helpCardDecision, sha256 } from '../ai/index';
-import type { AiProviderConfig, AiRequestInput, AiTrustedContext, AiRunEvidence, AiHelpRun, AiDiagnostic, AiOfficialEvidence } from '../shared/ai';
+import { PracticeStore } from '../storage/practice-store';
+import { AiService, CredentialVault, normalizeProviderConfig, helpCardDecision } from '../ai/index';
+import type { AiProviderConfig, AiRequestInput, AiTrustedContext, AiHelpRun } from '../shared/ai';
 import type { AddReviewItemInput, ConfirmNoteInput, CorrectReviewInput, LearningSettingsInput, NoteFilter, ReviewFeedbackInput, ReviewFilter, SaveNoteInput } from '../shared/learning';
 import type { BackupSummary, RestoreLifecycle } from '../shared/maintenance';
 import type { Page } from '../shared/bridge';
-import type { ProblemContent } from '../shared/library';
-import type { RunResult } from '../runner/types';
 import { AttachmentService, attachmentExtensions } from './attachment-service';
 import { BackupService } from './backup-service';
 import { ReminderService } from './reminder-service';
 import { writeCodeToClipboard } from './code-clipboard';
+import { applyPracticeAiPatch, buildPracticeAiContext, runAiEvidence } from './learning-context';
 const id = (value: unknown) => { if (typeof value !== 'string' || !value.trim() || value.length > 512) throw new Error('标识无效。'); return value; };
 const integer = (value: unknown) => { if (typeof value !== 'number' || !Number.isSafeInteger(value) || value < 1) throw new Error('版本无效。'); return value; };
 interface Options { dataDirectory: string; version: string; window: BrowserWindow; store(): PracticeStore; handle(channel: string, handler: (...args: unknown[]) => unknown): void; changed(): void; reveal(page: Page): void; lifecycle: RestoreLifecycle; isIdle(): boolean; interviewContext?(context: AiTrustedContext): AiTrustedContext; log(event: string, data: Record<string, string | number | boolean | null>): void; }
@@ -41,31 +40,8 @@ export class LearningController {
     this.ai = new AiService({ repository: this.options.store(), vault: this.vault, resolveProvider: () => this.#provider, resolveContext: input => this.#context(input), onEvent: event => { if (!this.options.window.isDestroyed()) this.options.window.webContents.send('ai:event', event); if (['completed','failed','cancelled','interrupted'].includes(event.phase)) this.options.changed(); } });
     this.ai.recoverInterrupted(); this.#pulse = null;
   }
-  #runEvidence(row: StoredRun | undefined): AiRunEvidence | null {
-    if (!row || row.status === 'queued' || row.status === 'interrupted') return null;
-    const result = row.result as unknown as RunResult;
-    const diagnostics: AiDiagnostic[] = (result.diagnostics ?? []).map(value => ({ message: value.message, source: value.source ?? 'runner', ...(value.line ? { line: value.line } : {}), ...(value.column ? { column: value.column } : {}) }));
-    return { id: row.id, attemptId: row.attemptId, problemVersion: row.problemVersion, codeHash: row.codeHash, status: row.status, trustworthyExpected: (result.caseResults ?? []).some(test => test.expected !== undefined), diagnostics, caseResults: (result.caseResults ?? []).map(test => ({ index: test.index, status: test.status, ...(test.actual !== undefined ? { actual: test.actual } : {}), ...(test.expected !== undefined ? { expected: test.expected } : {}) })), stdout: result.stdout ?? '', stderr: result.stderr ?? '' };
-  }
   #context(input: AiRequestInput): AiTrustedContext {
-    const store = this.options.store(), attempt = store.getAttempt(input.attemptId); if (!attempt) throw new Error('练习不存在。');
-    const content = attempt.problemSnapshot as unknown as ProblemContent;
-    const draft = store.getDraft(attempt.problemId, attempt.language, attempt.draftScopeId);
-    const allRuns = store.listRuns(attempt.id);
-    const selectedRun = input.runId ? allRuns.find(run => run.id === input.runId) : undefined;
-    if (input.runId && !selectedRun) throw new Error('运行快照不属于当前练习。');
-    const interview = store.getInterviewForAttempt(attempt.id), item = interview?.items.find(item => item.attemptId === attempt.id);
-    const code = (item ? (interview!.endedAt ? item.final!.code : item.accepted.code) : draft?.code) ?? content.starter[attempt.language] ?? '';
-    const codeHash = sha256(code);
-    const run = selectedRun?.codeHash === codeHash ? selectedRun : allRuns.filter(row => row.codeHash === codeHash).at(-1);
-    const historical = selectedRun && selectedRun.codeHash !== codeHash ? this.#runEvidence(selectedRun) : null;
-    const submission = store.listOfficialSubmissions(attempt.id).find(row => row.status === 'completed' && row.codeHash === codeHash && row.problemVersion === attempt.problemVersion && row.result);
-    const official: AiOfficialEvidence | null = submission?.result ? { id: submission.id, attemptId: attempt.id, problemVersion: attempt.problemVersion, codeHash,
-      status: submission.result.status, statusMessage: submission.result.statusMessage,
-      ...Object.fromEntries(['passedCases','totalCases','runtime','memory','compileError','runtimeError','input','expectedOutput','actualOutput'].filter(key => submission.result![key as keyof typeof submission.result] !== undefined).map(key => [key, submission.result![key as keyof typeof submission.result]])) } : null;
-    const notes = (input.noteIds ?? []).map(noteId => { const note = store.getNote(noteId); if (!note?.confirmed || (note.kind === 'problem' && note.subjectId !== attempt.problemId)) throw new Error('所选笔记未确认或不属于当前题目。'); return { id: note.id, version: String(note.confirmed.version), title: note.confirmed.title, markdown: note.confirmed.markdown }; });
-    const conversation = (input.conversationIds ?? []).flatMap(requestId => { const record = store.getAIRequest(requestId); if (!record || record.attemptId !== attempt.id || record.status !== 'completed' || !record.response) throw new Error('对话不属于当前练习或尚未完成。'); return [{ id: requestId, role: 'assistant' as const, content: JSON.stringify({ question: record.snapshot.question, response: record.response }) }]; });
-    const context: AiTrustedContext = { attemptId: attempt.id, problemId: attempt.problemId, problemVersion: attempt.problemVersion, language: attempt.language, mode: attempt.mode, isActive: attempt.isActive, draftScopeId: attempt.draftScopeId, draftRevision: item ? (interview!.endedAt ? item.final! : item.accepted).revision : draft?.revision ?? 0, code, ...(item ? { reasoning: (interview!.endedAt ? item.final! : item.accepted).reasoning } : {}), problem: { title: content.title, description: content.description, constraints: content.constraints ?? [] }, run: this.#runEvidence(run), official, previousRun: historical ? { code: selectedRun!.code, run: historical } : null, notes, conversation };
+    const context = buildPracticeAiContext(this.options.store(), input);
     return this.options.interviewContext?.(context) ?? context;
   }
   async clearCredentials() {
@@ -135,9 +111,9 @@ export class LearningController {
     handle('ai:clear-key', async () => { await this.ai.clearKey(); return this.ai.providerState(); }); handle('ai:test', () => this.ai.testConnection());
     handle('ai:requests', key => get().listAIRequests(id(key))); handle('ai:ask', input => this.ai.request(input as AiRequestInput)); handle('ai:cancel', key => this.ai.cancel(id(key)));
     handle('ai:preview-patch', key => this.ai.preparePatch(id(key)));
-    handle('ai:apply-patch', async key => { const patch = await this.ai.preparePatch(id(key)); const attempt = get().getAttempt(patch.attemptId); const draft = get().getDraft(patch.problemId, patch.language, patch.draftScopeId); if (!attempt?.isActive || attempt.mode === 'strict' || attempt.problemVersion !== patch.problemVersion || !draft || draft.codeHash !== patch.baseCodeHash || draft.revision !== patch.expectedDraftRevision) throw new Error('代码或练习已经变化，请重新请求修改建议。'); return mutate(() => get().saveDraft({ problemId: patch.problemId, language: patch.language, scopeId: patch.draftScopeId, code: patch.code, expectedRevision: patch.expectedDraftRevision })); });
+    handle('ai:apply-patch', async key => { const patch = await this.ai.preparePatch(id(key)); return mutate(() => applyPracticeAiPatch(get(), patch)); });
     handle('ai:save-note', key => { const record = get().getAIRequest(id(key)); if (!record?.response?.noteDraft || record.status !== 'completed') throw new Error('没有可保存的笔记草稿。'); const proposal = record.response.noteDraft; return mutate(() => get().saveNote({ requestId: `ai-note-${record.id}`, kind: 'problem', subjectId: record.snapshot.problemId, title: proposal.title, markdown: proposal.markdown, tags: proposal.tags, origin: 'ai', state: 'draft', aiRequestId: record.id })); });
-    handle('ai:help', key => { const attempt = get().getAttempt(id(key)); if (!attempt) throw new Error('练习不存在。'); const runs: AiHelpRun[] = get().listRuns(attempt.id).map(row => { const evidence = this.#runEvidence(row); return { id: row.id, attemptId: row.attemptId, status: row.status, language: row.language, executed: ['passed','completed','wrong_answer','runtime_error','timeout','output_limit'].includes(row.status), attributableToUser: Boolean(evidence) && !['environment_error','invalid_request','internal_error','cancelled','interrupted','queued'].includes(row.status) && (row.status !== 'compile_error' || evidence!.diagnostics.some(value => value.source === 'user')), trustworthyExpected: evidence?.trustworthyExpected ?? false, diagnostics: evidence?.diagnostics ?? [] }; }); const decision = helpCardDecision({ attemptId: attempt.id, mode: attempt.mode, isActive: attempt.isActive, runs, state: get().getAIHelpState(attempt.id) }); if (decision.show && !get().markAIHelpShown(attempt.id)) return { ...decision, show: false }; return decision; });
+    handle('ai:help', key => { const attempt = get().getAttempt(id(key)); if (!attempt) throw new Error('练习不存在。'); const runs: AiHelpRun[] = get().listRuns(attempt.id).map(row => { const evidence = runAiEvidence(row); return { id: row.id, attemptId: row.attemptId, status: row.status, language: row.language, executed: ['passed','completed','wrong_answer','runtime_error','timeout','output_limit'].includes(row.status), attributableToUser: Boolean(evidence) && !['environment_error','invalid_request','internal_error','cancelled','interrupted','queued'].includes(row.status) && (row.status !== 'compile_error' || evidence!.diagnostics.some(value => value.source === 'user')), trustworthyExpected: evidence?.trustworthyExpected ?? false, diagnostics: evidence?.diagnostics ?? [] }; }); const decision = helpCardDecision({ attemptId: attempt.id, mode: attempt.mode, isActive: attempt.isActive, runs, state: get().getAIHelpState(attempt.id) }); if (decision.show && !get().markAIHelpShown(attempt.id)) return { ...decision, show: false }; return decision; });
     handle('ai:dismiss-help', key => get().dismissAIHelp(id(key)));
     handle('review-reminder:state', () => this.reminders.status()); handle('review-reminder:save', async input => { await this.reminders.updateSettings(input as Parameters<ReminderService['updateSettings']>[0]); changed(); return this.reminders.status(); }); handle('review-reminder:snooze', () => this.reminders.snooze());
     handle('backup:list', async () => { const state = this.backups.status(); return { busy: state.busy, backups: state.busy ? [] : await this.backups.list(), lastError: state.lastError }; });

@@ -95,7 +95,7 @@ export interface AttemptPageFilter extends PageRequest {
   learningDate?: string; timeZone?: string;
 }
 export interface AttemptListItem {
-  attempt: Omit<import('../storage/practice-store').Attempt, 'problemSnapshot' | 'finalCode'>;
+  attempt: Omit<import('../storage/practice-store').Attempt, 'problemSnapshot' | 'finalCode' | 'finalTestConfig'>;
   title: string; runCount: number; lastStatus: import('../storage/practice-store').TerminalStatus | null;
   activeMs: number; helpLevel: string | null;
 }

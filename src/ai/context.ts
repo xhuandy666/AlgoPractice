@@ -1,6 +1,7 @@
 import { AI_POLICY_VERSION, AI_PROMPT_VERSION, type AiProviderConfig, type AiRequestInput, type AiRequestSnapshot, type AiRunEvidence, type AiTrustedContext } from '../shared/ai.ts';
 import { canonicalJson, identifier, normalizeProviderConfig, sha256, validateRequestInput } from './canonical.ts';
 import { AiServiceError } from './errors.ts';
+import { assertAnswerFormat, validateAcmTestConfig } from '../shared/answer-format.ts';
 
 export function assertMode(context: Pick<AiTrustedContext, 'mode' | 'isActive'>): void {
   if (!['practice', 'strict', 'coached'].includes(context.mode) || typeof context.isActive !== 'boolean') throw new AiServiceError('INVALID_REQUEST');
@@ -39,13 +40,20 @@ export function buildRequestSnapshot(rawInput: AiRequestInput, rawContext: AiTru
   const context = JSON.parse(canonicalJson(rawContext)) as AiTrustedContext;
   if (context.attemptId !== input.attemptId || !['python', 'java'].includes(context.language) || typeof context.code !== 'string' || Buffer.byteLength(context.code) > 512 * 1024 || !Number.isInteger(context.draftRevision) || context.draftRevision < 0) throw new AiServiceError('INVALID_REQUEST');
   identifier(context.problemId); identifier(context.problemVersion); identifier(context.draftScopeId); assertMode(context);
+  if (context.answerFormat !== undefined) {
+    try { assertAnswerFormat(context.answerFormat); } catch { throw new AiServiceError('INVALID_REQUEST'); }
+    identifier(context.specVersion); identifier(context.testConfigDigest);
+  }
+  const testConfig = context.testConfig ? validateAcmTestConfig(context.testConfig) : null;
   if (!context.problem || typeof context.problem.title !== 'string' || typeof context.problem.description !== 'string' || !Array.isArray(context.problem.constraints) || !context.problem.constraints.every(value => typeof value === 'string') || !Array.isArray(context.notes) || !Array.isArray(context.conversation)) throw new AiServiceError('INVALID_REQUEST');
   const clippedFields: string[] = [];
   const clip = (value: string, maximum: number, name: string) => { if (typeof value !== 'string') throw new AiServiceError('INVALID_REQUEST'); if (value.length <= maximum) return value; clippedFields.push(name); return value.slice(0, maximum) + '\n[内容已裁剪]'; };
   const codeHash = sha256(context.code);
   let run: AiRunEvidence | null = context.run;
   if (run) {
-    if (run.attemptId !== context.attemptId || run.problemVersion !== context.problemVersion || run.codeHash !== codeHash || !Array.isArray(run.diagnostics) || !Array.isArray(run.caseResults) || typeof run.stdout !== 'string' || typeof run.stderr !== 'string') throw new AiServiceError('INVALID_REQUEST');
+    if (run.attemptId !== context.attemptId || run.problemVersion !== context.problemVersion || run.codeHash !== codeHash
+      || (context.answerFormat !== undefined && (run.answerFormat !== context.answerFormat || run.specVersion !== context.specVersion || run.testConfigDigest !== context.testConfigDigest))
+      || !Array.isArray(run.diagnostics) || !Array.isArray(run.caseResults) || typeof run.stdout !== 'string' || typeof run.stderr !== 'string') throw new AiServiceError('INVALID_REQUEST');
     identifier(run.id);
     const take = (value: unknown, name: string) => { const serialized = canonicalJson(value); if (serialized.length <= 700) return value; clippedFields.push(name); return '[结果过长，已省略]'; };
     run = { ...run, diagnostics: run.diagnostics.slice(0, 6).map((diagnostic, index) => ({ ...diagnostic, message: clip(diagnostic.message, 1000, `run.diagnostics.${index}`) })), caseResults: run.caseResults.slice(0, 8).map((test, index) => ({ ...test, ...(Object.hasOwn(test, 'actual') ? { actual: take(test.actual, `run.cases.${index}.actual`) as never } : {}), ...(Object.hasOwn(test, 'expected') ? { expected: take(test.expected, `run.cases.${index}.expected`) as never } : {}) })), stdout: clip(run.stdout, 1500, 'run.stdout'), stderr: clip(run.stderr, 1500, 'run.stderr') };
@@ -54,14 +62,19 @@ export function buildRequestSnapshot(rawInput: AiRequestInput, rawContext: AiTru
   let previousRun = context.previousRun ?? null;
   if (previousRun) {
     const old = previousRun.run;
-    if (old.attemptId !== context.attemptId || old.problemVersion !== context.problemVersion || old.codeHash !== sha256(previousRun.code) || old.codeHash === codeHash || input.runId !== old.id) throw new AiServiceError('INVALID_REQUEST');
-    const clipped = buildRequestSnapshot({ ...input, runId: old.id, noteIds: [], conversationIds: [] }, { ...context, code: previousRun.code, run: old, previousRun: null, official: null, notes: [], conversation: [] }, provider);
+    const changedConfiguration = old.answerFormat !== context.answerFormat || old.specVersion !== context.specVersion || old.testConfigDigest !== context.testConfigDigest;
+    if (old.attemptId !== context.attemptId || old.problemVersion !== context.problemVersion || old.codeHash !== sha256(previousRun.code)
+      || (old.codeHash === codeHash && !changedConfiguration) || input.runId !== old.id) throw new AiServiceError('INVALID_REQUEST');
+    const clipped = buildRequestSnapshot({ ...input, runId: old.id, noteIds: [], conversationIds: [] }, { ...context,
+      answerFormat: old.answerFormat, specVersion: old.specVersion, testConfigDigest: old.testConfigDigest, testConfig: null,
+      code: previousRun.code, run: old, previousRun: null, official: null, notes: [], conversation: [] }, provider);
     previousRun = { code: clip(previousRun.code, 6000, 'previousRun.code'), run: clipped.run! };
     clippedFields.push(...clipped.clippedFields.filter(field => field.startsWith('run.')).map(field => `previousRun.${field}`));
   }
   if (input.runId && input.runId !== run?.id && input.runId !== previousRun?.run.id) throw new AiServiceError('INVALID_REQUEST');
   let official = context.official ?? null;
   if (official) {
+    if (context.answerFormat === 'acm') throw new AiServiceError('INVALID_REQUEST');
     if (official.attemptId !== context.attemptId || official.problemVersion !== context.problemVersion || official.codeHash !== codeHash || !['accepted','wrong_answer','compile_error','runtime_error','timeout','memory_limit','output_limit','internal_error','unknown'].includes(official.status)) throw new AiServiceError('INVALID_REQUEST');
     identifier(official.id);
     official = { ...official, statusMessage: clip(official.statusMessage, 250, 'official.statusMessage') };
@@ -83,6 +96,12 @@ export function buildRequestSnapshot(rawInput: AiRequestInput, rawContext: AiTru
   const codeWithLineNumbers = { format: 'one-based line references; numeric prefixes are not source code', complete: numberedComplete, text: numberedLines.join('\n') };
   const payload = { userRequest: input.question, kind: input.kind,
     learningContext: { attemptId: context.attemptId, problemId: context.problemId, problemVersion: context.problemVersion, language: context.language, mode: context.mode,
+      answerFormat: context.answerFormat, specVersion: context.specVersion, testConfigDigest: context.testConfigDigest,
+      expectedOutputSource: context.expectedOutputSource,
+      ...(context.inputDescription !== undefined ? { inputDescription: clip(context.inputDescription, 2000, 'inputDescription') } : {}),
+      ...(context.outputDescription !== undefined ? { outputDescription: clip(context.outputDescription, 2000, 'outputDescription') } : {}),
+      ...(testConfig ? { testConfig: { ...testConfig, cases: testConfig.cases.slice(0, 8).map((test, index) => ({ stdin: clip(test.stdin, 2000, `testConfig.${index}.stdin`),
+        ...(Object.hasOwn(test, 'expected') ? { expected: clip(test.expected!, 2000, `testConfig.${index}.expected`), expectedSource: context.expectedOutputSource ?? 'unspecified-not-official-judge' } : {}) })) } } : {}),
       problem: { title: clip(context.problem.title, 250, 'problem.title'), description: clip(context.problem.description, 8000, 'problem.description'), constraints: context.problem.constraints.slice(0, 20).map((constraint, index) => clip(constraint, 250, `problem.constraints.${index}`)) },
       codeHash, code: clip(context.code, 16000, 'code'), codeWithLineNumbers, ...(context.reasoning !== undefined ? { reasoning: clip(context.reasoning, 4000, 'reasoning') } : {}), run, official, previousRun: previousRun ? { ...previousRun, relationToCurrentCode: 'historical-only' } : null, notes, conversation }, clippedFields };
   if (context.problem.constraints.length > 20) clippedFields.push('problem.constraints');
@@ -90,6 +109,7 @@ export function buildRequestSnapshot(rawInput: AiRequestInput, rawContext: AiTru
   if (Buffer.byteLength(canonicalJson(messages)) > 128 * 1024) throw new AiServiceError('INVALID_REQUEST');
   return { policyVersion: AI_POLICY_VERSION, promptVersion: AI_PROMPT_VERSION, attemptId: context.attemptId, problemId: context.problemId, problemVersion: context.problemVersion,
     language: context.language, mode: context.mode, isActive: context.isActive, draftScopeId: context.draftScopeId, draftRevision: context.draftRevision, codeHash, code: context.code,
+    ...(context.answerFormat !== undefined ? { answerFormat: context.answerFormat, specVersion: context.specVersion, testConfigDigest: context.testConfigDigest } : {}),
     kind: input.kind, question: input.question, runId: input.runId ?? run?.id ?? null, run, official, previousRun, provider, messages,
     selectedNoteIds: notes.map(note => note.id), selectedConversationIds: conversation.map(message => message.id), clippedFields: [...clippedFields] };
 }

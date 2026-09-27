@@ -1,5 +1,7 @@
-import { access } from 'node:fs/promises';
+import { access, realpath, stat } from 'node:fs/promises';
+import { constants } from 'node:fs';
 import os from 'node:os';
+import path from 'node:path';
 import { runProcess } from './process.ts';
 import { compilerPath, defaultRuntimePath } from './runtime-paths.ts';
 import type { Diagnostic, Language } from './types.ts';
@@ -15,9 +17,20 @@ export async function inspectRuntime(language: Language, options: { root?: strin
   const fail = (status: RuntimeInspection['status'], message: string) => { out.status = status; out.diagnostics.push({ phase: 'environment', source: 'runner', message }); return out; };
   if (options.signal?.aborted) return fail('cancelled', 'Runtime inspection cancelled');
   if (language !== 'python' && language !== 'java') return fail('incompatible', 'Unsupported language');
+  if (!path.isAbsolute(executable)) return fail('incompatible', 'Choose an absolute path to a runtime executable.');
   if (language === 'java') out.compilerPath = compilerPath(executable);
-  try { await access(executable); if (out.compilerPath) await access(out.compilerPath); }
-  catch { return fail('missing', 'Interpreter or matching javac is unavailable; select a full runtime installation.'); }
+  try {
+    for (const candidate of [executable, ...(out.compilerPath ? [out.compilerPath] : [])]) {
+      const resolved = await realpath(candidate);
+      if (process.platform === 'darwin' && ['/usr/bin/python', '/usr/bin/python3', '/usr/bin/java', '/usr/bin/javac'].includes(resolved)) return fail('incompatible', 'The system developer-tools launcher is not a reusable runtime; select an installed interpreter or full JDK.');
+      if (process.platform === 'win32' && /[\\/]WindowsApps[\\/]/i.test(resolved)) return fail('incompatible', 'A Microsoft Store execution alias is not an installed runtime.');
+      if (!(await stat(candidate)).isFile()) return fail('incompatible', 'Choose the runtime executable, not its containing directory.');
+      await access(candidate, process.platform === 'win32' ? constants.F_OK : constants.X_OK);
+    }
+  } catch (error) {
+    return fail((error as NodeJS.ErrnoException).code === 'ENOENT' ? 'missing' : 'error', (error as NodeJS.ErrnoException).code === 'ENOENT'
+      ? 'Interpreter or matching javac is unavailable; select a full runtime installation.' : `Runtime path is inaccessible: ${String(error)}`);
+  }
   const processOptions = { cwd: os.tmpdir(), timeoutMs: 10000, outputLimitBytes: 16384, signal: options.signal };
   const probe = await runProcess(executable, language === 'python'
     ? ['-I', '-X', 'utf8', '-c', 'import json,sys; print(json.dumps({"implementation":sys.implementation.name,"version":".".join(map(str,sys.version_info[:3]))}))']

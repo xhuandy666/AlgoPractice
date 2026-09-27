@@ -10,11 +10,24 @@ import { inspectRuntime } from './runtime-inspect.ts';
 import type { Language } from './types.ts';
 
 export interface InstallProgress { phase: 'download' | 'copy' | 'verify' | 'extract' | 'validate' | 'commit' | 'ready'; receivedBytes: number; totalBytes: number; }
-export interface InstallOptions { root: string; localArchive?: string; signal?: AbortSignal; onProgress?: (progress: InstallProgress) => void; }
+export interface InstallOptions { root: string; localArchive?: string; signal?: AbortSignal; onProgress?: (progress: InstallProgress) => void; /** Host-only timeout override for tests. */ downloadTimeoutMs?: number; }
 export interface RecoveryResult { language: Language; status: 'none' | 'active' | 'rolled_back' | 'committed' | 'discarded' | 'needs_attention'; message?: string; }
 interface Journal { schema: 1; id: string; pid: number; language: Language; staging: string; backup: string; phase: 'preparing' | 'prepared' | 'switching' | 'committed'; createdAt: string; }
 const activeInstalls = new Set<string>();
 const MARKER = '.algopractice-runtime.json';
+const releaseHosts = new Set(['github.com', 'release-assets.githubusercontent.com', 'objects.githubusercontent.com', 'github-releases.githubusercontent.com']);
+async function fetchArtifact(url: string, signal: AbortSignal): Promise<Response> {
+  let current = new URL(url);
+  for (let hop = 0; hop <= 5; hop++) {
+    if (current.protocol !== 'https:' || !releaseHosts.has(current.hostname) || current.username || current.password) throw new Error('Runtime download source is outside approved HTTPS release hosts');
+    const response = await fetch(current.href, { signal, redirect: 'manual' });
+    if (![301, 302, 303, 307, 308].includes(response.status)) return response;
+    const location = response.headers.get('location'); await response.body?.cancel();
+    if (!location) throw new Error('Runtime download redirect has no destination');
+    current = new URL(location, current);
+  }
+  throw new Error('Runtime download exceeded the bounded redirect limit');
+}
 const exists = async (file: string) => { try { await stat(file); return true; } catch (error) { if ((error as NodeJS.ErrnoException).code === 'ENOENT') return false; throw error; } };
 function paths(root: string, language: Language) { return { destination: path.join(root, language), journal: path.join(root, `.${language}-install.json`), lock: path.join(root, `.${language}-install.lock`) }; }
 async function atomicJson(file: string, value: unknown): Promise<void> {
@@ -92,6 +105,8 @@ export async function installRuntime(language: Language, options: InstallOptions
     await atomicJson(p.journal, journal);
     await mkdir(staging);
     const item = manifest[language].targets[target];
+    const artifactUrl = new URL(item.url);
+    if (artifactUrl.protocol !== 'https:' || artifactUrl.hostname !== 'github.com') throw new Error('Runtime manifest must use its approved HTTPS release source');
     const archive = path.join(staging, `archive.${item.archive}`), extracted = path.join(staging, 'extracted');
     await mkdir(extracted); const handle = await open(archive, 'wx', 0o600);
     const hash = createHash('sha256'); let received = 0;
@@ -103,8 +118,10 @@ export async function installRuntime(language: Language, options: InstallOptions
         if (!info.isFile() || info.size !== item.size) throw new Error('Offline archive size does not match the pinned runtime manifest');
         input = createReadStream(options.localArchive, { signal: options.signal });
       } else {
-        const response = await fetch(item.url, { signal: options.signal });
+        const downloadSignal = AbortSignal.any([...(options.signal ? [options.signal] : []), AbortSignal.timeout(options.downloadTimeoutMs ?? 10 * 60 * 1000)]);
+        const response = await fetchArtifact(item.url, downloadSignal);
         if (!response.ok || !response.body) throw new Error(`Runtime download failed: HTTP ${response.status}`);
+        if (response.url && new URL(response.url).protocol !== 'https:') throw new Error('Runtime download redirected to an insecure source');
         input = Readable.fromWeb(response.body as never);
       }
       for await (const chunk of input) {

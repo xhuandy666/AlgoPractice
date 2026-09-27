@@ -1,13 +1,14 @@
 import { useEffect, useRef, useState } from 'react';
 import type { DesktopBridge, PreparedImport } from '../shared/bridge';
-import type { ImportJob } from '../shared/library';
+import type { ImportJob, StudyList } from '../shared/library';
 import type { ImportInput } from '../source/index';
 import { capability, difficultyLabel } from '../shared/presentation';
 import { dateTime, errorText } from './ui';
+import { Hot100Card } from './Hot100Card';
 
 const jobLabel: Record<ImportJob['status'], string> = { pending: '等待开始', running: '正在导入', paused: '已暂停', cancelled: '已取消', completed: '导入完成', completed_with_errors: '完成 · 部分条目待重试' };
 const itemLabel = { pending: '未处理', running: '正在读取', imported: '已缓存', reused: '已复用', link_only: '仅链接', restricted: '访问受限', failed: '失败', skipped: '已跳过' };
-export function ImportPage({ api, jobs, initialUrl, onChanged, onOpenLibrary, onError }: { api: DesktopBridge | undefined; jobs: ImportJob[]; initialUrl?: string; onChanged: () => Promise<void>; onOpenLibrary: () => void; onError: (error: string) => void }) {
+export function ImportPage({ api, lists, jobs, initialUrl, onChanged, onOpenLibrary, onError }: { api: DesktopBridge | undefined; lists: StudyList[]; jobs: ImportJob[]; initialUrl?: string; onChanged: () => Promise<void>; onOpenLibrary: () => void; onError: (error: string) => void }) {
   const [input, setInput] = useState<ImportInput>({ kind: 'url', text: initialUrl || 'https://leetcode.cn/studyplan/top-100-liked/' });
   const [prepared, setPrepared] = useState<PreparedImport | null>(null); const [busy, setBusy] = useState('');
   const [hasSession, setHasSession] = useState(false); const [notice, setNotice] = useState(''); const editRevision = useRef(0);
@@ -23,6 +24,7 @@ export function ImportPage({ api, jobs, initialUrl, onChanged, onOpenLibrary, on
   }
   return <section className="import-page scroll-page">
     <div className="page-intro"><div><h2>导入题单</h2></div><button className="button" disabled={!api || !!busy} onClick={() => operation('login', () => api!.loginSource())}>打开力扣登录</button></div>
+    <Hot100Card api={api} lists={lists} jobs={jobs} onChanged={onChanged} onView={onOpenLibrary} viewLabel="前往题库" />
     <div className="session-line"><span>{hasSession ? '已登录力扣国服。' : '公开内容可直接读取；私有收藏需要在独立窗口登录。'}</span><button className="text-button" disabled={!api || !!busy} onClick={() => operation('session', async () => setHasSession((await api!.sourceSession()).hasSession))}>刷新登录状态</button>{hasSession && <button disabled={!api || !!busy} onClick={() => operation('logout', async () => { await api!.logoutSource(); setHasSession(false); })}>清除本应用登录态</button>}</div>
     <form onSubmit={event => { event.preventDefault(); void readPreview(); }} className="import-form">
       <div className="input-mode"><label>导入方式<select value={input.kind} onChange={event => updateInput({ kind: event.target.value as ImportInput['kind'], text: '' })}><option value="url">题单 / 单题链接</option><option value="links">批量链接</option><option value="csv">CSV</option><option value="json">JSON</option></select></label><button type="button" className="button" disabled={!api || !!busy} onClick={() => operation('file', async () => { const selected = await api!.selectImportFile(); if (selected) updateInput(selected); })}>选择本地文件</button>{input.name && <span className="field-help">{input.name}</span>}</div>

@@ -8,6 +8,8 @@ import { pageBounds, pageResult, searchText, literalLike, SQL_TRIM_WHITESPACE } 
 import type { AttemptListItem, AttemptPageFilter, NotePageFilter, PageResult, ProblemListItem, ProblemPageFilter, RunListItem, RunPageFilter } from '../shared/learning.ts';
 import { MIGRATE_V5 } from '../interview/schema.ts';
 import { MIGRATE_V7 } from './submission-history-schema.ts';
+import { MIGRATE_V8 } from './answer-format-schema.ts';
+import { assertAnswerFormat, validateAcmTestConfig, NATIVE_SPEC_VERSION, ACM_FREE_SPEC_VERSION, type AnswerFormat, type AcmTestConfig } from '../shared/answer-format.ts';
 import { SUBMISSION_REMARK_LIMIT, type SaveSubmissionRemarkInput, type SubmissionHistoryDetail, type SubmissionHistoryFilter,
   type SubmissionHistoryItem, type SubmissionHistorySource, type SubmissionRemark } from '../shared/submission-history.ts';
 import type { CompanyDataset, InterviewSession } from '../shared/interview.ts';
@@ -42,6 +44,10 @@ export interface Draft {
   codeHash: string;
   revision: number;
   savedAt: string;
+  answerFormat: AnswerFormat | null;
+  specVersion: string;
+  testConfig: AcmTestConfig | null;
+  testConfigDigest: string | null;
 }
 
 export interface SaveDraftInput {
@@ -50,6 +56,9 @@ export interface SaveDraftInput {
   code: string;
   scopeId?: string;
   expectedRevision?: number;
+  answerFormat?: AnswerFormat;
+  specVersion?: string;
+  testConfig?: AcmTestConfig;
 }
 
 export interface StartAttemptInput {
@@ -61,6 +70,8 @@ export interface StartAttemptInput {
   mode?: 'practice' | 'strict' | 'coached';
   draftScopeId?: string;
   restoredFromRunId?: string;
+  answerFormat?: AnswerFormat;
+  specVersion?: string;
 }
 
 export interface Attempt {
@@ -80,6 +91,9 @@ export interface Attempt {
   lastRunMatchesFinal: boolean;
   restoredFromRunId: string | null;
   isActive: boolean;
+  answerFormat: AnswerFormat;
+  specVersion: string;
+  finalTestConfig: AcmTestConfig | null;
 }
 
 export interface FinishAttemptInput {
@@ -103,6 +117,9 @@ export interface SaveRunInput {
   runtimeVersion: string;
   status?: RunStatus;
   result?: JsonValue;
+  answerFormat?: AnswerFormat;
+  specVersion?: string;
+  testConfigDigest?: string;
 }
 
 export interface StoredRun {
@@ -121,10 +138,13 @@ export interface StoredRun {
   result: JsonValue;
   createdAt: string;
   finishedAt: string | null;
+  answerFormat: AnswerFormat;
+  specVersion: string;
+  testConfigDigest: string;
 }
 
 type Row = Record<string, string | number | null>;
-const SCHEMA_VERSION = 7;
+const SCHEMA_VERSION = 8;
 const MIGRATE_V6 = `
 CREATE TABLE official_submissions (
   id TEXT PRIMARY KEY NOT NULL,
@@ -450,6 +470,10 @@ export function hashCode(code: string): string {
   if (typeof code !== 'string') throw new Error('code must be a string');
   return createHash('sha256').update(code, 'utf8').digest('hex');
 }
+/** Main-process digest for validated mutable ACM tests; a changed input invalidates old results. */
+export function testConfigDigest(value: AcmTestConfig | null): string | null {
+  return value === null ? null : hashCode(json(validateAcmTestConfig(value)));
+}
 
 function checkDatabase(db: DatabaseSync, allowedVersions = [SCHEMA_VERSION]): void {
   const version = db.prepare('PRAGMA user_version').get() as Row;
@@ -469,7 +493,8 @@ function historyItem(row: Row): SubmissionHistoryItem {
     problemId: row.problem_id as string, problemVersion: row.problem_version as string, language: row.language as Language,
     createdAt: row.created_at as string, finishedAt: row.finished_at as string | null, codeHash: row.code_hash as string,
     status: row.status as SubmissionHistoryItem['status'], verdict: row.verdict as SubmissionHistoryItem['verdict'],
-    remark: (row.remark as string | null) ?? '', remarkRevision: (row.remark_revision as number | null) ?? 0 };
+    remark: (row.remark as string | null) ?? '', remarkRevision: (row.remark_revision as number | null) ?? 0,
+    answerFormat: row.answer_format as AnswerFormat, specVersion: row.spec_version as string };
 }
 
 /** Local P3 repository. Construct after acquiring the application's single-instance lock. */
@@ -488,7 +513,7 @@ export class PracticeStore {
     this.#db = new DatabaseSync(this.dbPath);
     try {
       const version = (this.#db.prepare('PRAGMA user_version').get() as Row).user_version;
-      if (![0, 1, 2, 3, 4, 5, 6, SCHEMA_VERSION].includes(version as number)) throw new Error(`Unsupported schema version: ${version}`);
+      if (![0, 1, 2, 3, 4, 5, 6, 7, SCHEMA_VERSION].includes(version as number)) throw new Error(`Unsupported schema version: ${version}`);
       this.#db.exec('PRAGMA foreign_keys = ON; PRAGMA journal_mode = WAL; PRAGMA synchronous = FULL; PRAGMA busy_timeout = 5000;');
       if (version === 0) this.#transaction(() => {
         this.#db.exec(SCHEMA);
@@ -498,12 +523,13 @@ export class PracticeStore {
         this.#db.exec(MIGRATE_V5);
         this.#db.exec(MIGRATE_V6);
         this.#db.exec(MIGRATE_V7);
+        this.#db.exec(MIGRATE_V8);
         this.#db.prepare('INSERT INTO learning_settings VALUES (1, ?)').run(json({ ...defaultLearningSettings(), updatedAt: new Date().toISOString() }));
         this.#db.exec(`PRAGMA user_version = ${SCHEMA_VERSION}`);
       });
-      if (version === 1 || version === 2 || version === 3 || version === 4 || version === 5 || version === 6) {
+      if (typeof version === 'number' && version > 0 && version < SCHEMA_VERSION) {
         checkDatabase(this.#db, [version]);
-        const backupPath = `${this.dbPath}.before-v7-${new Date().toISOString().replace(/[:.]/g, '-')}-${randomUUID()}.sqlite`;
+        const backupPath = `${this.dbPath}.before-v8-${new Date().toISOString().replace(/[:.]/g, '-')}-${randomUUID()}.sqlite`;
         const temporary = `${backupPath}.partial`;
         try {
           // VACUUM INTO is a synchronous, transactionally consistent snapshot including committed WAL pages.
@@ -524,13 +550,14 @@ export class PracticeStore {
             if (version < 4) this.#db.exec(MIGRATE_V4);
             if (version < 5) this.#db.exec(MIGRATE_V5);
             if (version < 6) this.#db.exec(MIGRATE_V6);
-            this.#db.exec(MIGRATE_V7);
+            if (version < 7) this.#db.exec(MIGRATE_V7);
+            this.#db.exec(MIGRATE_V8);
             backfillNoteAttachmentReferences(this.#db);
             this.#db.exec(`PRAGMA user_version = ${SCHEMA_VERSION}`);
             checkDatabase(this.#db);
           });
         } catch (error) {
-          throw new Error(`Schema v7 migration failed; original schema retained. Backup: ${backupPath}`, { cause: error });
+          throw new Error(`Schema v8 migration failed; original schema retained. Backup: ${backupPath}`, { cause: error });
         }
       }
       // Existing schema 2 databases need only a trigger update; table layouts and stored snapshots stay intact.
@@ -725,7 +752,7 @@ export class PracticeStore {
     }
     const cte = `WITH summaries AS (SELECT a.id, a.problem_id, a.language, a.problem_version, a.mode, a.started_at,
       a.draft_scope_id, a.ended_at, a.final_code_hash, a.final_draft_revision, a.final_last_run_id,
-      a.last_run_matches_final, a.restored_from_run_id, a.rowid AS ordering,
+      a.last_run_matches_final, a.restored_from_run_id, a.answer_format, a.spec_version, a.rowid AS ordering,
       EXISTS(SELECT 1 FROM active_attempts active WHERE active.attempt_id = a.id) AS is_active,
       COALESCE(json_extract(v.snapshot_json, '$.title'), a.problem_id) AS title,
       (SELECT MAX(COALESCE(json_extract(ai.snapshot_json, '$.level'), 'adaptive')) FROM ai_requests ai WHERE ai.attempt_id = a.id AND ai.status = 'completed') AS help_level
@@ -742,7 +769,8 @@ export class PracticeStore {
       startedAt: row.started_at as string, draftScopeId: row.draft_scope_id as string, endedAt: row.ended_at as string | null,
       finalCodeHash: row.final_code_hash as string | null, finalDraftRevision: row.final_draft_revision as number | null,
       lastRunId: row.final_last_run_id as string | null, lastRunMatchesFinal: Boolean(row.last_run_matches_final),
-      restoredFromRunId: row.restored_from_run_id as string | null, isActive: Boolean(row.is_active) },
+      restoredFromRunId: row.restored_from_run_id as string | null, isActive: Boolean(row.is_active),
+      answerFormat: row.answer_format as AnswerFormat, specVersion: row.spec_version as string },
       title: row.title as string, runCount: row.run_count as number, lastStatus: row.last_status as TerminalStatus | null,
       activeMs: row.active_ms as number, helpLevel: row.help_level as string | null })), total, bounds);
   }
@@ -761,7 +789,8 @@ export class PracticeStore {
     // Materialize the page of ids first: sorting an old page must not decode every large result.
     const rows = this.#db.prepare(`WITH selected AS MATERIALIZED (
       SELECT r.id ${from} ${where} ORDER BY r.rowid DESC LIMIT ? OFFSET ?)
-      SELECT r.id, r.attempt_id, a.problem_id, a.language, a.problem_version,
+      SELECT r.id, r.attempt_id, a.problem_id, a.language, a.problem_version, a.answer_format, a.spec_version,
+      COALESCE(json_extract(r.test_snapshot_json, '$.testConfigDigest'), r.test_suite_version) AS test_config_digest,
       r.code_hash, r.test_suite_version, r.adapter_version, r.runtime_version, r.status, r.created_at, r.finished_at,
       json_extract(r.result_json, '$.durationMs') AS duration_ms,
       COALESCE(json_array_length(r.result_json, '$.caseResults'), 0) AS case_count,
@@ -773,24 +802,26 @@ export class PracticeStore {
       codeHash: row.code_hash as string, testSuiteVersion: row.test_suite_version as string, adapterVersion: row.adapter_version as string,
       runtimeVersion: row.runtime_version as string, status: row.status as RunStatus, createdAt: row.created_at as string,
       finishedAt: row.finished_at as string | null, durationMs: typeof row.duration_ms === 'number' ? row.duration_ms : null,
-      caseCount: row.case_count as number, passedCaseCount: row.passed_case_count as number })), total, bounds);
+      caseCount: row.case_count as number, passedCaseCount: row.passed_case_count as number,
+      answerFormat: row.answer_format as AnswerFormat, specVersion: row.spec_version as string, testConfigDigest: row.test_config_digest as string })), total, bounds);
   }
 
   /** Across attempts for one problem and language, without fetching code or whole judge results. */
   listSubmissionHistory(filter: SubmissionHistoryFilter): PageResult<SubmissionHistoryItem> {
     if (!filter || typeof filter !== 'object') throw new Error('请选择题目和语言。');
     requireText(filter.problemId, 'problem id'); requireLanguage(filter.language);
-    const bounds = pageBounds(filter), values = [filter.problemId, filter.language];
+    if (filter.answerFormat !== undefined) assertAnswerFormat(filter.answerFormat);
+    const bounds = pageBounds(filter), values = [filter.problemId, filter.language, filter.answerFormat ?? null, filter.answerFormat ?? null];
     const ids = `SELECT r.id, 'local' AS source, r.created_at FROM runs r JOIN attempts a ON a.id = r.attempt_id
-      WHERE a.problem_id = ? AND a.language = ? AND r.status <> 'queued'
+      WHERE a.problem_id = ? AND a.language = ? AND (? IS NULL OR a.answer_format = ?) AND r.status <> 'queued'
       UNION ALL SELECT s.id, 'official' AS source, s.created_at FROM official_submissions s JOIN attempts a ON a.id = s.attempt_id
-      WHERE a.problem_id = ? AND a.language = ?`;
+      WHERE a.problem_id = ? AND a.language = ? AND (? IS NULL OR a.answer_format = ?)`;
     const total = this.#db.prepare(`SELECT COUNT(*) AS total FROM (${ids})`).get(...values, ...values)!.total as number;
     // Select a bounded page before decoding even the official verdict field from a potentially large payload.
     const rows = this.#db.prepare(`WITH selected AS MATERIALIZED (SELECT * FROM (${ids})
       ORDER BY created_at DESC, source DESC, id DESC LIMIT ? OFFSET ?)
       SELECT selected.id, selected.source, COALESCE(r.attempt_id, s.attempt_id) AS attempt_id,
-        a.problem_id, a.problem_version, a.language, selected.created_at,
+        a.problem_id, a.problem_version, a.language, a.answer_format, a.spec_version, selected.created_at,
         COALESCE(r.finished_at, s.finished_at) AS finished_at, COALESCE(r.code_hash, s.code_hash) AS code_hash,
         COALESCE(r.status, s.status) AS status, json_extract(s.result_json, '$.status') AS verdict,
         m.remark, m.revision AS remark_revision
@@ -810,7 +841,7 @@ export class PracticeStore {
     historySource(source); requireText(id, 'history id');
     const table = source === 'local' ? 'runs' : 'official_submissions';
     const reference = source === 'local' ? 'local_run_id' : 'official_submission_id';
-    const row = this.#db.prepare(`SELECT r.id, ? AS source, r.attempt_id, a.problem_id, a.problem_version, a.language,
+    const row = this.#db.prepare(`SELECT r.id, ? AS source, r.attempt_id, a.problem_id, a.problem_version, a.language, a.answer_format, a.spec_version,
       r.created_at, r.finished_at, r.code_hash, r.status, r.code,
       ${source === 'official' ? "json_extract(r.result_json, '$.status')" : 'NULL'} AS verdict,
       m.remark, m.revision AS remark_revision
@@ -1064,14 +1095,41 @@ export class PracticeStore {
     });
   }
 
-  getDraft(problemId: string, language: Language, scopeId = 'practice'): Draft | undefined {
-    const row = this.#db.prepare('SELECT * FROM drafts WHERE problem_id = ? AND language = ? AND scope_id = ?')
-      .get(problemId, language, scopeId) as Row | undefined;
-    return row ? {
-      problemId: row.problem_id as string, language: row.language as Language,
+  #nativeFormat(problemId: string): AnswerFormat {
+    const native = this.getProblem(problemId)?.content.mode;
+    if (native) return native;
+    const row = this.#db.prepare("SELECT json_extract(snapshot_json, '$.mode') AS mode FROM problem_versions WHERE problem_id = ? ORDER BY rowid DESC LIMIT 1")
+      .get(problemId) as Row | undefined;
+    return row?.mode === 'acm' ? 'acm' : 'function';
+  }
+
+  #draftFromRow(row: Row): Draft {
+    const testConfig = JSON.parse(row.test_config_json as string) as AcmTestConfig | null;
+    return { problemId: row.problem_id as string, language: row.language as Language,
       scopeId: row.scope_id as string, code: row.code as string, codeHash: row.code_hash as string,
       revision: row.revision as number, savedAt: row.saved_at as string,
-    } : undefined;
+      answerFormat: row.answer_format === 'legacy' ? null : row.answer_format as AnswerFormat,
+      specVersion: row.spec_version as string, testConfig,
+      testConfigDigest: testConfig ? hashCode(json(testConfig)) : null };
+  }
+
+  /** Unknown pre-v8 drafts are retained verbatim and never silently assigned to a format. */
+  listLegacyDrafts(problemId?: string): Draft[] {
+    return (this.#db.prepare("SELECT * FROM drafts WHERE answer_format = 'legacy' AND (? IS NULL OR problem_id = ?) ORDER BY saved_at DESC")
+      .all(problemId ?? null, problemId ?? null) as Row[]).map(row => this.#draftFromRow(row));
+  }
+
+  getDraft(problemId: string, language: Language, scopeId = 'practice', answerFormat?: AnswerFormat): Draft | undefined {
+    if (answerFormat !== undefined) assertAnswerFormat(answerFormat);
+    const format = answerFormat ?? this.#nativeFormat(problemId);
+    const row = this.#db.prepare('SELECT * FROM drafts WHERE problem_id = ? AND language = ? AND scope_id = ? AND answer_format = ?')
+      .get(problemId, language, scopeId, format) as Row | undefined;
+    if (!row && answerFormat === undefined) {
+      const legacy = this.#db.prepare("SELECT * FROM drafts WHERE problem_id = ? AND language = ? AND scope_id = ? AND answer_format = 'legacy'")
+        .get(problemId, language, scopeId) as Row | undefined;
+      return legacy ? this.#draftFromRow(legacy) : undefined;
+    }
+    return row ? this.#draftFromRow(row) : undefined;
   }
 
   saveDraft(input: SaveDraftInput): Draft {
@@ -1080,20 +1138,30 @@ export class PracticeStore {
     const scopeId = input.scopeId ?? 'practice';
     requireText(scopeId, 'scopeId');
     const codeHash = hashCode(input.code);
+    const answerFormat = input.answerFormat ?? this.#nativeFormat(input.problemId);
+    assertAnswerFormat(answerFormat);
+    if (input.testConfig !== undefined && answerFormat !== 'acm') throw new Error('Only ACM drafts accept stdin test configuration');
+    const testConfig = input.testConfig === undefined ? undefined : validateAcmTestConfig(input.testConfig);
     return this.#transaction(() => {
-      const previous = this.getDraft(input.problemId, input.language, scopeId);
+      const previous = this.getDraft(input.problemId, input.language, scopeId, input.answerFormat);
+      const specVersion = input.specVersion ?? previous?.specVersion ?? (answerFormat === this.#nativeFormat(input.problemId) ? NATIVE_SPEC_VERSION : ACM_FREE_SPEC_VERSION);
+      requireText(specVersion, 'spec version');
+      const configJson = json(testConfig ?? previous?.testConfig ?? null);
+      const active = this.getActiveAttempt(input.problemId, input.language, 'practice', scopeId, answerFormat);
+      if (active && active.specVersion !== specVersion) throw new Error('Draft specification does not match its active attempt');
       if (input.expectedRevision !== undefined && input.expectedRevision !== (previous?.revision ?? 0)) {
         throw new Error('Draft revision conflict');
       }
-      if (previous?.codeHash === codeHash) return previous;
+      if (previous?.codeHash === codeHash && previous.specVersion === specVersion && json(previous.testConfig) === configJson) return previous;
       this.#db.prepare('INSERT OR IGNORE INTO problems(id) VALUES (?)').run(input.problemId);
-      this.#db.prepare(`INSERT INTO drafts VALUES (?, ?, ?, ?, ?, ?, ?)
-        ON CONFLICT(problem_id, language, scope_id) DO UPDATE SET
+      this.#db.prepare(`INSERT INTO drafts VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(problem_id, language, scope_id, answer_format) DO UPDATE SET
         code = excluded.code, code_hash = excluded.code_hash,
-        revision = excluded.revision, saved_at = excluded.saved_at`)
+        revision = excluded.revision, saved_at = excluded.saved_at,
+        spec_version = excluded.spec_version, test_config_json = excluded.test_config_json`)
         .run(input.problemId, input.language, scopeId, input.code, codeHash,
-          (previous?.revision ?? 0) + 1, new Date().toISOString());
-      return this.getDraft(input.problemId, input.language, scopeId)!;
+          (previous?.revision ?? 0) + 1, new Date().toISOString(), answerFormat, specVersion, configJson);
+      return this.getDraft(input.problemId, input.language, scopeId, answerFormat)!;
     });
   }
 
@@ -1111,12 +1179,15 @@ export class PracticeStore {
       finalDraftRevision: row.final_draft_revision as number | null, lastRunId: row.final_last_run_id as string | null,
       lastRunMatchesFinal: row.last_run_matches_final === 1, restoredFromRunId: row.restored_from_run_id as string | null,
       isActive: row.is_active === 1,
+      answerFormat: row.answer_format as AnswerFormat, specVersion: row.spec_version as string,
+      finalTestConfig: JSON.parse(row.final_test_config_json as string),
     } : undefined;
   }
 
-  getActiveAttempt(problemId: string, language: Language, mode: Attempt['mode'] = 'practice', scopeId = 'practice'): Attempt | undefined {
-    const row = this.#db.prepare('SELECT attempt_id FROM active_attempts WHERE problem_id = ? AND language = ? AND mode = ? AND scope_id = ?')
-      .get(problemId, language, mode, scopeId) as Row | undefined;
+  getActiveAttempt(problemId: string, language: Language, mode: Attempt['mode'] = 'practice', scopeId = 'practice', answerFormat?: AnswerFormat): Attempt | undefined {
+    if (answerFormat !== undefined) assertAnswerFormat(answerFormat);
+    const row = this.#db.prepare('SELECT attempt_id FROM active_attempts WHERE problem_id = ? AND language = ? AND mode = ? AND scope_id = ? AND answer_format = ?')
+      .get(problemId, language, mode, scopeId, answerFormat ?? this.#nativeFormat(problemId)) as Row | undefined;
     return row ? this.getAttempt(row.attempt_id as string) : undefined;
   }
 
@@ -1135,23 +1206,31 @@ export class PracticeStore {
     requireText(id, 'id');
     const mode = input.mode ?? 'practice';
     const scopeId = input.draftScopeId ?? 'practice';
+    const original = input.problemSnapshot ?? this.getProblem(input.problemId, input.problemVersion)?.content;
+    const nativeFormat = original && typeof original === 'object' && !Array.isArray(original) && original.mode === 'acm' ? 'acm' : 'function';
+    const answerFormat = input.answerFormat ?? nativeFormat;
+    assertAnswerFormat(answerFormat);
+    const specVersion = input.specVersion ?? (answerFormat === nativeFormat ? NATIVE_SPEC_VERSION : ACM_FREE_SPEC_VERSION);
+    requireText(specVersion, 'spec version');
+    if (answerFormat === 'function' && nativeFormat === 'acm') throw new Error('This ACM problem has no function specification');
     requireText(scopeId, 'draft scope id');
     return this.#transaction(() => {
       const existing = this.getAttempt(id);
       if (existing) {
         if (existing.problemId !== input.problemId || existing.language !== input.language
           || existing.problemVersion !== input.problemVersion || existing.mode !== mode || existing.draftScopeId !== scopeId
+          || existing.answerFormat !== answerFormat || existing.specVersion !== specVersion
           || existing.restoredFromRunId !== (input.restoredFromRunId ?? null)
           || (input.problemSnapshot !== undefined && json(existing.problemSnapshot) !== json(input.problemSnapshot))) {
           throw new Error('Attempt id conflicts with an existing attempt');
         }
         return existing;
       }
-      const active = this.getActiveAttempt(input.problemId, input.language, mode, scopeId);
+      const active = this.getActiveAttempt(input.problemId, input.language, mode, scopeId, answerFormat);
       if (active) {
         if (active.problemVersion === input.problemVersion && input.problemSnapshot !== undefined
           && json(active.problemSnapshot) !== json(input.problemSnapshot)) throw new Error('Problem version conflicts with its immutable snapshot');
-        if (input.id || active.problemVersion !== input.problemVersion) {
+        if (input.id || active.problemVersion !== input.problemVersion || active.specVersion !== specVersion) {
           throw new Error('An active attempt already owns this draft scope; continue or finish it first');
         }
         return active;
@@ -1159,7 +1238,7 @@ export class PracticeStore {
       if (input.restoredFromRunId) {
         const original = this.#readRun(input.restoredFromRunId);
         if (!original || original.problemId !== input.problemId || original.language !== input.language
-          || original.problemVersion !== input.problemVersion) throw new Error('Restored run does not match the attempt identity');
+          || original.problemVersion !== input.problemVersion || original.answerFormat !== answerFormat || original.specVersion !== specVersion) throw new Error('Restored run does not match the attempt identity');
       }
       this.#db.prepare('INSERT OR IGNORE INTO problems(id) VALUES (?)').run(input.problemId);
       const version = this.#db.prepare('SELECT snapshot_json FROM problem_versions WHERE problem_id = ? AND version = ?')
@@ -1170,10 +1249,10 @@ export class PracticeStore {
       if (!version) this.#db.prepare('INSERT INTO problem_versions VALUES (?, ?, ?)')
         .run(input.problemId, input.problemVersion, json(input.problemSnapshot ?? null));
       this.#db.prepare(`INSERT INTO attempts
-        (id, problem_id, language, problem_version, mode, started_at, draft_scope_id, restored_from_run_id)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?)`)
-        .run(id, input.problemId, input.language, input.problemVersion, mode, new Date().toISOString(), scopeId, input.restoredFromRunId ?? null);
-      this.#db.prepare('INSERT INTO active_attempts VALUES (?, ?, ?, ?, ?)').run(input.problemId, input.language, mode, scopeId, id);
+        (id, problem_id, language, problem_version, mode, started_at, draft_scope_id, restored_from_run_id, answer_format, spec_version)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
+        .run(id, input.problemId, input.language, input.problemVersion, mode, new Date().toISOString(), scopeId, input.restoredFromRunId ?? null, answerFormat, specVersion);
+      this.#db.prepare('INSERT INTO active_attempts VALUES (?, ?, ?, ?, ?, ?)').run(input.problemId, input.language, mode, scopeId, id, answerFormat);
       return this.getAttempt(id)!;
     });
   }
@@ -1191,18 +1270,20 @@ export class PracticeStore {
       if (this.#db.prepare("SELECT id FROM runs WHERE attempt_id = ? AND status = 'queued' LIMIT 1").get(id) || this.hasActiveOfficialSubmission(id)) {
         throw new Error('Cannot finish an attempt while a run or official submission is unfinished');
       }
-      const draft = input.code === undefined ? this.getDraft(attempt.problemId, attempt.language, scopeId)
+      const draft = input.code === undefined ? this.getDraft(attempt.problemId, attempt.language, scopeId, attempt.answerFormat)
         : this.saveDraft({ problemId: attempt.problemId, language: attempt.language, scopeId, code: input.code,
-          expectedRevision: input.expectedDraftRevision });
+          expectedRevision: input.expectedDraftRevision, answerFormat: attempt.answerFormat, specVersion: attempt.specVersion });
       if (!draft) throw new Error('A final draft is required to finish the attempt');
       if (input.code === undefined && input.expectedDraftRevision !== undefined && draft.revision !== input.expectedDraftRevision) {
         throw new Error('Draft revision conflict');
       }
-      const lastRun = this.#db.prepare('SELECT id, code_hash AS codeHash FROM runs WHERE attempt_id = ? ORDER BY rowid DESC LIMIT 1').get(id);
-      const matches = lastRun !== undefined && lastRun.codeHash === draft.codeHash;
+      const lastRunId = this.#db.prepare('SELECT id FROM runs WHERE attempt_id = ? ORDER BY rowid DESC LIMIT 1').get(id);
+      const lastRun = lastRunId ? this.#readRun(lastRunId.id as string) : undefined;
+      const matches = lastRun !== undefined && lastRun.codeHash === draft.codeHash
+        && (draft.testConfigDigest === null || lastRun.testConfigDigest === draft.testConfigDigest);
       this.#db.prepare(`UPDATE attempts SET ended_at = ?, final_code = ?, final_code_hash = ?,
-        final_draft_revision = ?, final_last_run_id = ?, last_run_matches_final = ? WHERE id = ?`)
-        .run(new Date().toISOString(), draft.code, draft.codeHash, draft.revision, lastRun?.id ?? null, matches ? 1 : 0, id);
+        final_draft_revision = ?, final_last_run_id = ?, last_run_matches_final = ?, final_test_config_json = ? WHERE id = ?`)
+        .run(new Date().toISOString(), draft.code, draft.codeHash, draft.revision, lastRun?.id ?? null, matches ? 1 : 0, json(draft.testConfig), id);
       this.#db.prepare('DELETE FROM active_attempts WHERE attempt_id = ?').run(id);
       this.#learning.freezeAttemptNotes(id, attempt.problemId);
       return this.getAttempt(id)!;
@@ -1252,12 +1333,13 @@ export class PracticeStore {
       }
       const attempt = this.getAttempt(input.attemptId);
       if (!attempt || !attempt.isActive || attempt.endedAt || attempt.mode === 'strict') throw new Error('请在当前普通练习中提交代码。');
+      if (attempt.answerFormat !== 'function') throw new Error('当前为本地 ACM 练习，不能直接提交力扣。请切换函数式格式。');
       const interview = this.getInterviewForAttempt(attempt.id);
       if (interview && !interview.endedAt) throw new Error('模拟面试中不能提交到力扣。');
       const problem = this.getProblem(attempt.problemId, attempt.problemVersion)?.content;
       if (!problem || problem.source !== 'leetcode-cn' || problem.mode !== 'function' || !problem.starter[attempt.language]
         || problem.sourceId !== input.sourceId || officialProblemSlug(problem.sourceUrl) !== input.slug) throw new Error('题目缺少当前语言的官方模板或提交信息，请重新导入。');
-      const draft = this.getDraft(attempt.problemId, attempt.language, attempt.draftScopeId);
+      const draft = this.getDraft(attempt.problemId, attempt.language, attempt.draftScopeId, attempt.answerFormat);
       if (!draft || draft.codeHash !== codeHash || (input.expectedDraftRevision !== undefined && draft.revision !== input.expectedDraftRevision)) {
         throw new Error('代码已变化，请等待草稿保存完成后再提交。');
       }
@@ -1342,8 +1424,11 @@ export class PracticeStore {
       if (scopeId !== attempt.draftScopeId) throw new Error('Run draft scope does not match the attempt');
       // Retrying an existing Run must not replace a newer draft with its older code.
       if (input.id && this.#readRun(input.id)) return this.saveRun(input);
+      const current = this.getDraft(attempt.problemId, attempt.language, scopeId, attempt.answerFormat);
+      if (input.testConfigDigest !== undefined && current?.testConfigDigest
+        && input.testConfigDigest !== current.testConfigDigest) throw new Error('Run tests have changed since the draft was saved');
       this.saveDraft({ problemId: attempt.problemId, language: attempt.language, code: input.code,
-        scopeId, expectedRevision: input.expectedDraftRevision });
+        scopeId, expectedRevision: input.expectedDraftRevision, answerFormat: attempt.answerFormat, specVersion: attempt.specVersion });
       return this.saveRun(input);
     });
   }
@@ -1357,19 +1442,26 @@ export class PracticeStore {
       if (restored) {
         if (restored.run_id !== runId || restored.scope_id !== scopeId) throw new Error('Restore request id conflicts with different input');
         const attempt = this.getAttempt(restored.attempt_id as string)!;
-        const draft = this.getDraft(attempt.problemId, attempt.language, scopeId);
+        const draft = this.getDraft(attempt.problemId, attempt.language, scopeId, attempt.answerFormat);
         if (!draft) throw new Error('Restored draft is missing');
         return { draft, attempt };
       }
       const run = this.#readRun(runId);
       if (!run) throw new Error('Run not found');
-      if (this.getDraft(run.problemId, run.language, scopeId)
-        || this.getActiveAttempt(run.problemId, run.language, 'practice', scopeId)) throw new Error('Restore requires a new draft scope');
+      if (this.getDraft(run.problemId, run.language, scopeId, run.answerFormat)
+        || this.getActiveAttempt(run.problemId, run.language, 'practice', scopeId, run.answerFormat)) throw new Error('Restore requires a new draft scope');
       const original = this.getAttempt(run.attemptId)!;
       const attempt = this.startAttempt({ id: `restore-attempt:${input.requestId}`, problemId: run.problemId,
         language: run.language, problemVersion: run.problemVersion, problemSnapshot: original.problemSnapshot,
-        draftScopeId: scopeId, restoredFromRunId: runId });
-      const draft = this.saveDraft({ problemId: run.problemId, language: run.language, code: run.code, scopeId, expectedRevision: 0 });
+        draftScopeId: scopeId, restoredFromRunId: runId, answerFormat: run.answerFormat, specVersion: run.specVersion });
+      const snapshot = run.testSnapshot && typeof run.testSnapshot === 'object' && !Array.isArray(run.testSnapshot) ? run.testSnapshot : null;
+      const legacyCases = Array.isArray(run.testSnapshot) ? run.testSnapshot : undefined;
+      const originalContent = original.problemSnapshot && typeof original.problemSnapshot === 'object' && !Array.isArray(original.problemSnapshot) ? original.problemSnapshot : null;
+      const restoredCases = snapshot && Array.isArray(snapshot.cases) ? snapshot.cases : legacyCases;
+      const restoredTests = run.answerFormat === 'acm' && restoredCases
+        ? validateAcmTestConfig({ version: 1, compare: snapshot?.acmCompare ?? originalContent?.acmCompare ?? 'normalized', cases: restoredCases }) : undefined;
+      const draft = this.saveDraft({ problemId: run.problemId, language: run.language, code: run.code, scopeId, expectedRevision: 0,
+        answerFormat: run.answerFormat, specVersion: run.specVersion, ...(restoredTests ? { testConfig: restoredTests } : {}) });
       this.#db.prepare('INSERT INTO draft_restorations VALUES (?, ?, ?, ?, ?)')
         .run(input.requestId, runId, attempt.id, scopeId, new Date().toISOString());
       return { draft, attempt };
@@ -1377,8 +1469,9 @@ export class PracticeStore {
   }
 
   #readRun(id: string): StoredRun | undefined {
-    const row = this.#db.prepare(`SELECT r.*, a.problem_id, a.language, a.problem_version
+    const row = this.#db.prepare(`SELECT r.*, a.problem_id, a.language, a.problem_version, a.answer_format, a.spec_version
       FROM runs r JOIN attempts a ON a.id = r.attempt_id WHERE r.id = ?`).get(id) as Row | undefined;
+    const snapshot = row ? JSON.parse(row.test_snapshot_json as string) as Record<string, JsonValue> | null : null;
     return row ? {
       id: row.id as string, attemptId: row.attempt_id as string,
       problemId: row.problem_id as string, language: row.language as Language,
@@ -1387,6 +1480,8 @@ export class PracticeStore {
       adapterVersion: row.adapter_version as string, runtimeVersion: row.runtime_version as string,
       status: row.status as RunStatus, result: JSON.parse(row.result_json as string),
       createdAt: row.created_at as string, finishedAt: row.finished_at as string | null,
+      answerFormat: row.answer_format as AnswerFormat, specVersion: row.spec_version as string,
+      testConfigDigest: snapshot && typeof snapshot.testConfigDigest === 'string' ? snapshot.testConfigDigest : row.test_suite_version as string,
     } : undefined;
   }
 
@@ -1399,9 +1494,25 @@ export class PracticeStore {
     const result = json(input.result ?? null);
     if (status === 'queued' && result !== 'null') throw new Error('Queued run cannot contain a terminal result');
     const testSnapshot = json(input.testSnapshot ?? null);
+    if (input.testConfigDigest !== undefined) {
+      const snapshot = input.testSnapshot;
+      if (!snapshot || typeof snapshot !== 'object' || Array.isArray(snapshot)
+        || snapshot.testConfigDigest !== input.testConfigDigest || !/^[a-f0-9]{64}$/.test(input.testConfigDigest)) {
+        throw new Error('Run test digest must match its immutable snapshot');
+      }
+    }
     return this.#transaction(() => {
       const attempt = this.getAttempt(input.attemptId);
       if (!attempt) throw new Error('Attempt not found');
+      if ((input.answerFormat !== undefined && input.answerFormat !== attempt.answerFormat)
+        || (input.specVersion !== undefined && input.specVersion !== attempt.specVersion)) throw new Error('Run specification does not match its attempt');
+      const snapshot = input.testSnapshot && typeof input.testSnapshot === 'object' && !Array.isArray(input.testSnapshot) ? input.testSnapshot : null;
+      if (snapshot && ((snapshot.answerFormat !== undefined && snapshot.answerFormat !== attempt.answerFormat)
+        || (snapshot.specVersion !== undefined && snapshot.specVersion !== attempt.specVersion))) throw new Error('Run snapshot format does not match its attempt');
+      if (input.testConfigDigest !== undefined && attempt.answerFormat === 'acm') {
+        const tests = validateAcmTestConfig({ version: 1, compare: snapshot?.acmCompare, cases: snapshot?.cases });
+        if (testConfigDigest(tests) !== input.testConfigDigest) throw new Error('Run test digest does not match its stdin snapshot');
+      }
       const existing = this.#readRun(id);
       if (existing) {
         if (existing.attemptId !== input.attemptId || existing.codeHash !== codeHash
@@ -1475,8 +1586,8 @@ export class PracticeStore {
       if (this.getActiveInterview()) throw new Error('请先结束正在进行的面试。');
       this.#db.prepare('INSERT INTO interview_sessions VALUES (?, ?, NULL, ?)').run(session.id, session.requestId, json(session));
       for (const item of session.items) {
-        this.startAttempt({ id: item.attemptId, problemId: item.problem.id, language: session.pool.rules.language, problemVersion: item.problem.version, problemSnapshot: JSON.parse(JSON.stringify(item.problem.content)), mode: session.initialMode, draftScopeId: item.scopeId });
-        const draft = this.saveDraft({ problemId: item.problem.id, language: session.pool.rules.language, scopeId: item.scopeId, code: item.accepted.code });
+        const attempt = this.startAttempt({ id: item.attemptId, problemId: item.problem.id, language: session.pool.rules.language, problemVersion: item.problem.version, problemSnapshot: JSON.parse(JSON.stringify(item.problem.content)), mode: session.initialMode, draftScopeId: item.scopeId });
+        const draft = this.saveDraft({ problemId: item.problem.id, language: session.pool.rules.language, scopeId: item.scopeId, code: item.accepted.code, answerFormat: attempt.answerFormat, specVersion: attempt.specVersion });
         item.accepted = { ...item.accepted, revision: draft.revision, codeHash: draft.codeHash, savedAt: draft.savedAt };
         this.#db.prepare('INSERT INTO interview_attempts VALUES (?, ?)').run(item.attemptId, session.id);
       }
@@ -1534,7 +1645,14 @@ export class PracticeStore {
   getTodayQueue(at?: string) { return this.#learning.getTodayQueue(at); }
   recordActivity(input: ActivitySampleInput) { return this.#learning.recordActivity(input); }
   getArchiveStatistics(input: { attemptId?: string; from?: string; to?: string; timeZone?: string } = {}) { return this.#learning.getArchiveStatistics(input); }
-  beginAIRequest(input: AiRequestSeed) { return this.#learning.beginAIRequest(input); }
+  beginAIRequest(input: AiRequestSeed) {
+    if (input.snapshot.answerFormat !== undefined) {
+      const attempt = this.getAttempt(input.attemptId);
+      if (!attempt || attempt.answerFormat !== input.snapshot.answerFormat || attempt.specVersion !== input.snapshot.specVersion
+        || attempt.draftScopeId !== input.snapshot.draftScopeId) throw new Error('AI snapshot format does not match the persisted attempt');
+    }
+    return this.#learning.beginAIRequest(input);
+  }
   setAIRequestPhase(id: string, phase: 'streaming' | 'repairing') { return this.#learning.setAIRequestPhase(id, phase); }
   finishAIRequest(id: string, input: AiRequestCompletion) { return this.#learning.finishAIRequest(id, input); }
   getAIRequest(id: string) { return this.#learning.getAIRequest(id); }
@@ -1550,7 +1668,7 @@ export class PracticeStore {
   static inspectBackupSnapshot(snapshotPath: string): BackupSnapshotInfo {
     const db = new DatabaseSync(resolve(snapshotPath), { readOnly: true });
     try {
-      checkDatabase(db, [1, 2, 3, 4, 5, 6, SCHEMA_VERSION]);
+      checkDatabase(db, [1, 2, 3, 4, 5, 6, 7, SCHEMA_VERSION]);
       const version = (db.prepare('PRAGMA user_version').get() as Row).user_version as number;
       const mediaHashes = new Set<string>();
       for (const row of db.prepare('SELECT snapshot_json FROM problem_versions').all() as Row[]) {
@@ -1601,7 +1719,7 @@ export class PracticeStore {
     try {
       copyFileSync(source, temporary);
       const verification = new DatabaseSync(temporary, { readOnly: true });
-      try { checkDatabase(verification, [1, 2, 3, 4, 5, 6, SCHEMA_VERSION]); } finally { verification.close(); }
+      try { checkDatabase(verification, [1, 2, 3, 4, 5, 6, 7, SCHEMA_VERSION]); } finally { verification.close(); }
       linkSync(temporary, target);
       return target;
     } finally {

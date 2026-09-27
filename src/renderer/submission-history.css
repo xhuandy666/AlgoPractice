@@ -30,3 +30,6 @@
   .submission-remark { flex-wrap: wrap; }
   .submission-remark input { flex-basis: calc(100% - 45px); }
 }
+.submission-format-filter { display: flex; align-items: center; flex-wrap: wrap; gap: var(--space-xs); margin-top: var(--space-xs); color: var(--color-muted); font-size: var(--text-xs); }
+.submission-format-filter select { min-height: 36px; width: auto; }
+.submission-format-tag { display: inline-block; width: fit-content; font-size: var(--text-xs); padding: 1px var(--space-xs); color: var(--color-ink-2); background: var(--color-paper-2); border-radius: var(--radius-sm); }

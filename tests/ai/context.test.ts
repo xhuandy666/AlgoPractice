@@ -3,6 +3,21 @@ import assert from 'node:assert/strict';
 import { buildRequestSnapshot, canonicalJson, completionEndpoint, normalizeProviderConfig, requestHash, sha256, validateRequestInput } from '../../src/ai/index.ts';
 import { config, context, input } from './helpers.ts';
 
+test('answer format, specification and stdin digest bind AI evidence and cache identity', () => {
+  const source = { ...context(), run: null, answerFormat: 'acm' as const, specVersion: 'acm-free-v1', testConfigDigest: 'a'.repeat(64),
+    testConfig: { version: 1 as const, compare: 'normalized' as const, cases: [{ stdin: '', expected: '' }] } };
+  const snapshot = buildRequestSnapshot(input(), source, config());
+  assert.equal(snapshot.answerFormat, 'acm'); assert.match(snapshot.messages[1].content, /testConfigDigest/);
+  assert.notEqual(requestHash(snapshot), requestHash(buildRequestSnapshot(input(), { ...source, testConfigDigest: 'b'.repeat(64) }, config())));
+  assert.throws(() => buildRequestSnapshot(input(), { ...source, run: context().run }, config()));
+  const evidence = { ...context().run!, answerFormat: 'acm' as const, specVersion: source.specVersion, testConfigDigest: source.testConfigDigest };
+  assert.doesNotThrow(() => buildRequestSnapshot(input(), { ...source, run: evidence }, config()));
+  assert.throws(() => buildRequestSnapshot(input(), { ...source, run: { ...evidence, testConfigDigest: 'b'.repeat(64) } }, config()));
+  const historical = buildRequestSnapshot({ ...input(), runId: evidence.id }, { ...source, testConfigDigest: 'b'.repeat(64),
+    previousRun: { code: source.code, run: evidence } }, config());
+  assert.equal(historical.run, null); assert.equal(historical.previousRun?.run.testConfigDigest, 'a'.repeat(64));
+});
+
 test('Canonical JSON is field-order independent, while arrays remain ordered', () => { assert.equal(canonicalJson({ z: 1, a: { c: 2, b: 3 } }), canonicalJson({ a: { b: 3, c: 2 }, z: 1 })); assert.notEqual(canonicalJson([1, 2]), canonicalJson([2, 1])); assert.throws(() => canonicalJson({ value: Infinity })); });
 test('Provider endpoint normalization binds exact HTTPS destination and explicit local HTTP', () => { assert.equal(completionEndpoint({ ...config(), baseUrl: 'https://HOST.invalid/v1/' }), 'https://host.invalid/v1/chat/completions'); assert.equal(completionEndpoint({ ...config(), baseUrl: 'https://host.invalid/v1/chat/completions' }), 'https://host.invalid/v1/chat/completions'); assert.doesNotThrow(() => normalizeProviderConfig({ ...config(), baseUrl: 'http://127.0.0.1:8000/v1' })); for (const baseUrl of ['http://remote.invalid/v1', 'file:///tmp/key', 'https://name:key@host.invalid/v1', 'https://host.invalid/v1?key=secret', 'https://host.invalid/v1#token']) assert.throws(() => normalizeProviderConfig({ ...config(), baseUrl })); });
 test('Credentials and arbitrary options are not accepted as provider settings', () => { assert.throws(() => normalizeProviderConfig({ ...config(), apiKey: 'synthetic-secret' })); assert.throws(() => normalizeProviderConfig({ ...config(), maxOutputTokens: 1000000 })); assert.throws(() => validateRequestInput({ ...input(), mode: 'practice', code: 'spoofed' })); });

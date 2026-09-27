@@ -45,9 +45,9 @@ test('E19: rollback clock across process restart is detected using persisted obs
 test('E20: source/dataset refresh cannot alter finished report and repeat review does not rate',async t=>{const f=fixture(t),preview=f.service.previewCompany({kind:'json',name:'original',text:JSON.stringify([{company:'a',problemId:'local:one'}])}),dataset=f.service.commitCompany(preview.id),v=await f.start({company:'a',datasetId:dataset.id});f.service.finish(v.session.id);const frozen=f.service.view(v.session.id).session;f.store.upsertProblem({...problem('local:one'),description:'refreshed statement'});f.service.commitCompany(f.service.previewCompany({kind:'json',name:'new',text:JSON.stringify([{company:'a',problemId:'local:two'}])}).id);assert.deepEqual(f.service.view(v.session.id).session,frozen);const a=f.service.addReview(v.session.id,'local:one'),b=f.service.addReview(v.session.id,'local:one');assert.equal(a.id,b.id);assert.equal(f.store.listReviewEvents(a.id).length,0);assert.equal(a.language,'python');});
 test('interview request id and company file are idempotent, concurrent sessions rejected',async t=>{const f=fixture(t),p=f.service.preview(rules()),v=await f.service.start(p.id,'one');assert.equal((await f.service.start(p.id,'one')).session.id,v.session.id);await assert.rejects(f.service.start(p.id,'another'),/已有/);const f2=fixture(t),p2=f2.service.previewCompany({kind:'json',name:'a',text:'[{"company":"a","problemId":"local:one"}]'});assert.equal(f2.service.commitCompany(p2.id).id,f2.service.commitCompany(p2.id).id);assert.equal(f2.store.listCompanyDatasets().length,1);});
 test('interview reports and attempts are immutable at SQL boundary and references protect deletion',async t=>{const f=fixture(t),v=await f.start();f.service.finish(v.session.id);const db=new DatabaseSync(f.path);try{assert.throws(()=>db.prepare("UPDATE interview_sessions SET data_json='{}' WHERE id=?").run(v.session.id),/immutable/);assert.throws(()=>db.prepare("UPDATE attempts SET final_code='tamper' WHERE id=?").run(v.session.items[0].attemptId),/immutable/);}finally{db.close();}assert.throws(()=>f.store.deleteEndedAttempt(v.session.items[0].attemptId));assert.ok(f.store.getAttempt(v.session.items[0].attemptId));});
-test('consistent SQLite backup restores company datasets, active timer and frozen reports',async t=>{const f=fixture(t),company=f.service.previewCompany({kind:'json',name:'c',text:'[{"company":"a","problemId":"local:one"}]'});f.service.commitCompany(company.id);const v=await f.start(),item=v.session.items[0];f.service.save(v.session.id,item.problem.id,'restorable','');const path=join(f.dir,'backup.sqlite');await f.store.backupTo(path);const restored=new PracticeStore(path);try{assert.equal(restored.getActiveInterview()?.deadlineAt,v.session.deadlineAt);assert.equal(restored.getInterview(v.session.id)?.items[0].accepted.code,'restorable');assert.equal(restored.listCompanyDatasets().length,1);assert.equal(PracticeStore.inspectBackupSnapshot(path).schemaVersion,7);}finally{restored.close();}});
+test('consistent SQLite backup restores company datasets, active timer and frozen reports',async t=>{const f=fixture(t),company=f.service.previewCompany({kind:'json',name:'c',text:'[{"company":"a","problemId":"local:one"}]'});f.service.commitCompany(company.id);const v=await f.start(),item=v.session.items[0];f.service.save(v.session.id,item.problem.id,'restorable','');const path=join(f.dir,'backup.sqlite');await f.store.backupTo(path);const restored=new PracticeStore(path);try{assert.equal(restored.getActiveInterview()?.deadlineAt,v.session.deadlineAt);assert.equal(restored.getInterview(v.session.id)?.items[0].accepted.code,'restorable');assert.equal(restored.listCompanyDatasets().length,1);assert.equal(PracticeStore.inspectBackupSnapshot(path).schemaVersion, 8);}finally{restored.close();}});
 test('real v4 schema migrates only after unchanged backup; repeated startup is idempotent',t=>{const dir=mkdtempSync(join(tmpdir(),'Algo P4 migration ')),path=join(dir,'practice.sqlite');t.after(()=>rmSync(dir,{recursive:true,force:true}));const old=new DatabaseSync(path);old.exec(readFileSync(new URL('../storage/fixtures/p3-v4-schema.sql',import.meta.url),'utf8'));old.exec("INSERT INTO problems VALUES ('old'); INSERT INTO drafts VALUES ('old','python','practice','print(7)','hash',1,'2026-09-01T00:00:00Z')");old.close();const store=new PracticeStore(path);try{assert.ok(store.migrationBackupPath&&existsSync(store.migrationBackupPath));assert.equal(store.getDraft('old','python')?.code,'print(7)');assert.equal(PracticeStore.inspectBackupSnapshot(store.migrationBackupPath!).schemaVersion,4);assert.equal(store.getActiveInterview(),null);assert.equal(store.listCompanyDatasets().length,0);store.integrityCheck();}finally{store.close();}const repeat=new PracticeStore(path);try{assert.equal(repeat.migrationBackupPath,null);assert.equal(repeat.getDraft('old','python')?.code,'print(7)');}finally{repeat.close();}});
-test('failed v4 migration retains original schema and recoverable backup',t=>{const dir=mkdtempSync(join(tmpdir(),'Algo P4 bad migration ')),path=join(dir,'practice.sqlite');t.after(()=>rmSync(dir,{recursive:true,force:true}));const old=new DatabaseSync(path);old.exec(readFileSync(new URL('../storage/fixtures/p3-v4-schema.sql',import.meta.url),'utf8'));old.exec('CREATE TABLE interview_sessions(unexpected TEXT);');old.close();assert.throws(()=>new PracticeStore(path),/Schema v7 migration failed/);const db=new DatabaseSync(path);try{assert.equal(db.prepare('PRAGMA user_version').get()?.user_version,4);assert.equal(db.prepare("SELECT COUNT(*) AS count FROM sqlite_schema WHERE name='company_datasets'").get()?.count,0);}finally{db.close();}});
+test('failed v4 migration retains original schema and recoverable backup',t=>{const dir=mkdtempSync(join(tmpdir(),'Algo P4 bad migration ')),path=join(dir,'practice.sqlite');t.after(()=>rmSync(dir,{recursive:true,force:true}));const old=new DatabaseSync(path);old.exec(readFileSync(new URL('../storage/fixtures/p3-v4-schema.sql',import.meta.url),'utf8'));old.exec('CREATE TABLE interview_sessions(unexpected TEXT);');old.close();assert.throws(()=>new PracticeStore(path),/Schema v8 migration failed/);const db=new DatabaseSync(path);try{assert.equal(db.prepare('PRAGMA user_version').get()?.user_version,4);assert.equal(db.prepare("SELECT COUNT(*) AS count FROM sqlite_schema WHERE name='company_datasets'").get()?.count,0);}finally{db.close();}});
 test('company links create shared library placeholders, leaving prepared problem content intact',t=>{const f=fixture(t);const before=f.store.getProblem('local:one')!;const p=f.service.previewCompany({kind:'json',name:'links',text:'[{"company":"a","problemId":"local:one"},{"company":"a","url":"https://leetcode.cn/problems/two-sum/"}]'});const dataset=f.service.commitCompany(p.id);const unknown=dataset.entries.find(e=>e.url)!;assert.ok(f.store.getProblem(unknown.problemId));assert.equal(f.store.getProblem(unknown.problemId)?.content.sourceUrl,unknown.url);assert.equal(f.store.getProblem(unknown.problemId)?.content.starter.python,undefined);assert.deepEqual(f.store.getProblem('local:one'),before);assert.equal(f.service.preview(rules({company:'a',datasetId:dataset.id})).pool.selectedIds.length,1);});
 
 test('coached AI persistence validates current session mode while preserving original strict attempt',async t=>{
@@ -65,3 +65,47 @@ test('post-deadline code and reasoning survive restart only as recap; final reas
   f.service.save(view.session.id,item.problem.id,'recap answer','later reasoning');f.restart();const restored=f.service.view(view.session.id);
   assert.equal(restored.session.items[0].final?.reasoning,'exam reasoning');assert.equal(restored.items[0].recap?.code,'recap answer');assert.equal(restored.items[0].recapReasoning,'later reasoning');
 });
+
+for (const refreshAt of ['before-start', 'during-session'] as const) {
+  test(`interview drafts and recap stay pinned to native function format when the head becomes ACM ${refreshAt}`, async t => {
+    const f = fixture(t), preview = f.service.preview(rules({ mode: 'coached', counts: { easy: 0, medium: 1, hard: 0 } }));
+    const problemId = preview.pool.selectedIds[0], original = f.store.getProblem(problemId)!;
+    const refresh = () => f.store.upsertProblem({ ...original.content, mode: 'acm', adapter: undefined,
+      cases: [{ stdin: '1\n', expected: '1' }], starter: { python: 'print(input())' } });
+    if (refreshAt === 'before-start') refresh();
+    const started = await f.service.start(preview.id, `pinned-${refreshAt}`), item = started.session.items[0];
+    if (refreshAt === 'during-session') refresh();
+    const beforeSave = f.service.view(started.session.id).items[0];
+    assert.equal(beforeSave.attempt.problemVersion, original.version);
+    assert.equal(beforeSave.attempt.answerFormat, 'function');
+    assert.equal(beforeSave.attempt.specVersion, 'native-v1');
+    assert.equal(beforeSave.draft?.code, original.content.starter.python);
+    assert.equal(beforeSave.draft?.answerFormat, 'function');
+    assert.equal(beforeSave.draft?.specVersion, beforeSave.attempt.specVersion);
+    assert.equal(f.service.save(started.session.id, problemId, 'fixed function answer', 'exam reasoning').counted, true);
+    const saved = f.service.view(started.session.id).items[0];
+    assert.equal(saved.draft?.code, 'fixed function answer');
+    assert.equal(saved.draft?.answerFormat, 'function');
+    assert.equal(saved.draft?.specVersion, saved.attempt.specVersion);
+    assert.equal(f.store.getDraft(problemId, 'python', item.scopeId, 'acm'), undefined);
+    const ended = f.service.finish(started.session.id).session;
+    const recap = f.service.save(started.session.id, problemId, 'recap function answer', 'recap reasoning');
+    assert.equal(recap.counted, false);
+    assert.equal(recap.recap?.answerFormat, 'function');
+    assert.equal(recap.recap?.specVersion, saved.attempt.specVersion);
+    const reasoning = f.store.getDraft(problemId, 'python', `interview-recap:${started.session.id}:reasoning`, 'function');
+    assert.equal(reasoning?.code, 'recap reasoning');
+    assert.equal(reasoning?.specVersion, saved.attempt.specVersion);
+    assert.equal(f.store.getDraft(problemId, 'python', `interview-recap:${started.session.id}`, 'acm'), undefined);
+    assert.equal(f.store.getDraft(problemId, 'python', `interview-recap:${started.session.id}:reasoning`, 'acm'), undefined);
+    f.restart();
+    const reopened = f.service.view(started.session.id);
+    assert.deepEqual(reopened.session, ended);
+    assert.equal(reopened.items[0].draft?.code, 'fixed function answer');
+    assert.equal(reopened.items[0].draft?.answerFormat, 'function');
+    assert.equal(reopened.items[0].recap?.code, 'recap function answer');
+    assert.equal(reopened.items[0].recap?.answerFormat, 'function');
+    assert.equal(reopened.items[0].recapReasoning, 'recap reasoning');
+    f.store.integrityCheck();
+  });
+}
