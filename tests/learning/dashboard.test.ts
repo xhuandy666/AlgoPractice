@@ -118,7 +118,7 @@ test('calendar returns current suspension and rescheduling plus actual month com
   assert.equal(dashboard.days.at(-1)!.reviewCount, 1);
   assert.equal(dashboard.reviewItems.find(item => item.id === suspended.id)!.suspended, true);
   assert.equal(dashboard.reviewItems.find(item => item.id === postponed.id)!.scheduledAt, '2026-09-20T08:00:00.000Z');
-  assert.equal(store.getTodayQueue().suspendedCount, 1); assert.equal(store.getTodayQueue().deferredCount, 1);
+  assert.equal(store.getTodayQueue().suspendedCount, 1); assert.equal(store.getTodayQueue().deferredCount, 0, 'unassessed enrollment has no invented due date');
   store.setReviewPlan(postponed.id, { scheduledAt: null });
   dashboard = store.getLearningDashboard('2026-08');
   assert.equal(dashboard.reviewEvents.length, 1); assert.equal(dashboard.reviewEvents[0].requestId, 'august');

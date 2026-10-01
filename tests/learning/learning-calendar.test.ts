@@ -85,6 +85,13 @@ test('reviewPlan chooses the latest instant before converting to the learning da
   assert.equal(reviewPlan([], '2026-01-01', 'UTC').size, 0);
 });
 
+test('reviewPlan excludes unassessed nullable plans instead of inventing dates', () => {
+  const items = [review('unassessed', '2026-01-01T00:00:00Z', { dueAt: null, card: null }),
+    review('postponed-unassessed', '2026-01-01T00:00:00Z', { dueAt: null, card: null, scheduledAt: '2026-01-03T00:00:00Z' }),
+    review('invalid', 'invalid-date'), review('assessed', '2026-01-04T00:00:00Z')];
+  assert.deepEqual([...reviewPlan(items, '2026-01-01', 'UTC')].map(([date, values]) => [date, values.map(item => item.id)]), [['2026-01-04', ['assessed']]]);
+});
+
 test('learningStreak counts study time, completed attempts and reviews through month boundaries', () => {
   const days = [day('2024-02-28', { completedAttempts: 1 }), day('2024-02-29', { reviewCount: 1 }), day('2024-03-01', { activeMs: 1 })];
   assert.equal(learningStreak(days, '2024-03-01'), 3);

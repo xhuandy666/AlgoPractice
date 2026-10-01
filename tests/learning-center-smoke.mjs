@@ -97,12 +97,12 @@ async function close() {
 }
 async function screenshot(name, lowerReview = false) {
   const notices = page.locator('.preview-banner').getByRole('button', { name: '收起', exact: true });
-  if (await notices.count()) await notices.click();
+  if (await notices.count() && !(await page.locator('dialog[open]').count())) await notices.click();
   assert.equal(await page.locator('.error-banner').count(), 0);
   await page.evaluate(lower => {
     document.activeElement?.blur(); document.scrollingElement?.scrollTo(0, 0);
     for (const element of document.querySelectorAll('.scroll-page,.history-pane')) element.scrollTo(0, 0);
-    if (lower) document.querySelector('.review-planner')?.scrollIntoView({ block: 'start' });
+    if (lower) document.querySelector('.center-review-summary')?.scrollIntoView({ block: 'start' });
   }, lowerReview);
   await page.evaluate(() => new Promise(done => requestAnimationFrame(() => requestAnimationFrame(done))));
   const bounds = await page.evaluate(() => ({ width: innerWidth, height: innerHeight, scrollWidth: document.documentElement.scrollWidth }));
@@ -115,6 +115,61 @@ async function captureSizes(prefix) {
     await resize(...size); await screenshot(`${prefix}-${size[0]}x${size[1]}.png`);
     if (prefix === 'home' && size[0] === 820) await screenshot('home-820x1000-review.png', true);
   }
+  await resize(1440, 1000);
+}
+async function reviewContrast(selector, label) {
+  const result = await page.evaluate(selector => {
+    const root = document.querySelector(selector), canvas = document.createElement('canvas');
+    canvas.width = canvas.height = 1; const ctx = canvas.getContext('2d', { willReadFrequently: true });
+    const rgba = color => { ctx.clearRect(0, 0, 1, 1); ctx.fillStyle = color; ctx.fillRect(0, 0, 1, 1); return [...ctx.getImageData(0, 0, 1, 1).data].map((v, i) => i === 3 ? v / 255 : v); };
+    const blend = (front, back) => front.slice(0, 3).map((value, i) => value * front[3] + back[i] * (1 - front[3]));
+    const background = element => { const layers = []; for (let node = element; node; node = node.parentElement) layers.push(rgba(getComputedStyle(node).backgroundColor)); return layers.reverse().reduce((back, front) => blend(front, back), [255, 255, 255]); };
+    const luminance = rgb => { const v = rgb.map(value => { const n = value / 255; return n <= .04045 ? n / 12.92 : ((n + .055) / 1.055) ** 2.4; }); return v[0] * .2126 + v[1] * .7152 + v[2] * .0722; };
+    const contrast = (front, back) => { const a = luminance(front), b = luminance(back); return (Math.max(a, b) + .05) / (Math.min(a, b) + .05); };
+    const text = [], borders = [], failures = [];
+    const visible = element => element.getClientRects().length && getComputedStyle(element).visibility !== 'hidden' && !element.closest('[hidden],:disabled');
+    for (const element of [root, ...root.querySelectorAll('*')]) {
+      if (!visible(element)) continue;
+      const style = getComputedStyle(element), bg = background(element);
+      const direct = [...element.childNodes].filter(node => node.nodeType === Node.TEXT_NODE && node.textContent.trim()).map(node => node.textContent.trim()).join(' ');
+      if (direct || element.matches('input[type=search],select')) {
+        const fore = element.matches('input[type=search]') && !element.value ? getComputedStyle(element, '::placeholder').color : style.color;
+        const ratio = contrast(blend(rgba(fore), bg), bg), name = direct.slice(0, 80) || element.getAttribute('aria-label') || element.placeholder || element.tagName;
+        text.push({ name, ratio }); if (ratio < 4.5) failures.push({ kind: 'text', name, ratio });
+      }
+      if (element.matches('.button,input:not([type=checkbox]):not([type=radio]),select,.problem-rating-option,[aria-pressed=true].review-bar-button,[aria-pressed=true].review-calendar-cells button')) {
+        const color = rgba(style.borderTopColor); if (!parseFloat(style.borderTopWidth) || color[3] === 0) continue;
+        const outside = background(element.parentElement), ratio = contrast(blend(color, outside), outside);
+        borders.push({ name: direct.slice(0, 80) || element.tagName, ratio }); if (ratio < 3) failures.push({ kind: 'control-border', name: direct.slice(0, 80) || element.tagName, ratio });
+      }
+    }
+    return { textSamples: text.length, controlBorderSamples: borders.length, minTextRatio: Math.min(...text.map(row => row.ratio)), minControlBorderRatio: Math.min(...borders.map(row => row.ratio)), failures };
+  }, selector);
+  assert.deepEqual(result.failures, [], `${label}: computed-color contrast failed`);
+  pass(`${label}: visible enabled text >= 4.5:1 and styled control boundaries >= 3:1`, result);
+  report.reviewContrast ??= []; report.reviewContrast.push({ label, selector, ...result, scope: 'Only visible enabled content in the new review page/modal at these tested states. No claim of a global accessibility audit; native radio/checkbox internals, disabled controls, decorative panel rules and unseen states excluded.' });
+}
+async function reviewFirstScreen() {
+  const original = (await api('reviewPlan', { view: 'all' })).items.items.find(row => row.problemId === 'learning-smoke-1');
+  assert.ok(original?.scheduledAt, 'synthetic future plan is available for the layout-only fixture adjustment');
+  await api('saveLearningSettings', { dailyReviewBudget: 3 });
+  await api('updateProblemReviews', { problemIds: [original.problemId], expectedRevisions: { [original.problemId]: original.revision }, scheduledAt: null });
+  await until(async () => await page.locator('.review-plan-row').count() >= 2 && await page.locator('.review-plan-page').getAttribute('aria-busy') === 'false', 'at least two actual due fixture rows render');
+  const layouts = [];
+  for (const [width, height, expected] of [[1440, 940, 2], [1280, 800, 1]]) {
+    await resize(width, height); await page.locator('.review-plan-page').evaluate(element => element.scrollTo(0, 0));
+    const state = await page.evaluate(() => { const root = document.querySelector('.review-plan-page'), bounds = root.getBoundingClientRect(), buttons = root.querySelector('.review-action-side > button').getBoundingClientRect(); return { width: innerWidth, height: innerHeight, actionBottom: buttons.bottom, contentBottom: bounds.bottom, rowBounds: [...root.querySelectorAll('.review-plan-row')].map(row => { const r = row.getBoundingClientRect(); return { top: r.top, bottom: r.bottom }; }), visibleRows: [...root.querySelectorAll('.review-plan-row')].filter(row => { const r = row.getBoundingClientRect(); return r.top >= bounds.top && r.bottom <= Math.min(bounds.bottom, innerHeight); }).length, advancedOpen: root.querySelector('.review-advanced-filters').open }; });
+    report.reviewFirstScreen ??= []; report.reviewFirstScreen.push(state);
+    assert.equal(state.advancedOpen, false, 'today starts with compact filters'); assert.ok(state.actionBottom < height - 36, 'primary action remains in the first screen'); assert.ok(state.visibleRows >= expected, `${width}x${height}: first screen shows at least ${expected} full review rows`);
+    layouts.push(state); await screenshot(`reviews-${width}x${height}.png`);
+  }
+  await page.getByRole('button', { name: '全部题目', exact: true }).click();
+  await until(async () => await page.locator('.review-plan-page').getAttribute('aria-busy') === 'false', 'expanded all-view filters load');
+  await reviewContrast('.review-plan-page', 'New review plan page with advanced filters');
+  await page.getByRole('button', { name: '今日复习', exact: true }).click();
+  const current = await api('problemReviewDetail', original.problemId);
+  await api('updateProblemReviews', { problemIds: [original.problemId], expectedRevisions: { [original.problemId]: current.plan.revision }, scheduledAt: original.scheduledAt });
+  pass('Review first screen exposes the primary action and real list rows at 1440x940 / 1280x800', layouts);
   await resize(1440, 1000);
 }
 async function pasteCode(code) {
@@ -213,22 +268,23 @@ try {
   await captureSizes('home');
   await resize(1440, 1100); await screenshot('home-publish-1440x1100.png');
   await resize(1440, 1240); await screenshot('home-publish-1440x1240.png');
-  const completeHome = await page.evaluate(() => ({ calendarBottom: document.querySelector('.review-calendar').getBoundingClientRect().bottom, footerBottom: document.querySelector('.center-footer').getBoundingClientRect().bottom, height: innerHeight }));
-  assert.ok(completeHome.calendarBottom < completeHome.height - 36 && completeHome.footerBottom < completeHome.height - 36, 'publication home shows the entire calendar and learning footer above the app status bar');
+  const completeHome = await page.evaluate(() => ({ summaryBottom: document.querySelector('.center-review-summary').getBoundingClientRect().bottom, footerBottom: document.querySelector('.center-footer').getBoundingClientRect().bottom, height: innerHeight }));
+  assert.ok(completeHome.summaryBottom < completeHome.height - 36 && completeHome.footerBottom < completeHome.height - 36, 'learning summary and footer remain above the app status bar');
   report.publicationHome = completeHome;
   await resize(1440, 1000);
   if (!screenshotOnly) {
-    const extraPlans = (await api('reviewItems')).filter(item => item.scheduledAt && !item.suspended).slice(0, 2);
-    for (const item of extraPlans) await api('updateReviewItem', item.id, { scheduledAt: null });
     await api('saveLearningSettings', { dailyReviewBudget: 2 });
-    const limitedQueue = await api('todayQueue'); assert.equal(limitedQueue.reviewedToday, 1); assert.equal(limitedQueue.items.length, 1);
-    await until(async () => await page.locator('.todo-list .todo-row').count() === limitedQueue.items.length, 'home respects the remaining review budget');
-    await page.getByRole('combobox', { name: '复习列表范围', exact: true }).selectOption('due');
-    await until(async () => await page.locator('.todo-list .todo-row').count() === 3, 'all due exposes tasks outside the daily budget');
-    pass('Homepage uses the actual remaining review queue while All due exposes the additional eligible tasks', { budget: 2, completedToday: 1, homePending: 1, allDue: 3 });
-    for (const item of extraPlans) await api('updateReviewItem', item.id, { scheduledAt: item.scheduledAt });
+    const limitedPlan = await api('reviewPlan', { view: 'today' });
+    assert.equal(limitedPlan.summary.reviewedToday, 1);
+    const summary = page.getByRole('region', { name: '复习计划摘要', exact: true });
+    await until(async () => (await summary.textContent()).includes(`已复习 ${limitedPlan.summary.reviewedToday} 题`), 'home summary matches the unified plan snapshot');
+    assert.equal(await page.locator('.todo-list,.review-calendar,.review-records').count(), 0, 'learning center no longer duplicates management');
+    await summary.getByRole('button', { name: '查看复习计划', exact: true }).click();
+    await page.locator('.review-plan-page').getByRole('heading', { name: '复习计划', exact: true }).waitFor();
+    pass('Learning center exposes one summary entry to the independent unified plan page');
+    await reviewFirstScreen();
     await api('saveLearningSettings', { dailyReviewBudget: null });
-    await page.getByRole('button', { name: '今天', exact: true }).click();
+    await nav('学习中心'); await readyHome();
     await page.getByRole('button', { name: '调整目标', exact: true }).click();
     await page.getByRole('spinbutton', { name: '每日练习目标', exact: true }).fill('7');
     await page.locator('.goal-form').getByRole('button', { name: '保存', exact: true }).click();
@@ -243,32 +299,9 @@ try {
     await page.locator('.archive-detail').getByRole('heading', { name: fixture.crossing.title, exact: true }).waitFor();
     pass('Heatmap day opens the existing archive filtered by that learning date, including a practice ended across midnight', { date: fixture.yesterday, crossingId: fixture.crossing.id, total: datePage.total });
     await nav('学习中心'); await readyHome();
-    const monthTitle = month => `${month.slice(0, 4)} 年 ${Number(month.slice(5))} 月`;
-    await page.getByRole('button', { name: '上个月', exact: true }).click();
-    await page.locator('.calendar-toolbar h4').filter({ hasText: monthTitle(fixture.previousMonth) }).waitFor();
-    await readyHome();
-    assert.ok((await api('learningDashboard', fixture.previousMonth)).reviewEvents.some(event => event.requestId === 'completed-last-month'));
-    await page.getByRole('button', { name: '下个月', exact: true }).click();
-    await page.locator('.calendar-toolbar h4').filter({ hasText: monthTitle(fixture.month) }).waitFor();
-    await page.getByRole('button', { name: '下个月', exact: true }).click();
-    await page.getByRole('button', { name: '今天', exact: true }).click();
-    await page.locator('.calendar-toolbar h4').filter({ hasText: monthTitle(fixture.month) }).waitFor();
-    await until(async () => await page.locator(`.calendar-day[data-today="true"]`).getAttribute('aria-pressed') === 'true', 'Today resets calendar selection');
-    pass('Calendar previous/next month navigation and Today restore the expected month and selected day');
-    const scope = page.getByRole('combobox', { name: '复习列表范围', exact: true });
-    await scope.selectOption('all');
-    const row = page.locator('.todo-row').filter({ has: page.getByRole('button', { name: fixture.official.title, exact: true }) });
-    await row.locator('summary').click(); await row.getByRole('button', { name: '暂停复习', exact: true }).click();
-    await until(async () => (await api('reviewItems')).find(item => item.id === fixture.pending.id).suspended, 'review pause persisted');
-    await scope.selectOption('paused');
-    await row.locator('summary').click(); await row.getByRole('button', { name: '恢复复习', exact: true }).click();
-    await until(async () => !(await api('reviewItems')).find(item => item.id === fixture.pending.id).suspended, 'review resume persisted');
-    assert.equal((await api('reviewItems')).find(item => item.id === fixture.pending.id).dueAt, fixture.pending.dueAt);
-    assert.deepEqual(await api('reviewEvents', fixture.pending.id), []);
-    pass('Pausing and resuming a todo persist without changing FSRS due dates or inventing completion');
-    await page.getByRole('button', { name: '今天', exact: true }).click();
   }
-  await page.getByRole('button', { name: `开始复习：${fixture.official.title}`, exact: true }).click();
+  await nav('题库');
+  await page.locator('.problem-table-row').filter({ has: page.getByRole('button', { name: fixture.official.title, exact: true }) }).getByRole('button', { name: '练习', exact: true }).click();
   await page.getByRole('navigation', { name: '主导航' }).getByRole('button', { name: '练习工作台', exact: true }).waitFor();
   await page.locator('.coding-pane .monaco-editor').waitFor();
   if (!screenshotOnly) await activityTimingRegression();
@@ -277,7 +310,7 @@ try {
   assert.equal(await page.getByRole('button', { name: '提交到力扣', exact: true }).count(), 0, 'A local authored problem with only a source URL has no verified official submission metadata');
   const intercepted = await app.evaluate(() => ({ copies: globalThis.learningCenterSmoke.copies, opened: globalThis.learningCenterSmoke.opened }));
   assert.deepEqual(intercepted.copies, []); assert.deepEqual(intercepted.opened, []);
-  pass('Review todo enters the existing workbench and preserves the exact draft; a source URL alone does not authorize official submission', { draftBytes: Buffer.byteLength(syntheticCode) });
+  pass('Library entry opens the ordinary workbench and preserves the exact draft; a source URL alone does not authorize official submission', { draftBytes: Buffer.byteLength(syntheticCode) });
   // Publication screenshots show the original example and an actual local result, not test annotations.
   await pasteCode(fixture.official.code);
   assert.ok((await api('environment')).python, 'Prepare a Python runtime or pass ALGOPRACTICE_RUNTIME_DIR');
@@ -290,32 +323,42 @@ try {
   await captureSizes('workbench');
   if (!screenshotOnly) {
     await page.getByRole('button', { name: '结束练习', exact: true }).click();
-    const rating = page.getByRole('region', { name: '练习自评与复习计划', exact: true });
-    await rating.getByRole('button', { name: /^轻松/ }).click();
-    await rating.getByRole('button', { name: '确认自评并安排复习', exact: true }).click();
-    await until(async () => (await api('reviewEvents', fixture.pending.id)).length === 1, 'review self-rating committed');
-    reviewEvent = (await api('reviewEvents', fixture.pending.id))[0]; assert.equal(reviewEvent.kind, 'review'); assert.equal(reviewEvent.rating, 4);
-    await nav('学习中心'); await readyHome();
-    await page.locator('.todo-tabs').getByRole('button', { name: /^已完成/ }).click();
-    await page.getByRole('button', { name: `${fixture.official.title}，已完成，查看评分`, exact: true }).click();
-    const records = page.getByRole('region', { name: '复习评分记录', exact: true });
-    await records.getByRole('button', { name: '更正', exact: true }).click();
-    await records.getByRole('combobox', { name: '更正评级', exact: true }).selectOption('3');
-    await api('saveLearningSettings', { dailyPracticeGoal: 7 });
-    // Wait for the real library:changed debounce and consequent dashboard reload.
-    await delay(800);
-    assert.equal(await records.getByRole('combobox', { name: '更正评级', exact: true }).inputValue(), '3');
-    pass('An actual library change and dashboard refresh preserve an in-progress rating correction');
-    await records.getByRole('button', { name: '确认更正', exact: true }).click();
-    await until(async () => (await api('reviewEvents', fixture.pending.id)).length === 2, 'rating correction appended');
-    const events = await api('reviewEvents', fixture.pending.id), dashboard = await api('learningDashboard');
-    assert.equal(events[0].reviewedAt, reviewEvent.reviewedAt); assert.equal(events[1].kind, 'correction'); assert.equal(events[1].rating, 3);
-    assert.equal(dashboard.reviewEvents.filter(event => event.itemId === fixture.pending.id).length, 1);
-    assert.equal(dashboard.reviewEvents.find(event => event.itemId === fixture.pending.id).rating, 3);
-    pass('Finishing a practice and self-rating creates a real review; correction appends history and leaves one calendar completion');
+    assert.equal(await page.getByRole('dialog').count(), 0, 'finishing a practice must not automatically open a rating');
+    assert.equal((await api('problemReviewDetail', fixture.official.problemId)).events.items.length, 1, 'local pass and finish do not add a review observation');
+    await nav('复习计划');
+    await page.getByRole('button', { name: '全部题目', exact: true }).click();
+    await page.getByRole('button', { name: fixture.official.title, exact: true }).click();
+    const details = page.getByRole('complementary', { name: '题目复习详情', exact: true });
+    await details.getByRole('button', { name: '记录今天的复习', exact: true }).click();
+    const rating = page.getByRole('dialog');
+    assert.equal(await rating.getByRole('radio', { checked: true }).count(), 0, 'ratings are not preselected');
+    await rating.getByRole('radio', { name: /轻松/ }).check();
+    await reviewContrast('.problem-rating-dialog', 'New self-rating modal with selected rating');
+    await screenshot('review-rating-1440x1000.png');
+    await rating.getByRole('button', { name: '记录自评并安排复习', exact: true }).click();
+    await until(async () => (await api('problemReviewDetail', fixture.official.problemId)).events.items.length === 2, 'explicit manual self-rating committed');
+    await until(async () => (await api('reviewAssessmentDraft', `problem-review:manual:${fixture.official.problemId}`)) === null, 'successful manual assessment clears the resolved draft using its current revision');
+    await rating.getByRole('button', { name: '关闭', exact: true }).click();
+    reviewEvent = (await api('problemReviewDetail', fixture.official.problemId)).events.items.find(event => event.requestId !== 'pending-initial');
+    assert.equal(reviewEvent.kind, 'review'); assert.equal(reviewEvent.rating, 4);
+    const timeline = details.locator('.review-history-event').filter({ has: page.getByText(fixture.today, { exact: true }) });
+    await timeline.getByRole('button', { name: '修改这次自评', exact: true }).click();
+    const correction = page.getByRole('dialog');
+    await correction.getByRole('radio', { name: /良好/ }).check();
+    await api('saveLearningSettings', { dailyPracticeGoal: 7 }); await delay(800);
+    assert.equal(await correction.getByRole('radio', { name: /良好/ }).isChecked(), true);
+    pass('A real library refresh preserves the correction draft and its source identity');
+    await correction.getByRole('button', { name: '保存更正', exact: true }).click();
+    await until(async () => (await api('problemReviewDetail', fixture.official.problemId)).events.items.length === 3, 'correction appended');
+    await correction.getByRole('button', { name: '关闭', exact: true }).click();
+    const events = (await api('problemReviewDetail', fixture.official.problemId)).events.items;
+    const corrected = events.find(event => event.kind === 'correction');
+    assert.equal(corrected.observedAt, reviewEvent.observedAt); assert.equal(corrected.rating, 3);
+    const unified = await api('reviewPlan'); assert.equal(unified.summary.reviewedToday, 2);
+    pass('Only explicit rating adds a review; correction is traceable and does not add another completion');
     await close(); await load();
     assert.equal((await api('learningSettings')).dailyPracticeGoal, 7);
-    assert.equal((await api('reviewEvents', fixture.pending.id)).length, 2);
+    assert.equal((await api('problemReviewDetail', fixture.official.problemId)).events.total, 3);
     assert.ok(!(await api('reviewItems')).find(item => item.id === fixture.pending.id).suspended);
     pass('Full application restart preserves the goal, original review, correction and resumed plan');
   }

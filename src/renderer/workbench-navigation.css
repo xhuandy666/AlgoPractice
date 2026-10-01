@@ -1,0 +1,25 @@
+/* Compact chrome keeps every destination accessible while returning space to the workbench. */
+.app-shell.app-shell-p2[data-sidebar-collapsed=true] { display: grid; grid-template-columns: 64px minmax(0, 1fr); }
+.app-shell.app-shell-p2[data-sidebar-collapsed=true] > .sidebar { height: 100dvh; overflow-y: auto; display: flex; flex-direction: column; flex-wrap: nowrap; align-items: stretch; padding: 18px 10px 12px; gap: 18px; border-right: 1px solid var(--color-rule); border-bottom: 0; }
+.app-shell[data-sidebar-collapsed=true] .sidebar .wordmark { justify-content: center; padding: 0; }
+.app-shell[data-sidebar-collapsed=true] .wordmark > span:last-child,
+.app-shell[data-sidebar-collapsed=true] .search-launch > span,
+.app-shell[data-sidebar-collapsed=true] .search-launch > kbd,
+.app-shell[data-sidebar-collapsed=true] .sidebar nav button > span { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+.app-shell.app-shell-p2[data-sidebar-collapsed=true] .sidebar .search-launch { margin: 0; width: 44px; min-height: 44px; justify-content: center; padding: 0; }
+.app-shell.app-shell-p2[data-sidebar-collapsed=true] .sidebar nav { display: flex; flex-direction: column; flex-wrap: nowrap; width: 44px; margin: 0; gap: 5px; order: 0; }
+.app-shell.app-shell-p2[data-sidebar-collapsed=true] .sidebar nav button { width: 44px; min-height: 44px; padding: 0; justify-content: center; }
+.app-shell.app-shell-p2[data-sidebar-collapsed=true] .sidebar nav button[data-group-start] { margin-top: 18px; }
+.app-shell[data-sidebar-collapsed=true] .sidebar nav button[data-group-start]::before { display: block; top: -10px; }
+.app-shell[data-sidebar-collapsed=true] .sidebar-footer { display: none; }
+.app-shell[data-sidebar-collapsed=true] > .main-shell { height: 100dvh; min-height: 0; }
+.app-header > .header-title { display: flex; align-items: center; gap: 12px; min-width: 0; }
+.header-title > div { min-width: 0; }
+.sidebar-toggle { width: 44px; min-width: 44px; height: 44px; min-height: 44px; display: grid; place-items: center; padding: 0; border: 1px solid var(--color-rule); color: var(--color-muted); }
+.sidebar-toggle:hover { color: var(--color-accent); background: var(--color-accent-soft); }
+.practice-navigation { display: grid; gap: 7px; padding: 10px 0 12px; border-bottom: 1px solid var(--color-rule); margin-bottom: 18px; }
+.practice-navigation > .button-row { display: flex; justify-content: space-between; gap: 8px; }
+.practice-navigation button { min-height: 36px; padding: 4px 10px; font-size: var(--text-xs); }
+.practice-navigation-status, .practice-navigation-help { font-size: var(--text-xs); color: var(--color-muted); overflow-wrap: anywhere; }
+.practice-navigation-error { font-size: var(--text-xs); color: var(--color-error); }
+.practice-navigation-error .text-button { padding: 0 5px; }

@@ -11,7 +11,11 @@ import type { AiProviderConfig, AiProviderState, AiConnectionResult, AiRequestIn
 import type { ReminderSettings, ReminderStatus, BackupSummary, BackupManifest, RestoreResult } from './maintenance';
 import type { Note, NoteVersion, SaveNoteInput, ConfirmNoteInput, NoteFilter, Attachment, ReviewItem, ReviewEvent, AddReviewItemInput, ReviewFeedbackInput, ReviewFeedbackResult, CorrectReviewInput, ReviewFilter, LearningSettings, LearningSettingsInput, LearningDashboard, TodayQueue, ArchiveStatistics } from './learning';
 import type { PageResult, ProblemPageFilter, ProblemListItem, NotePageFilter, NoteListItem, AttemptPageFilter, AttemptListItem, RunPageFilter, RunListItem } from './learning';
-export type Page = 'today' | 'library' | 'workbench' | 'sources' | 'notes' | 'archives' | 'learning-settings' | 'environment' | 'interview';
+import type { AdvanceReviewSessionInput, ProblemReviewAssessmentInput, ProblemReviewBatchInput, ProblemReviewCorrectionInput,
+  ProblemReviewDetail, ProblemReviewPlan, ProblemReviewPreview, ProblemReviewPreviewInput, ProblemReviewResult,
+  ReviewAssessmentDraft, ReviewAssessmentDraftInput, ReviewOpportunity, ReviewOpportunityFilter, ReviewPlanQuery,
+  ReviewPlanSnapshot, ReviewSession, StartReviewSessionInput, SubmitReviewOpportunityInput } from './review-plan';
+export type Page = 'today' | 'reviews' | 'library' | 'workbench' | 'sources' | 'notes' | 'archives' | 'learning-settings' | 'environment' | 'interview';
 export interface RunArchive {
   id: string; attemptId: string; problemId: string; problemVersion: string; code: string; language: Language; createdAt: string;
   result: Omit<RunResult, 'status'> & { status: RunStatus | 'interrupted' };
@@ -74,6 +78,26 @@ export interface DesktopBridge {
   reviewEvents(itemId: string): Promise<ReviewEvent[]>;
   reviewFeedback(input: ReviewFeedbackInput): Promise<ReviewFeedbackResult>;
   correctReview(input: CorrectReviewInput): Promise<ReviewFeedbackResult>;
+  reviewPlan(query?: ReviewPlanQuery): Promise<ReviewPlanSnapshot>;
+  problemReviewDetail(problemId: string, history?: import('./learning').PageRequest): Promise<ProblemReviewDetail>;
+  addProblemReviews(input: { problemIds: string[] }): Promise<ProblemReviewPlan[]>;
+  updateProblemReviews(input: ProblemReviewBatchInput): Promise<ProblemReviewPlan[]>;
+  previewProblemReview(input: ProblemReviewPreviewInput): Promise<ProblemReviewPreview>;
+  recordProblemReview(input: ProblemReviewAssessmentInput): Promise<ProblemReviewResult>;
+  submitReviewOpportunity(input: SubmitReviewOpportunityInput): Promise<ProblemReviewResult>;
+  correctProblemReview(input: ProblemReviewCorrectionInput): Promise<ProblemReviewResult>;
+  problemReviewRequest(requestId: string): Promise<ProblemReviewResult | null>;
+  reviewOpportunities(filter?: ReviewOpportunityFilter): Promise<PageResult<ReviewOpportunity>>;
+  reviewOpportunityForSubmission(submissionRecordId: string): Promise<ReviewOpportunity | null>;
+  claimReviewOpportunity(id: string): Promise<ReviewOpportunity | null>;
+  skipReviewOpportunity(id: string): Promise<ReviewOpportunity>;
+  saveReviewAssessmentDraft(input: ReviewAssessmentDraftInput): Promise<ReviewAssessmentDraft>;
+  reviewAssessmentDraft(key: string): Promise<ReviewAssessmentDraft | null>;
+  deleteReviewAssessmentDraft(key: string, expectedRevision?: number): Promise<boolean>;
+  startReviewSession(input: StartReviewSessionInput): Promise<ReviewSession>;
+  reviewSession(id?: string): Promise<ReviewSession | null>;
+  advanceReviewSession(input: AdvanceReviewSessionInput): Promise<ReviewSession>;
+  endReviewSession(id: string): Promise<ReviewSession>;
   learningStatistics(): Promise<ArchiveStatistics>;
   notes(filter?: NoteFilter): Promise<Note[]>;
   note(id: string): Promise<Note | null>;

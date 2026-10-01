@@ -3,6 +3,7 @@ import { canonicalJson, sha256 } from './canonical.ts';
 import { AiServiceError } from './errors.ts';
 import { validateLegacyResponse } from './legacy-policy.ts';
 import { decodeResponseFormat } from './response-format.ts';
+import { resolveEvidenceReference } from './evidence-catalog.ts';
 
 const REPAIR_HINTS = Object.freeze({
   shape: 'Return one valid JSON object with exactly the required fields and bounded field types. Do not wrap JSON in Markdown or add fields.',
@@ -12,6 +13,7 @@ const REPAIR_HINTS = Object.freeze({
   testCase: 'Local test evidence needs the supplied caseIndex, a passed/wrong_answer status, and a supplied trustworthy expected value. Otherwise omit that evidence.',
   quote: 'Evidence quote must exactly match supplied diagnostic text or quote existing JSON fields with unchanged values. Complete JSON objects or field fragments may reorder fields, but cannot change values, add unknown fields or paraphrase diagnostics. Omit unsupported evidence.',
   evidenceKind: 'Evidence kind must match the supplied run status: compiler for user compile errors, exception for supplied runtime/timeout/output-limit diagnostics, test for verified local cases, official for the matching official result.',
+  evidenceReference: 'Copy an exact referenceId from learningContext.evidenceCatalog. Return each evidence item as {"referenceId":"the supplied id"}, without runId, kind, quote or caseIndex. If no supplied reference supports the answer, use evidence:[] and code-based inferences.',
   patchHash: 'Copy the exact current codeHash into patch.baseCodeHash. Never guess or use a historical code hash.',
   patchClipped: 'The current code or its numbered reference view is incomplete. Return patch:null and give bounded prose guidance instead of guessing line ranges.',
   patchGrounding: 'A patch must include at least one nonempty edit and supporting supplied evidence or a reasoned code-based inference. If unsupported, return patch:null.',
@@ -34,8 +36,11 @@ export class AiValidationError extends AiServiceError {
     Object.defineProperty(this, 'repairHint', { value: this.repairHint, writable: false, configurable: false });
   }
 }
-export function validationRepairHint(error: unknown): string {
-  return error instanceof AiValidationError && Object.values(REPAIR_HINTS).includes(error.repairHint) ? error.repairHint : REPAIR_HINTS.shape;
+export function validationRepairHint(error: unknown, snapshot?: AiRequestSnapshot): string {
+  const hint = error instanceof AiValidationError && Object.values(REPAIR_HINTS).includes(error.repairHint) ? error.repairHint : REPAIR_HINTS.shape;
+  return snapshot?.evidenceCatalog && error instanceof AiValidationError
+    && ['localRun', 'officialRun', 'testCase', 'quote', 'evidenceKind', 'evidenceReference'].includes(error.detail.validationReason ?? '')
+    ? `${hint}\n${REPAIR_HINTS.evidenceReference}` : hint;
 }
 const shape = (): never => { throw new AiValidationError('shape', 'FORMAT_INVALID'); };
 const policy = (reason: RepairHintKey): never => { throw new AiValidationError(reason); };
@@ -107,6 +112,12 @@ export function validateResponse(raw: string, snapshot: AiRequestSnapshot): AiRe
   const nextSteps = array(value.nextSteps, 8).map(item => text(item, 2000));
   const inferences = array(value.inferences, 8).map(item => { const inference = object(item, ['text', 'reason']); return { text: text(inference.text, 2000), reason: text(inference.reason, 2000) }; });
   const evidence = array(value.evidence, 8).map(item => {
+    if (item && typeof item === 'object' && !Array.isArray(item) && Object.hasOwn(item, 'referenceId')) {
+      const selected = object(item, ['referenceId']);
+      const reference = resolveEvidenceReference(text(selected.referenceId, 100), snapshot);
+      if (!reference) return policy('evidenceReference');
+      return reference;
+    }
     const reference = object(item, ['runId', 'kind', 'quote'], ['caseIndex']);
     let quote = text(reference.quote, 2000);
     const caseIndex = reference.caseIndex === null ? undefined : reference.caseIndex;

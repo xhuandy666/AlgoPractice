@@ -13,7 +13,7 @@ import { answer, context, input, MemoryRepository, mockVault } from './ai/helper
 const project = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const output = resolve(process.env.P5_AI_EVIDENCE_DIR ?? resolve(project, 'evidence/p5/ai-protocol'));
 const report = { startedAt: new Date().toISOString(), kind: 'authored-local-http-protocol-fixtures', realModelTested: false,
-  realCredentialsUsed: false, osCredentialStoreTested: false, externalRequests: 0, assertions: [], sourceHashes: {}, result: 'running' };
+  realCredentialsUsed: false, osCredentialStoreTested: false, externalRequests: 0, assertions: [], evidenceReferenceCases: [], sourceHashes: {}, result: 'running' };
 const services = [], requests = [];
 const event = value => `data: ${JSON.stringify(value)}\r\n\r\n`;
 const chunk = (delta, finish_reason = null) => ({ choices: [{ index: 0, delta, finish_reason }] });
@@ -42,7 +42,16 @@ const server = createServer(async (request, response) => {
       response.once('close', () => clearTimeout(timer)); return;
     }
     const probe = body.messages[0].content.startsWith('Connection capability check');
-    const content = probe ? '{"ok":true}' : mode === 'repair' && repairCount++ === 0 ? '{"schemaVersion":2,"explanation":"PRIVATE-AUTHORED-INVALID"' : JSON.stringify(answer(activeRequest));
+    let fixtureAnswer = answer(activeRequest);
+    if (mode === 'catalog-official' || mode === 'catalog-compiler') {
+      const payload = JSON.parse(body.messages.find(message => message.role === 'user').content);
+      const kind = mode === 'catalog-official' ? 'official' : 'compiler';
+      const reference = payload.learningContext.evidenceCatalog.find(entry => entry.kind === kind);
+      assert.ok(reference, `No supplied ${kind} evidence reference`);
+      // The wire fixture selects the actual sent reference; it never authors runId/kind/quote/caseIndex.
+      fixtureAnswer = { ...fixtureAnswer, evidence: [{ referenceId: reference.referenceId }] };
+    }
+    const content = probe ? '{"ok":true}' : mode === 'repair' && repairCount++ === 0 ? '{"schemaVersion":2,"explanation":"PRIVATE-AUTHORED-INVALID"' : JSON.stringify(fixtureAnswer);
     response.write(wire(profile, content));
     // Intentionally keep the socket open: a valid [DONE] must terminate client reading itself.
   } catch { response.writeHead(500); response.end('fixture failed'); }
@@ -93,6 +102,43 @@ try {
       assert.deepEqual(sent.stream_options, provider.includeUsage ? { include_usage: true } : undefined);
     });
   }
+  for (const scenario of ['official', 'compiler']) {
+    const repository = new MemoryRepository(), source = context(), events = [];
+    const provider = { ...createAiProviderPreset('deepseek-cn', `reference-${scenario}`), baseUrl: `${origin}/deepseek-cn/v1`, timeoutMs: 3000 };
+    if (scenario === 'official') {
+      source.run = { ...source.run, status: 'runtime_error', diagnostics: [{ source: 'user', message: "_APInvalidReturnError: 'NoneType' object is not iterable" }],
+        caseResults: [{ index: 0, status: 'runtime_error', expected: [0, 1] }] };
+      source.official = { id: 'authored-official-wa', attemptId: source.attemptId, problemVersion: source.problemVersion, codeHash: source.run.codeHash,
+        status: 'wrong_answer', statusMessage: 'Wrong Answer', input: '[2,7,11,15],9', actualOutput: 'null', expectedOutput: '[0,1]', passedCases: 0, totalCases: 3 };
+      source.officialSubmissionId = source.official.id;
+    } else {
+      source.run = { ...source.run, status: 'compile_error', diagnostics: [{ source: 'user', message: 'SyntaxError: expected colon', line: 2, column: 27 }], caseResults: [] };
+    }
+    const service = new AiService({ repository, vault: mockVault(), resolveContext: () => source, resolveProvider: () => provider,
+      fetchImpl: localFetch, onEvent: event => events.push(event) });
+    services.push(service); mode = `catalog-${scenario}`;
+    activeRequest = { ...input(), kind: scenario === 'official' ? 'official-review' : 'diagnosis',
+      ...(scenario === 'official' ? { officialSubmissionId: source.official.id } : {}) };
+    const before = requests.length, result = await service.request(activeRequest);
+    const sentBody = requests.at(-1).body;
+    const sent = JSON.parse(sentBody.messages.find(message => message.role === 'user').content).learningContext;
+    const selected = sent.evidenceCatalog.find(entry => entry.kind === scenario), { referenceId, ...canonicalEvidence } = selected;
+    check(`${scenario}: real loopback fetch-body reference selection completes once and persists canonical source evidence without repair`, () => {
+      assert.equal(result.status, 'completed'); assert.equal(requests.length - before, 1); assert.equal(result.usage.calls, 1);
+      assert.equal(result.snapshot.promptVersion, 'tilian-chat-coach-v2.5');
+      assert.deepEqual(result.snapshot.evidenceCatalog, sent.evidenceCatalog);
+      assert.deepEqual(result.response.evidence, [canonicalEvidence]);
+      assert.deepEqual(repository.getAIRequest(activeRequest.requestId).response.evidence, [canonicalEvidence]);
+      assert.equal(Object.hasOwn(result.response.evidence[0], 'referenceId'), false);
+      assert.equal(Object.hasOwn(result.response.evidence[0], 'caseIndex'), false);
+      assert.equal(events.some(event => event.phase === 'repairing'), false);
+      assert.equal(sentBody.messages.some(message => message.content.includes('One format repair only')), false);
+      assert.equal(result.response.evidence[0].runId, scenario === 'official' ? source.official.id : source.run.id);
+    });
+    report.evidenceReferenceCases.push({ scenario, sentCatalog: sent.evidenceCatalog, frozenSnapshotCatalog: result.snapshot.evidenceCatalog,
+      wireResponseEvidence: [{ referenceId }], canonicalEvidence: result.response.evidence, phases: events.map(event => event.phase), calls: result.usage.calls });
+  }
+  mode = 'valid';
   const repository = new MemoryRepository(), events = [], source = context();
   const provider = { ...createAiProviderPreset('qwen-cn', 'failure-profile'), baseUrl: `${origin}/qwen-cn/v1`, timeoutMs: 3000 };
   const service = new AiService({ repository, vault: mockVault(), resolveContext: () => source, resolveProvider: () => provider, fetchImpl: localFetch, onEvent: event => events.push(event) });
@@ -121,7 +167,7 @@ try {
     assert.ok(!JSON.stringify([...repository.records.values(), events]).includes('PRIVATE-AUTHORED'));
   });
   check('No external endpoint was contacted', () => assert.equal(report.externalRequests, 0));
-  for (const file of ['src/shared/ai.ts', 'src/ai/canonical.ts', 'src/ai/provider.ts', 'src/ai/service.ts']) {
+  for (const file of ['src/shared/ai.ts', 'src/ai/canonical.ts', 'src/ai/context.ts', 'src/ai/evidence-catalog.ts', 'src/ai/policy.ts', 'src/ai/provider.ts', 'src/ai/service.ts']) {
     report.sourceHashes[file] = createHash('sha256').update(await readFile(resolve(project, file))).digest('hex');
   }
   report.result = 'passed';

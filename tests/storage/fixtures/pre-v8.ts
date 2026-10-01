@@ -1,7 +1,9 @@
 import type { DatabaseSync } from 'node:sqlite';
+import { stripProblemReviewSchema } from './pre-v9.ts';
 
 /** Test fixture only: strip the new dimensions before simulating an older released database. */
 export function stripAnswerFormatSchema(db: DatabaseSync): void {
+  stripProblemReviewSchema(db);
   db.exec(`PRAGMA foreign_keys=OFF;
     DROP TRIGGER immutable_attempt_format;
     DROP TRIGGER immutable_finished_attempt;

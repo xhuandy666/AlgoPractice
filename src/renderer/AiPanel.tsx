@@ -5,6 +5,7 @@ import type { AiEvent, AiKind, AiPatchApplication, AiProviderState, AiRequestRec
 import type { Note } from '../shared/learning';
 import { CodeComparison } from './CodeComparison';
 import { Markdown } from './Markdown';
+import { HelpHint } from './HelpHint';
 import { dateTime, errorText } from './ui';
 import { useEditsFrozen } from './pending-saves';
 import './ai-chat.css';
@@ -197,7 +198,7 @@ export function AiPanel({ api, attempt, code, onApply, onNoteSaved, onSettings, 
 
   if (!active) return null;
   return <section className="ai-panel ai-chat-panel" aria-label="AI 教练">
-    <header className="ai-panel-intro"><h3>{reviewMode ? 'AI 复盘' : 'AI 教练'}</h3><p className="field-help">一起读懂题目，沿着你的思路把代码改好。</p></header>
+    <header className="ai-panel-intro"><h3>{reviewMode ? 'AI 复盘' : 'AI 教练'}</h3></header>
     <div className="ai-conversation" ref={conversation} onScroll={change => {
       const element = change.currentTarget, nearBottom = element.scrollHeight - element.scrollTop - element.clientHeight < 64;
       pinnedToLatest.current = nearBottom; setAwayFromLatest(!nearBottom);
@@ -205,7 +206,7 @@ export function AiPanel({ api, attempt, code, onApply, onNoteSaved, onSettings, 
       {loadError ? <div className="ai-chat-notice" role="alert"><p className="error-text">{loadError}</p><button className="text-button" onClick={() => { void reload(); }}>重新加载对话</button></div> : !provider ? <p className="ai-status" role="status">正在加载 AI 设置与对话…</p> : !configured && <div className="ai-chat-notice"><p>先配置你自己的模型接口与 Key。</p><button className="button" onClick={onSettings}>配置 AI</button></div>}
       {strict ? <p className="ai-chat-notice">严格面试进行中，AI 教练暂不可用。</p> : !hasContext && <p className="ai-chat-notice">开始一次练习后，可以向 AI 教练提问。</p>}
       {message && <p role="status" className="success-text ai-chat-notice">{message}</p>}
-      {provider && configured && hasContext && !strict && turns.length === 0 && <div className="ai-chat-empty"><p>想从哪里开始？</p><p className="field-help">可以要一点提示、检查当前代码，或直接聊聊你的思路。</p></div>}
+      {provider && configured && hasContext && !strict && turns.length === 0 && <div className="ai-chat-empty"><p>输入问题，或选择下方操作。</p></div>}
       <div className="ai-request-list" role="log" aria-label="AI 对话记录" aria-live="polite" aria-relevant="additions">
         {turns.map(({ id, record, local }) => {
           const kind = record?.snapshot.kind ?? local!.kind, text = record?.snapshot.question ?? local!.question;
@@ -228,19 +229,19 @@ export function AiPanel({ api, attempt, code, onApply, onNoteSaved, onSettings, 
                   <details><summary>回答详情</summary>
                     <p className="ai-status"><time dateTime={record.createdAt}>{dateTime(record.createdAt)}</time> · {statusLabels[record.status]}</p>
                     {record.snapshot.previousRun && <p className="ai-status">包含旧代码的运行记录，仅作对照</p>}
-                    {record.snapshot.conversationMemory?.status === 'degraded' && <p className="ai-status">历史对话有部分省略；本次分析仍以本次代码快照为准。</p>}
+                    {record.snapshot.conversationMemory?.status === 'degraded' && <p className="ai-status">部分历史对话未发送</p>}
                     {response.evidence.length > 0 && <details><summary>使用的运行证据</summary>{response.evidence.map((evidence, index) => <pre className="diagnostic" key={index}>{evidence.quote}</pre>)}</details>}
                     {response.inferences.length > 0 && <details><summary>需要验证的判断</summary>{response.inferences.map((inference, index) => <div key={index}><Markdown text={inference.text} /><p className="field-help">依据：{inference.reason}</p></div>)}</details>}
-                    {record.cachedFromRequestId && <p className="ai-status">复用了完全相同请求的已完成回答。</p>}
+                    {record.cachedFromRequestId && <p className="ai-status">已复用相同请求的回答</p>}
                     <p className="ai-status">{record.usage?.totalTokens === null || !record.usage ? '用量未知' : `供应商报告 ${record.usage.totalTokens} Token`} · {record.snapshot.provider.model}</p>
                   </details>
                 </div>
                 {patch?.requestId === record.id && !reviewMode && <div className="ai-patch-preview">
-                  <p className="field-help">应用前会再次核对代码版本。修改不会自动运行或判为正确。</p>
+                  <p className="field-help">应用后请运行用例验证。</p>
                   <CodeComparison before={record.snapshot.code} after={patch.code} language={patch.language} label="AI 修改差异" />
                   <div className="compact-actions"><button className="button primary" disabled={Boolean(busy) || frozen || strict} onClick={() => { void apply(); }}>应用到当前草稿</button><button className="text-button" disabled={Boolean(busy)} onClick={() => setPatch(null)}>收起差异</button></div>
                 </div>}
-              </> : failure ? <div className="ai-chat-failure"><p role="alert" className="error-text">{failure}</p><button className="text-button" disabled={!canAsk} onClick={() => { void ask(kind, text, record?.snapshot.officialSubmissionId); }}>重试这次提问</button></div> : <p className="ai-status" role={pendingStatuses.has(status) ? 'status' : undefined}>{progress}{event?.requestId === id && event.receivedBytes !== undefined && pendingStatuses.has(status) ? ` · 已接收 ${Math.ceil(event.receivedBytes / 1024)} KiB` : ''}{pendingStatuses.has(status) ? '，检查完成后显示。' : '。'}</p>}
+              </> : failure ? <div className="ai-chat-failure"><p role="alert" className="error-text">{failure}</p><button className="text-button" disabled={!canAsk} onClick={() => { void ask(kind, text, record?.snapshot.officialSubmissionId); }}>重试这次提问</button></div> : <p className="ai-status" role={pendingStatuses.has(status) ? 'status' : undefined}>{progress}{event?.requestId === id && event.receivedBytes !== undefined && pendingStatuses.has(status) ? ` · 已接收 ${Math.ceil(event.receivedBytes / 1024)} KiB` : ''}</p>}
             </div>
           </article>;
         })}
@@ -255,8 +256,7 @@ export function AiPanel({ api, attempt, code, onApply, onNoteSaved, onSettings, 
       }} /></label>
       <div className="ai-composer-actions"><span className="field-help" id="ai-chat-keyboard-help">Enter 发送 · Shift + Enter 换行</span>{activeId ? <button type="button" className="button" onClick={() => { void stop(); }}>停止 AI 请求</button> : <button type="submit" className="button primary" disabled={!canAsk || !question.trim()}>发送</button>}</div>
       <div className="ai-composer-secondary"><button type="button" className="text-button" disabled={!canAsk} onClick={() => { void ask('note-draft'); }}>总结为笔记草稿</button></div>
-      <label className="checkbox-field ai-auto-analysis"><input type="checkbox" aria-label="提交后自动分析" aria-describedby="ai-auto-help" checked={pendingAutoValue ?? provider?.autoAnalyzeOfficial ?? false} disabled={!api || !configured || autoSaving || frozen || strict} onChange={change => { void saveAutoAnalysis(change.target.checked); }} />提交后自动分析{autoSaving && <span className="field-help" role="status">保存中…</span>}</label>
-      <p className="field-help ai-auto-help" id="ai-auto-help">仅力扣官方提交完成后分析；本地运行不会自动触发。</p>
+      <div className="control-with-help ai-auto-analysis"><label className="checkbox-field"><input type="checkbox" aria-label="提交后自动分析" aria-describedby="ai-auto-help" checked={pendingAutoValue ?? provider?.autoAnalyzeOfficial ?? false} disabled={!api || !configured || autoSaving || frozen || strict} onChange={change => { void saveAutoAnalysis(change.target.checked); }} />提交后自动分析{autoSaving && <span className="field-help" role="status">保存中…</span>}</label><HelpHint id="ai-auto-help" label="提交后自动分析说明">仅力扣官方提交完成后分析；本地运行不会自动触发。</HelpHint></div>
       {settingError && <p role="alert" className="error-text">{settingError} 请重试开关。</p>}
     </form>
   </section>;

@@ -1,6 +1,6 @@
 export const PERFORMANCE_RECORDING_MS = 90000;
-const pages = new Set(['today', 'library', 'workbench', 'sources', 'notes', 'archives', 'learning-settings', 'environment', 'interview']);
-type PerformancePage = 'today' | 'library' | 'workbench' | 'sources' | 'notes' | 'archives' | 'learning-settings' | 'environment' | 'interview' | 'unknown';
+const pages = new Set(['today', 'reviews', 'library', 'workbench', 'sources', 'notes', 'archives', 'learning-settings', 'environment', 'interview']);
+type PerformancePage = 'today' | 'reviews' | 'library' | 'workbench' | 'sources' | 'notes' | 'archives' | 'learning-settings' | 'environment' | 'interview' | 'unknown';
 type Sample = { elapsedMs: number; durationMs: number; page: PerformancePage; transition: boolean };
 type Summary = { frames: number; totalFrameMs: number; longestFrameMs: number; framesOver50Ms: number; transitionFramesOver50Ms: number };
 const emptySummary = (): Summary => ({ frames: 0, totalFrameMs: 0, longestFrameMs: 0, framesOver50Ms: 0, transitionFramesOver50Ms: 0 });

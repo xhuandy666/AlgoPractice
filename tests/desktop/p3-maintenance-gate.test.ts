@@ -12,6 +12,11 @@ test('restore preparation permits pending drafts, blocks new work and waits for 
   await gate.run('note:save', () => {});
   await gate.run('interview:save', () => {});
   await gate.run('submission:save-remark', () => {});
+  await gate.run('problem-review:save-draft', () => {});
+  await gate.run('problem-review:draft', () => {});
+  await gate.run('problem-review:request', () => {});
+  await assert.rejects(gate.run('problem-review:record', () => {}), /正在恢复/);
+  await assert.rejects(gate.run('problem-review:claim', () => {}), /正在恢复/);
   await assert.rejects(gate.run('submission:history', () => {}), /正在恢复/);
   await assert.rejects(gate.run('submission:detail', () => {}), /正在恢复/);
   let drained = false; const drain = gate.lockAndDrain().then(() => { drained = true; });
@@ -19,6 +24,9 @@ test('restore preparation permits pending drafts, blocks new work and waits for 
   await assert.rejects(gate.run('draft:save', () => {}), /正在恢复/);
   await assert.rejects(gate.run('interview:save', () => {}), /正在恢复/);
   await assert.rejects(gate.run('submission:save-remark', () => {}), /正在恢复/);
+  await assert.rejects(gate.run('problem-review:save-draft', () => {}), /正在恢复/);
+  await assert.rejects(gate.run('problem-review:draft', () => {}), /正在恢复/);
+  await assert.rejects(gate.run('problem-review:request', () => {}), /正在恢复/);
   complete(); await previous; await drain; assert.equal(committed, true); assert.equal(drained, true);
   gate.release(); assert.equal(await gate.run('runner:run', () => 1), 1);
 });

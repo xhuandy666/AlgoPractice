@@ -257,7 +257,34 @@ try {
     const visibleCode = await comparison.locator('.view-lines').innerText();
     assert.ok(visibleCode.replace(/\s/g, '').includes(expectedSignature));
     await comparison.locator('.monaco-editor').hover(); await page.mouse.wheel(0, 800);
-    await until(async () => (await comparison.locator('.view-lines').innerText()).replace(/\s/g, '').includes(expectedCode.split('\n').find(line => line.startsWith('# archived')).replace(/\s/g, '')), 'last historical code line is rendered');
+    // The user can now resize the lower pane. A wheel over its nested Monaco
+    // viewport can scroll the outer history card without reaching Monaco's
+    // document end; use its actual keyboard navigation rather than assuming
+    // one wheel delta makes every virtualized code line appear in the DOM.
+    const historicalTextbox = comparison.getByRole('textbox', { name: '历史提交代码', exact: false });
+    await historicalTextbox.focus();
+    await page.keyboard.press(process.platform === 'darwin' ? 'Meta+ArrowDown' : 'Control+End');
+    await page.keyboard.press('End');
+    const lastCodeLine = expectedCode.split('\n').find(line => line.startsWith('# archived'));
+    assert.ok(lastCodeLine, 'Authored fixture has a final nonempty line to verify');
+    try {
+      await until(async () => comparison.evaluate((element, expected) => {
+        const line = [...element.querySelectorAll('.view-line')].find(target => target.textContent.replace(/\s/g, '').includes(expected.replace(/\s/g, '')));
+        const editor = element.querySelector('.monaco-editor');
+        if (!line || !editor) return false;
+        const bounds = line.getBoundingClientRect(), panelBounds = element.getBoundingClientRect(), editorBounds = editor.getBoundingClientRect();
+        return bounds.height > 0 && bounds.top >= Math.max(panelBounds.top, editorBounds.top, 0) - 1 &&
+          bounds.bottom <= Math.min(panelBounds.bottom, editorBounds.bottom, window.innerHeight) + 1;
+      }, lastCodeLine), 'last historical code line is rendered and fully readable inside the resized pane');
+    } catch (error) {
+      report.historicalScrollFailure = await comparison.evaluate(element => {
+        const measure = target => { if (!target) return null; const bounds = target.getBoundingClientRect(); return { x: bounds.x, y: bounds.y, width: bounds.width, height: bounds.height,
+          clientHeight: target.clientHeight, scrollHeight: target.scrollHeight, scrollTop: target.scrollTop, overflowY: getComputedStyle(target).overflowY }; };
+        return { panel: measure(element), host: measure(element.querySelector('.editor-host')), editor: measure(element.querySelector('.monaco-editor')),
+          scrolling: [...element.querySelectorAll('.monaco-scrollable-element')].map(measure), renderedLines: [...element.querySelectorAll('.view-line')].map(line => ({ text: line.textContent, bounds: measure(line) })) };
+      });
+      throw error;
+    }
     const historicalBefore = await comparison.locator('.view-lines').innerText();
     await comparison.getByRole('textbox', { name: '历史提交代码', exact: false }).focus();
     await page.keyboard.type('cannot-change-history');

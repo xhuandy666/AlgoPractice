@@ -171,7 +171,8 @@ export class AiService {
           } catch (error) {
             if (secretEcho || !(error instanceof AiServiceError) || !['FORMAT_INVALID', 'POLICY_VIOLATION'].includes(error.detail.code) || attempt === 1) throw error;
             checkAbort(signal); this.#repository(repository => repository.setAIRequestPhase(input.requestId, 'repairing')); this.#emit(snapshot, input.requestId, 'repairing');
-            const repair = canonicalJson({ task: 'One format repair only. Return the required JSON for the SAME requested action and user request, respecting the unchanged system policy. Follow the fixed repair guidance and the original user request. Do not invent missing evidence.', reason: error.detail.code, repairHint: validationRepairHint(error) });
+            const repair = canonicalJson({ task: 'One format repair only. Return the required JSON for the SAME requested action and user request, respecting the unchanged system policy. Follow the fixed repair guidance and the original user request. Do not invent missing evidence.', reason: error.detail.code, repairHint: validationRepairHint(error, snapshot),
+              ...(snapshot.evidenceCatalog ? { allowedEvidence: snapshot.evidenceCatalog.map(entry => ({ referenceId: entry.referenceId, kind: entry.kind })), evidenceItemFormat: { referenceId: 'copy an exact allowedEvidence referenceId' } } : {}) });
             // Keep the original system/user role order for compatible APIs that reject consecutive user messages.
             messages = snapshot.messages.map((message, index) => index === snapshot.messages.length - 1 ? { ...message, content: `${message.content}\n\n${repair}` } : message);
           }

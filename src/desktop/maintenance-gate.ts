@@ -5,9 +5,9 @@ export class MaintenanceGate {
   get phase() { return this.#phase; }
 
   run<T>(channel: string, operation: () => T | Promise<T>): Promise<T> {
-    const flushWrite = this.#phase === 'flush' && ['draft:save', 'note:save', 'interview:save', 'submission:save-remark'].includes(channel);
+    const flushSave = this.#phase === 'flush' && ['draft:save', 'note:save', 'interview:save', 'submission:save-remark', 'problem-review:save-draft', 'problem-review:draft', 'problem-review:request'].includes(channel);
     const maintenanceRead = ['backup:state', 'app:maintenance-state'].includes(channel);
-    if (this.#phase !== 'idle' && !flushWrite && !maintenanceRead) return Promise.reject(new Error('正在恢复数据，请等待完成。'));
+    if (this.#phase !== 'idle' && !flushSave && !maintenanceRead) return Promise.reject(new Error('正在恢复数据，请等待完成。'));
     const id = Symbol(channel);
     const promise = Promise.resolve().then(operation);
     this.#operations.set(id, { channel, settled: promise });

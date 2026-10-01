@@ -9,6 +9,9 @@ import { AiService, CredentialVault, normalizeProviderConfig, helpCardDecision }
 import type { AiProviderConfig, AiProviderState, AiRequestInput, AiTrustedContext, AiHelpRun } from '../shared/ai';
 import type { OfficialSubmission } from '../shared/official';
 import type { AddReviewItemInput, ConfirmNoteInput, CorrectReviewInput, LearningSettingsInput, NoteFilter, ReviewFeedbackInput, ReviewFilter, SaveNoteInput } from '../shared/learning';
+import type { AdvanceReviewSessionInput, ProblemReviewAssessmentInput, ProblemReviewBatchInput, ProblemReviewCorrectionInput,
+  ProblemReviewPreviewInput, ReviewAssessmentDraftInput, ReviewOpportunityFilter, ReviewPlanQuery,
+  StartReviewSessionInput, SubmitReviewOpportunityInput } from '../shared/review-plan';
 import type { BackupSummary, RestoreLifecycle } from '../shared/maintenance';
 import type { Page } from '../shared/bridge';
 import { AttachmentService, attachmentExtensions } from './attachment-service';
@@ -19,7 +22,7 @@ import { applyPracticeAiPatch, buildPracticeAiContext, runAiEvidence } from './l
 import { OfficialAiCoach } from './official-ai-coach';
 const id = (value: unknown) => { if (typeof value !== 'string' || !value.trim() || value.length > 512) throw new Error('标识无效。'); return value; };
 const integer = (value: unknown) => { if (typeof value !== 'number' || !Number.isSafeInteger(value) || value < 1) throw new Error('版本无效。'); return value; };
-interface Options { dataDirectory: string; version: string; window: BrowserWindow; store(): PracticeStore; handle(channel: string, handler: (...args: unknown[]) => unknown): void; changed(): void; reveal(page: Page): void; lifecycle: RestoreLifecycle; isIdle(): boolean; allowAutomaticAi?(): boolean; interviewContext?(context: AiTrustedContext): AiTrustedContext; log(event: string, data: Record<string, string | number | boolean | null>): void; }
+interface Options { dataDirectory: string; version: string; window: BrowserWindow; store(): PracticeStore; handle(channel: string, handler: (...args: unknown[]) => unknown): void; changed(): void; reveal(page: Page): void; lifecycle: RestoreLifecycle; isIdle(): boolean; allowAutomaticAi?(): boolean; allowReviewPrompt?(): boolean; interviewContext?(context: AiTrustedContext): AiTrustedContext; log(event: string, data: Record<string, string | number | boolean | null>): void; }
 export class LearningController {
   readonly vault: CredentialVault; readonly attachments: AttachmentService; readonly backups: BackupService; readonly reminders: ReminderService;
   ai!: AiService; #provider: AiProviderConfig | null = null; #automatic: ReturnType<typeof setInterval> | null = null; #autoTask: Promise<unknown> | null = null;
@@ -33,7 +36,7 @@ export class LearningController {
     const notifications = new Map<string, Notification>();
     this.reminders = new ReminderService({ directory: options.dataDirectory, timeZone: () => options.store().getLearningSettings().timeZone, dueCount: () => options.store().getTodayQueue().dueCount,
       notifier: { notify: input => { if (!Notification.isSupported()) throw new Error('当前系统不支持桌面提醒。'); const notification = new Notification({ title: input.title, body: input.body }); notifications.set(input.id, notification); notification.on('click', input.onClick); notification.on('failed', (_event, message) => input.onFailure(message)); notification.on('close', () => notifications.delete(input.id)); notification.show(); }, dismiss: key => { notifications.get(key)?.close(); notifications.delete(key); } },
-      onNavigateQueue: () => options.reveal('today'), onChanged: options.changed });
+      onNavigateQueue: () => options.reveal('reviews'), onChanged: options.changed });
     this.backups = new BackupService({ dataDirectory: options.dataDirectory, appVersion: options.version, snapshotDatabase: destination => options.store().backupTo(destination), inspectSnapshot: PracticeStore.inspectBackupSnapshot, getReminderSettings: () => this.reminders.settings(), getAiProvider: () => this.#provider, lifecycle: options.lifecycle });
     this.rebind(); this.#register();
   }
@@ -94,6 +97,34 @@ export class LearningController {
     handle('review:events', key => get().listReviewEvents(id(key)));
     handle('review:feedback', input => mutate(() => { const value = input as ReviewFeedbackInput; return get().recordReview({ requestId: value.requestId, itemId: value.itemId, rating: value.rating, ...(value.attemptId ? { attemptId: value.attemptId } : {}) }); }));
     handle('review:correct', input => mutate(() => get().correctReview(input as CorrectReviewInput)));
+    handle('problem-review:snapshot', query => get().getReviewPlanSnapshot(query as ReviewPlanQuery));
+    handle('problem-review:detail', (key, history) => get().getProblemReviewDetail(id(key), history as import('../shared/learning').PageRequest));
+    handle('problem-review:add', input => mutate(() => get().addProblemReviews(input as { problemIds: string[] })));
+    handle('problem-review:update', input => mutate(() => get().updateProblemReviews(input as ProblemReviewBatchInput)));
+    handle('problem-review:preview', input => get().previewProblemReview(input as ProblemReviewPreviewInput));
+    // Neither renderer-supplied timestamps nor renderer-supplied AC/FSRS facts reach the trusted write paths.
+    handle('problem-review:record', input => mutate(() => { const value = input as ProblemReviewAssessmentInput;
+      return get().recordProblemReview({ requestId: value.requestId, problemId: value.problemId, rating: value.rating,
+        ...(value.attemptId ? { attemptId: value.attemptId } : {}) }); }));
+    handle('problem-review:official-record', input => mutate(() => { const value = input as SubmitReviewOpportunityInput;
+      return get().submitReviewOpportunity({ requestId: value.requestId, opportunityId: value.opportunityId, rating: value.rating }); }));
+    handle('problem-review:correct', input => mutate(() => { const value = input as ProblemReviewCorrectionInput;
+      return get().correctProblemReview({ requestId: value.requestId, eventId: value.eventId, rating: value.rating }); }));
+    handle('problem-review:request', key => get().getProblemReviewRequest(id(key)) ?? null);
+    handle('problem-review:opportunities', filter => get().reviewOpportunities(filter as ReviewOpportunityFilter));
+    handle('problem-review:submission-opportunity', key => get().getReviewOpportunityForSubmission(id(key)) ?? null);
+    handle('problem-review:claim', key => {
+      if (!this.options.isIdle() || !(this.options.allowReviewPrompt?.() ?? true) || win.isDestroyed() || !win.isVisible() || !win.isFocused()) return null;
+      return mutate(() => get().claimReviewOpportunity(id(key)) ?? null);
+    });
+    handle('problem-review:skip', key => mutate(() => get().skipReviewOpportunity(id(key))));
+    handle('problem-review:save-draft', input => mutate(() => get().saveReviewAssessmentDraft(input as ReviewAssessmentDraftInput)));
+    handle('problem-review:draft', key => get().getReviewAssessmentDraft(id(key)) ?? null);
+    handle('problem-review:delete-draft', (key, revision) => mutate(() => get().deleteReviewAssessmentDraft(id(key), revision === undefined ? undefined : integer(revision))));
+    handle('problem-review:start-session', input => mutate(() => get().startReviewSession(input as StartReviewSessionInput)));
+    handle('problem-review:session', key => get().getReviewSession(key === undefined ? undefined : id(key)) ?? null);
+    handle('problem-review:advance-session', input => mutate(() => get().advanceReviewSession(input as AdvanceReviewSessionInput)));
+    handle('problem-review:end-session', key => mutate(() => get().endReviewSession(id(key))));
     handle('learning:statistics', () => get().getArchiveStatistics());
     handle('learning:dashboard', month => get().getLearningDashboard(month as string | undefined));
     handle('learning:pause-activity', () => this.resetActivity());

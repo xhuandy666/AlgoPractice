@@ -5,7 +5,10 @@ import { DatabaseSync, backup as sqliteBackup } from 'node:sqlite';
 import { LearningRepository, backfillNoteAttachmentReferences, defaultLearningSettings } from '../learning/repository.ts';
 import { archiveDateBoundary } from '../shared/archive-date.ts';
 import { pageBounds, pageResult, searchText, literalLike, SQL_TRIM_WHITESPACE } from './pagination.ts';
-import type { AttemptListItem, AttemptPageFilter, NotePageFilter, PageResult, ProblemListItem, ProblemPageFilter, RunListItem, RunPageFilter } from '../shared/learning.ts';
+import type { AttemptListItem, AttemptPageFilter, NotePageFilter, PageRequest, PageResult, ProblemListItem, ProblemPageFilter, RunListItem, RunPageFilter } from '../shared/learning.ts';
+import type { AdvanceReviewSessionInput, ProblemReviewAssessmentInput, ProblemReviewBatchInput, ProblemReviewCorrectionInput,
+  ProblemReviewPreviewInput, ReviewAssessmentDraftInput, ReviewOpportunityFilter, ReviewPlanQuery,
+  StartReviewSessionInput, SubmitReviewOpportunityInput } from '../shared/review-plan.ts';
 import { MIGRATE_V5 } from '../interview/schema.ts';
 import { MIGRATE_V7 } from './submission-history-schema.ts';
 import { MIGRATE_V8 } from './answer-format-schema.ts';
@@ -13,7 +16,8 @@ import { assertAnswerFormat, validateAcmTestConfig, NATIVE_SPEC_VERSION, ACM_FRE
 import { SUBMISSION_REMARK_LIMIT, type SaveSubmissionRemarkInput, type SubmissionHistoryDetail, type SubmissionHistoryFilter,
   type SubmissionHistoryItem, type SubmissionHistorySource, type SubmissionRemark } from '../shared/submission-history.ts';
 import type { CompanyDataset, InterviewSession } from '../shared/interview.ts';
-import { MIGRATE_V3, MIGRATE_V4 } from '../learning/schema.ts';
+import { MIGRATE_V3, MIGRATE_V4, MIGRATE_V9 } from '../learning/schema.ts';
+import { migrateProblemReviewData } from '../learning/problem-review-migration.ts';
 import type { ActivitySampleInput, AddReviewItemInput, Attachment, BackupSnapshotInfo, ConfirmNoteInput,
   CorrectReviewInput, LearningSettingsInput, NoteFilter, ReviewFeedbackInput, ReviewFilter, SaveNoteInput } from '../shared/learning.ts';
 import type { AiLevel, AiRequestCompletion, AiRequestSeed } from '../shared/ai.ts';
@@ -144,7 +148,8 @@ export interface StoredRun {
 }
 
 type Row = Record<string, string | number | null>;
-const SCHEMA_VERSION = 8;
+const SCHEMA_VERSION = 9;
+const SUPPORTED_BACKUP_VERSIONS = [1, 2, 3, 4, 5, 6, 7, 8, SCHEMA_VERSION];
 const MIGRATE_V6 = `
 CREATE TABLE official_submissions (
   id TEXT PRIMARY KEY NOT NULL,
@@ -513,7 +518,7 @@ export class PracticeStore {
     this.#db = new DatabaseSync(this.dbPath);
     try {
       const version = (this.#db.prepare('PRAGMA user_version').get() as Row).user_version;
-      if (![0, 1, 2, 3, 4, 5, 6, 7, SCHEMA_VERSION].includes(version as number)) throw new Error(`Unsupported schema version: ${version}`);
+      if (![0, ...SUPPORTED_BACKUP_VERSIONS].includes(version as number)) throw new Error(`Unsupported schema version: ${version}`);
       this.#db.exec('PRAGMA foreign_keys = ON; PRAGMA journal_mode = WAL; PRAGMA synchronous = FULL; PRAGMA busy_timeout = 5000;');
       if (version === 0) this.#transaction(() => {
         this.#db.exec(SCHEMA);
@@ -525,11 +530,14 @@ export class PracticeStore {
         this.#db.exec(MIGRATE_V7);
         this.#db.exec(MIGRATE_V8);
         this.#db.prepare('INSERT INTO learning_settings VALUES (1, ?)').run(json({ ...defaultLearningSettings(), updatedAt: new Date().toISOString() }));
+        this.#db.exec(MIGRATE_V9);
+        const settings = new LearningRepository(this.#db, operation => this.#transaction(operation)).getLearningSettings();
+        migrateProblemReviewData(this.#db, settings.timeZone);
         this.#db.exec(`PRAGMA user_version = ${SCHEMA_VERSION}`);
       });
       if (typeof version === 'number' && version > 0 && version < SCHEMA_VERSION) {
         checkDatabase(this.#db, [version]);
-        const backupPath = `${this.dbPath}.before-v8-${new Date().toISOString().replace(/[:.]/g, '-')}-${randomUUID()}.sqlite`;
+        const backupPath = `${this.dbPath}.before-v9-${new Date().toISOString().replace(/[:.]/g, '-')}-${randomUUID()}.sqlite`;
         const temporary = `${backupPath}.partial`;
         try {
           // VACUUM INTO is a synchronous, transactionally consistent snapshot including committed WAL pages.
@@ -551,13 +559,16 @@ export class PracticeStore {
             if (version < 5) this.#db.exec(MIGRATE_V5);
             if (version < 6) this.#db.exec(MIGRATE_V6);
             if (version < 7) this.#db.exec(MIGRATE_V7);
-            this.#db.exec(MIGRATE_V8);
+            if (version < 8) this.#db.exec(MIGRATE_V8);
             backfillNoteAttachmentReferences(this.#db);
+            this.#db.exec(MIGRATE_V9);
+            const settings = new LearningRepository(this.#db, operation => this.#transaction(operation)).getLearningSettings();
+            migrateProblemReviewData(this.#db, settings.timeZone);
             this.#db.exec(`PRAGMA user_version = ${SCHEMA_VERSION}`);
             checkDatabase(this.#db);
           });
         } catch (error) {
-          throw new Error(`Schema v8 migration failed; original schema retained. Backup: ${backupPath}`, { cause: error });
+          throw new Error(`Schema v9 migration failed; original schema retained. Backup: ${backupPath}`, { cause: error });
         }
       }
       // Existing schema 2 databases need only a trigger update; table layouts and stored snapshots stay intact.
@@ -743,12 +754,13 @@ export class PracticeStore {
       const timeZone = filter.timeZone ?? this.getLearningSettings().timeZone;
       const start = archiveDateBoundary(filter.learningDate, timeZone), end = archiveDateBoundary(filter.learningDate, timeZone, true);
       // A recorded pulse is the preceding duration ending at occurred_at. Include either side of midnight.
+      // Review observations keep their frozen learning date even after the settings time zone changes.
       clauses.push(`(started_at >= ? AND started_at < ? OR ended_at >= ? AND ended_at < ?
         OR EXISTS(SELECT 1 FROM activity_samples s WHERE s.attempt_id = summaries.id AND s.duration_ms > 0 AND s.occurred_at > ?
           AND julianday(s.occurred_at) - s.duration_ms / 86400000.0 < julianday(?))
         OR EXISTS(SELECT 1 FROM runs r WHERE r.attempt_id = summaries.id AND r.created_at >= ? AND r.created_at < ?)
-        OR EXISTS(SELECT 1 FROM review_events e WHERE e.attempt_id = summaries.id AND e.kind = 'review' AND e.reviewed_at >= ? AND e.reviewed_at < ?))`);
-      values.push(start, end, start, end, start, end, start, end, start, end);
+        OR EXISTS(SELECT 1 FROM problem_review_events e WHERE e.attempt_id = summaries.id AND e.kind = 'review' AND e.learning_date = ?))`);
+      values.push(start, end, start, end, start, end, start, end, filter.learningDate);
     }
     const cte = `WITH summaries AS (SELECT a.id, a.problem_id, a.language, a.problem_version, a.mode, a.started_at,
       a.draft_scope_id, a.ended_at, a.final_code_hash, a.final_draft_revision, a.final_last_run_id,
@@ -1372,6 +1384,9 @@ export class PracticeStore {
       const finishedAt = ['completed', 'unknown', 'error'].includes(input.status) ? now : null;
       this.#db.prepare(`UPDATE official_submissions SET submission_id=?,status=?,result_json=?,error_json=?,updated_at=?,finished_at=? WHERE id=?`)
         .run(submissionId, input.status, json(result), json(error), now, finishedAt, id);
+      // Only the trusted new terminal transition creates a daily AC opportunity. The
+      // shared connection makes result and eligibility commit or roll back together.
+      if (input.status === 'completed' && result?.status === 'accepted') this.#learning.registerReviewAccepted(id);
       return this.getOfficialSubmission(id)!;
     });
   }
@@ -1403,6 +1418,7 @@ export class PracticeStore {
       // Run.attempt_id and Attempt.final_last_run_id form a cycle. Defer checks until this
       // transaction has deleted both sides; foreign_keys remains ON and COMMIT checks all FKs.
       this.#db.exec('PRAGMA defer_foreign_keys = ON');
+      this.#learning.detachReviewAttempt(id);
       this.#learning.detachAndDeleteAttemptData(id);
       this.#db.prepare(`UPDATE attempts SET restored_from_run_id = NULL
         WHERE id <> ? AND restored_from_run_id IN (SELECT id FROM runs WHERE attempt_id = ?)`).run(id, id);
@@ -1643,6 +1659,29 @@ export class PracticeStore {
   listReviewEvents(itemId: string) { return this.#learning.listReviewEvents(itemId); }
   setReviewPlan(id: string, input: { suspended?: boolean; scheduledAt?: string | null }) { return this.#learning.setReviewPlan(id, input); }
   getTodayQueue(at?: string) { return this.#learning.getTodayQueue(at); }
+  addProblemReview(problemId: string) { return this.#learning.addProblemReview(problemId); }
+  addProblemReviews(input: { problemIds: string[] }) { return this.#learning.addProblemReviews(input); }
+  getProblemReview(problemId: string) { return this.#learning.getProblemReview(problemId); }
+  listProblemReviews() { return this.#learning.listProblemReviews(); }
+  updateProblemReviews(input: ProblemReviewBatchInput) { return this.#learning.updateProblemReviews(input); }
+  getReviewPlanSnapshot(query: ReviewPlanQuery = {}, at?: string) { return this.#learning.getReviewPlanSnapshot(query, at); }
+  getProblemReviewDetail(problemId: string, history: PageRequest = {}) { return this.#learning.getProblemReviewDetail(problemId, history); }
+  recordProblemReview(input: ProblemReviewAssessmentInput, at?: string) { return this.#learning.recordProblemReview(input, at); }
+  correctProblemReview(input: ProblemReviewCorrectionInput) { return this.#learning.correctProblemReview(input); }
+  previewProblemReview(input: ProblemReviewPreviewInput, at?: string) { return this.#learning.previewProblemReview(input, at); }
+  getProblemReviewRequest(requestId: string) { return this.#learning.getProblemReviewRequest(requestId); }
+  reviewOpportunities(filter: ReviewOpportunityFilter = {}) { return this.#learning.reviewOpportunities(filter); }
+  getReviewOpportunityForSubmission(localRecordId: string) { return this.#learning.getReviewOpportunityForSubmission(localRecordId); }
+  claimReviewOpportunity(id: string, at?: string) { return this.#learning.claimReviewOpportunity(id, at); }
+  skipReviewOpportunity(id: string) { return this.#learning.skipReviewOpportunity(id); }
+  submitReviewOpportunity(input: SubmitReviewOpportunityInput) { return this.#learning.submitReviewOpportunity(input); }
+  startReviewSession(input: StartReviewSessionInput) { return this.#learning.startReviewSession(input); }
+  getReviewSession(id?: string) { return this.#learning.getReviewSession(id); }
+  advanceReviewSession(input: AdvanceReviewSessionInput) { return this.#learning.advanceReviewSession(input); }
+  endReviewSession(id: string) { return this.#learning.endReviewSession(id); }
+  getReviewAssessmentDraft(key: string) { return this.#learning.getReviewAssessmentDraft(key); }
+  saveReviewAssessmentDraft(input: ReviewAssessmentDraftInput) { return this.#learning.saveReviewAssessmentDraft(input); }
+  deleteReviewAssessmentDraft(key: string, expectedRevision?: number) { return this.#learning.deleteReviewAssessmentDraft(key, expectedRevision); }
   recordActivity(input: ActivitySampleInput) { return this.#learning.recordActivity(input); }
   getArchiveStatistics(input: { attemptId?: string; from?: string; to?: string; timeZone?: string } = {}) { return this.#learning.getArchiveStatistics(input); }
   beginAIRequest(input: AiRequestSeed) {
@@ -1668,7 +1707,7 @@ export class PracticeStore {
   static inspectBackupSnapshot(snapshotPath: string): BackupSnapshotInfo {
     const db = new DatabaseSync(resolve(snapshotPath), { readOnly: true });
     try {
-      checkDatabase(db, [1, 2, 3, 4, 5, 6, 7, SCHEMA_VERSION]);
+      checkDatabase(db, SUPPORTED_BACKUP_VERSIONS);
       const version = (db.prepare('PRAGMA user_version').get() as Row).user_version as number;
       const mediaHashes = new Set<string>();
       for (const row of db.prepare('SELECT snapshot_json FROM problem_versions').all() as Row[]) {
@@ -1719,7 +1758,7 @@ export class PracticeStore {
     try {
       copyFileSync(source, temporary);
       const verification = new DatabaseSync(temporary, { readOnly: true });
-      try { checkDatabase(verification, [1, 2, 3, 4, 5, 6, 7, SCHEMA_VERSION]); } finally { verification.close(); }
+      try { checkDatabase(verification, SUPPORTED_BACKUP_VERSIONS); } finally { verification.close(); }
       linkSync(temporary, target);
       return target;
     } finally {

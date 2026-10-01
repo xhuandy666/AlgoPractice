@@ -34,8 +34,8 @@
 .ai-composer-secondary { display: flex; justify-content: flex-start; margin-top: var(--space-2xs); }
 .ai-composer-secondary .text-button { min-height: 32px; font-size: var(--text-xs); padding-left: 0; }
 .ai-auto-analysis { display: flex; align-items: center; flex-wrap: wrap; gap: var(--space-xs); font-size: var(--text-xs); }
-.ai-auto-analysis input { flex-shrink: 0; }
-.ai-auto-help { margin-top: var(--space-2xs); line-height: 1.6; }
+.ai-auto-analysis > .checkbox-field { display: inline-flex; align-items: center; gap: var(--space-xs); }
+.ai-auto-analysis input { flex: 0 0 auto; width: 20px; height: 20px; min-height: 20px; padding: 0; margin: 0; }
 .ai-jump-latest { flex: 0 0 auto; align-self: center; min-height: 32px; font-size: var(--text-xs); margin-bottom: var(--space-xs); background: var(--color-paper-2); }
 .ai-panel.ai-chat-panel :is(button, textarea, input, summary):focus-visible { outline: 2px solid var(--color-focus); outline-offset: 2px; }
 .ai-panel.ai-chat-panel button { white-space: normal; }

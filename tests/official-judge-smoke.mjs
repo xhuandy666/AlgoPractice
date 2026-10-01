@@ -165,6 +165,7 @@ try {
   assert.equal((await requests()).filter(row => row.url.endsWith('/submit/')).length, 1);
   const panel = page.getByRole('region', { name: '力扣官方判题', exact: true });
   await panel.getByText('判题中', { exact: true }).waitFor();
+  await app.evaluate(({ app, BrowserWindow }) => { app.focus({ steal: true }); const window = BrowserWindow.getAllWindows()[0]; window.show(); window.focus(); });
   await state({ hold: false });
   await until(async () => (await submissions()).find(row => row.id === pending.id)?.status === 'completed', 'synthetic accepted result persisted');
   const accepted = (await submissions()).find(row => row.id === pending.id);
@@ -176,6 +177,17 @@ try {
   assert.equal((await api('history', fixture.problem.id, 'python')).length, 0);
   await panel.getByText('通过', { exact: true }).first().waitFor();
   pass('Pending to Accepted passes real IPC/SQLite; duplicate request ID sends one POST; numeric-string counts are retained independently of local results');
+
+  const ratingDialog = page.getByRole('dialog', { name: '这次通过时表现如何', exact: true });
+  await ratingDialog.waitFor({ timeout: 20000 });
+  assert.equal(await ratingDialog.locator('input[type="radio"]:checked').count(), 0, 'official Accepted is not an automatic mastery rating');
+  await shot('official-first-accepted-rating.png');
+  await ratingDialog.getByRole('button', { name: '稍后再评', exact: true }).click();
+  await ratingDialog.waitFor({ state: 'hidden' });
+  const opportunity = await api('reviewOpportunityForSubmission', pending.id);
+  assert.equal(opportunity.state, 'skipped'); assert.ok(opportunity.claimedAt);
+  assert.equal((await api('problemReviewDetail', fixture.problem.id)).events.total, 0);
+  pass('First Accepted has one independent unselected rating; dismissing it preserves a pending assessment without blocking later submissions or AI');
 
   await state({ nextVerdict: 'wrong_answer' }); await submit.click();
   await until(async () => (await submissions()).some(row => row.result?.status === 'wrong_answer'), 'synthetic wrong answer persisted');
@@ -204,6 +216,53 @@ try {
   await page.getByRole('button', { name: 'AI 教练', exact: true }).click();
   const coach = page.getByRole('region', { name: 'AI 教练', exact: true });
   assert.equal(await coach.getByRole('combobox', { name: /帮助等级/ }).count(), 0);
+  const autoHelp = coach.getByRole('button', { name: '提交后自动分析说明', exact: true });
+  const autoControl = coach.getByRole('checkbox', { name: '提交后自动分析', exact: true });
+  const autoTooltip = page.getByRole('tooltip').filter({ hasText: '仅力扣官方提交完成后分析；本地运行不会自动触发。' });
+  await until(async () => await autoControl.isEnabled(), 'synthetic provider is loaded by the coach');
+  assert.equal(await autoTooltip.isVisible(), false, 'Explanation must not occupy the composer by default');
+  assert.equal(await coach.getByText('一起读懂题目，沿着你的思路把代码改好。', { exact: true }).count(), 0);
+  const helpBox = await autoHelp.boundingBox(), controlBox = await autoControl.boundingBox();
+  report.helpControlLayout = { helpBox, controlBox, viewport: await page.evaluate(() => [innerWidth, innerHeight]) };
+  await shot('auto-analysis-control.png');
+  assert.ok(helpBox && controlBox && helpBox.width >= 24 && Math.abs(helpBox.width - helpBox.height) < 1, 'Shared control styles must not stretch the help button');
+  assert.ok(Math.abs(helpBox.y + helpBox.height / 2 - controlBox.y - controlBox.height / 2) < 2, 'Auto-analysis checkbox and help stay aligned');
+  await autoHelp.hover(); await autoTooltip.waitFor();
+  assert.equal(await autoHelp.getAttribute('aria-describedby'), await autoTooltip.getAttribute('id'));
+  assert.equal(await autoControl.isChecked(), false);
+  await page.keyboard.press('Escape'); await autoTooltip.waitFor({ state: 'hidden' });
+  await autoControl.focus(); await page.keyboard.press('Tab');
+  assert.equal(await autoHelp.evaluate(element => element === document.activeElement), true);
+  await autoTooltip.waitFor(); await page.keyboard.press('Escape'); await autoTooltip.waitFor({ state: 'hidden' });
+  await autoHelp.click(); await autoTooltip.waitFor();
+  assert.equal(await autoControl.isChecked(), false, 'Clicking help must not toggle auto analysis');
+  assert.equal((await api('aiProvider')).autoAnalyzeOfficial, false);
+  await autoHelp.click(); await autoTooltip.waitFor({ state: 'hidden' });
+  pass('Auto-analysis explanation is hidden by default and supports hover, keyboard focus, click and Escape without toggling its setting');
+  const tooltipMeasurements = [];
+  for (const width of [320, 840, 1440]) {
+    await responsive.send('Emulation.setDeviceMetricsOverride', { width, height: 680, deviceScaleFactor: 1, mobile: false });
+    await autoHelp.scrollIntoViewIfNeeded(); await autoHelp.hover(); await autoTooltip.waitFor();
+    await page.evaluate(() => new Promise(done => requestAnimationFrame(done)));
+    const measured = await autoTooltip.evaluate(element => {
+      const box = element.getBoundingClientRect(), style = getComputedStyle(element);
+      const canvas = document.createElement('canvas'); canvas.width = canvas.height = 1;
+      const ctx = canvas.getContext('2d', { willReadFrequently: true });
+      const rgb = color => { ctx.clearRect(0, 0, 1, 1); ctx.fillStyle = color; ctx.fillRect(0, 0, 1, 1); return [...ctx.getImageData(0, 0, 1, 1).data].slice(0, 3); };
+      const luminance = color => rgb(color).map(value => { const n = value / 255; return n <= .04045 ? n / 12.92 : ((n + .055) / 1.055) ** 2.4; }).reduce((sum, value, i) => sum + value * [.2126, .7152, .0722][i], 0);
+      const front = luminance(style.color), back = luminance(style.backgroundColor);
+      return { width: innerWidth, height: innerHeight, left: box.left, right: box.right, top: box.top, bottom: box.bottom,
+        contrast: (Math.max(front, back) + .05) / (Math.min(front, back) + .05), topLayer: element.matches(':popover-open') };
+    });
+    assert.equal(measured.width, width); assert.equal(measured.topLayer, true);
+    assert.ok(measured.left >= 0 && measured.right <= width && measured.top >= 0 && measured.bottom <= 680, JSON.stringify(measured));
+    assert.ok(measured.contrast >= 4.5, JSON.stringify(measured)); tooltipMeasurements.push(measured);
+    await shot(`auto-analysis-help-${width}.png`);
+    await page.keyboard.press('Escape'); await autoTooltip.waitFor({ state: 'hidden' });
+    await page.mouse.move(0, 0);
+  }
+  pass('Top-layer help fits three actual viewports and its text meets 4.5:1 contrast', tooltipMeasurements);
+  await responsive.send('Emulation.setDeviceMetricsOverride', { width: 1440, height: 1000, deviceScaleFactor: 1, mobile: false });
   await coach.getByRole('textbox', { name: 'AI 提问', exact: true }).fill('');
   await coach.getByRole('button', { name: '检查代码', exact: true }).click();
   await until(async () => (await api('aiRequests', attemptId)).some(row => row.status === 'completed'), 'empty question accepted by synthetic coach');
@@ -245,6 +304,8 @@ try {
   const optimized = (await api('aiRequests', attemptId)).find(row => row.snapshot.kind === 'official-review' && row.snapshot.official?.status === 'accepted');
   assert.equal(optimized.snapshot.code, fixture.code);
   assert.match(optimized.snapshot.messages[0].content, /optimization|complexity|optimi/i);
+  assert.equal(await page.getByRole('dialog').count(), 0, 'same-day repeat Accepted must not reopen the skipped rating');
+  assert.equal((await api('reviewOpportunities', { problemId: fixture.problem.id })).total, 1);
   await coach.waitFor();
   pass('A newly accepted official result automatically opens the chat and requests a bounded optimization review');
 
@@ -301,6 +362,7 @@ try {
   assert.equal(archive.attempt.isActive, false); assert.equal((await submissions()).length, saved.length);
   await close(); await load();
   assert.deepEqual((await submissions()).map(row => [row.id, row.status, row.codeHash]), saved.map(row => [row.id, row.status, row.codeHash]));
+  assert.equal(await page.getByRole('dialog').count(), 0, 'restart must not replay an old Accepted rating');
   pass('Official submission snapshots survive archive and actual Electron restart');
   await openWorkbench();
   await state({ signedIn: true, failNextSubmit: true });

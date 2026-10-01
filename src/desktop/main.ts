@@ -190,7 +190,7 @@ function trusted(event: Electron.IpcMainInvokeEvent | Electron.IpcMainEvent) {
   if (event.sender !== win.webContents || event.senderFrame !== win.webContents.mainFrame || event.senderFrame?.url !== 'algopractice://app/index.html') throw new Error('IPC 来源无效。');
 }
 function handle(channel: string, handler: (...args: unknown[]) => unknown) { ipcMain.handle(channel, async (event, ...args) => {
-  trusted(event); if (quitting && !['draft:save', 'note:save', 'interview:save', 'submission:save-remark'].includes(channel)) throw new Error('应用正在退出。');
+  trusted(event); if (quitting && !['draft:save', 'note:save', 'interview:save', 'submission:save-remark', 'problem-review:save-draft', 'problem-review:draft', 'problem-review:request'].includes(channel)) throw new Error('应用正在退出。');
   try { interviews?.assertChannel(channel, args); const epoch = interviews?.epoch ?? 0; const result = await maintenance.run(channel, () => handler(...args)); interviews?.assertResponse(channel, args, epoch); if (/^(note:|archive:|submission:|app:open|source:open)/.test(channel)) interviews?.recordHelp(channel, typeof args[0] === 'string' ? args[0].slice(0,512) : null); return result; } catch (error) { log('ipc.failed', { operation: channel, category: error instanceof SourceError ? error.code : error instanceof Error ? error.name : 'Error' }); throw error; }
 }); }
 async function stopAndQuit() {
@@ -276,7 +276,7 @@ else {
     });
     ipcMain.on('app:close-ready', event => { trusted(event); if (!closePending) return; closePending = false; if (quitting) void stopAndQuit(); else win.hide(); });
     ipcMain.on('app:maintenance-ready', (event, requestId, error) => { trusted(event); const ack = maintenanceAck; if (!ack || ack.id !== requestId) return; if (error) ack.reject(new Error('草稿未能完整保存，恢复已取消。')); else ack.resolve(); });
-    learning = new LearningController({ dataDirectory, version: app.getVersion(), window: win, store: () => store, handle, changed, reveal, interviewContext: context => interviews?.assertAiContext(context) ?? context, isIdle: () => !quitting && maintenance.phase === 'idle', allowAutomaticAi: () => !interviews?.starting && !interviews?.active(), log,
+    learning = new LearningController({ dataDirectory, version: app.getVersion(), window: win, store: () => store, handle, changed, reveal, interviewContext: context => interviews?.assertAiContext(context) ?? context, isIdle: () => !quitting && maintenance.phase === 'idle', allowAutomaticAi: () => !interviews?.starting && !interviews?.active(), allowReviewPrompt: () => !closePending && !interviews?.starting && !interviews?.active(), log,
       lifecycle: {
         hasActiveInterview: () => Boolean(interviews?.active()),
         enterMaintenance: async () => {

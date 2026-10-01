@@ -5,6 +5,7 @@ import { errorText } from './ui';
 import { getPerformanceState, performanceReport, startPerformanceRecording, stopPerformanceRecording, subscribePerformance } from './performance-monitor';
 import { RuntimeArtifactDetails, RuntimeInstallProgress } from './RuntimePreparation';
 import { runtimeBytes, runtimeSourceLabels } from './runtime-presentation';
+import { HelpHint } from './HelpHint';
 
 type Installations = Partial<Record<Language, { progress: RuntimeProgress | null }>>;
 type LanguageMessages = Partial<Record<Language, string>>;
@@ -124,13 +125,12 @@ export function EnvironmentPage({ api, onChanged, onError }: {
   const notices = (environment?.runtimeNotices ?? []).filter(notice => notice.trim());
 
   return <section className="settings-page">
-    <h2>把练习环境准备好。</h2>
-    <p className="lede">优先使用已安装的兼容环境；没有时，只准备你需要的语言。安装到题炼独立目录，不修改系统 PATH。</p>
+    <div className="heading-with-help"><h2>运行环境</h2><HelpHint label="运行环境说明">优先使用本机兼容环境。下载的环境安装在题炼独立目录，不修改系统 PATH，也不包含在学习备份中。</HelpHint></div>
     <div className="runtime-preference-card">
-      <label className="runtime-auto-install" htmlFor={preferenceId}>
+      <div className="control-with-help"><label className="runtime-auto-install" htmlFor={preferenceId}>
         <input id={preferenceId} type="checkbox" checked={environment?.autoInstallRuntimes ?? false} disabled={!api || !environment || preferenceBusy} onChange={event => void saveAutoInstall(event.target.checked)} />
-        <span>允许按需自动安装语言环境<small>默认关闭。开启后，仅在你主动运行且当前语言缺失时下载；打开应用、题目或切换语言不会下载。</small></span>
-      </label>
+        <span>运行时自动安装缺失的语言环境</span>
+      </label><HelpHint label="自动安装说明">默认关闭。开启后，仅在主动运行且当前语言环境缺失时下载；打开应用、题目或切换语言不会下载。</HelpHint></div>
       {preferenceError && <p className="runtime-inline-error" role="alert">{preferenceError}</p>}
     </div>
     <div className="runtime-settings-grid">{(['python', 'java'] as const).map(language => {
@@ -146,12 +146,11 @@ export function EnvironmentPage({ api, onChanged, onError }: {
           <h3 id={`runtime-heading-${language}`}>{label}{state?.version ? ` ${state.version}` : language === 'python' ? ' · CPython 3.14.x' : ' · OpenJDK 25'}</h3>
           <span className="runtime-state-label" data-state={state?.status} role="status" aria-live="polite">{label} · {status}</span>
         </div>
-        <p className="runtime-environment-message">{state?.message || environment?.[language] || '正在有界地检查本机兼容环境，不会自动下载。'}</p>
+        <p className="runtime-environment-message">{state?.message || environment?.[language] || '正在检查本机环境…'}</p>
         {state?.path && <code className="runtime-environment-path">{state.path}</code>}
         <div className="runtime-environment-meta">
           {state?.source && <span>当前来源：{runtimeSourceLabels[state.source]}</span>}
           {state?.managedInstalled && <span>托管环境实际占用：{runtimeBytes(state.installedBytes)}</span>}
-          <span>用途：{language === 'python' ? 'Python 解释执行与标准库' : 'Java 编译与执行（含 javac）'}，不同题目共享</span>
         </div>
         {installation && <RuntimeInstallProgress language={language} progress={installation.progress} cancelling={Boolean(cancelling[language])} onCancel={() => void cancelInstallation(language)} />}
         {errors[language] && <p className="runtime-inline-error" role="alert">{errors[language]}</p>}
@@ -164,42 +163,40 @@ export function EnvironmentPage({ api, onChanged, onError }: {
           <summary>{label} 下载信息与更多操作</summary>
           {state ? <RuntimeArtifactDetails artifact={state.artifact} /> : <p className="field-help">正在获取当前平台的环境信息…</p>}
           <div className="button-row">
-            <button className="text-button" disabled={!api || busy || !state?.artifact} onClick={() => void environmentAction(language, '正在读取离线包', () => api!.installRuntime(language, true), true)}>导入匹配的离线包</button>
+            <button className="text-button" disabled={!api || busy || !state?.artifact} onClick={() => void environmentAction(language, '正在读取离线包', () => api!.installRuntime(language, true), true)}>导入匹配的离线包</button><HelpHint label={`${label} 离线包说明`}>请选择与上方下载信息匹配的原始归档文件，无需解压。</HelpHint>
             {state?.source === 'selected' && <button className="text-button" disabled={!api || busy} onClick={() => void environmentAction(language, '正在恢复自动发现', () => api!.resetRuntime(language))}>清除手动选择，重新发现</button>}
           </div>
-          <p className="runtime-policy-help">下载后先校验大小与 SHA-256，再验证解释 / 编译能力。未测量的安装占用不会用压缩包大小代替。网络不可用时可导入清单匹配的原始归档。</p>
           {state?.managedInstalled && <div className="runtime-removal">
             <button className="text-button" disabled={!api || busy} onClick={() => void environmentAction(language, '正在卸载托管环境', () => api!.uninstallRuntime(language))}>卸载 {label} 托管环境…</button>
-            <p className="field-help">操作前需要确认；使用中无法卸载。只移除应用管理的环境，不删除本机外部环境、离线源文件、代码或学习记录。</p>
+            <p className="field-help">仅删除题炼安装的环境，保留本机其他环境、离线包、代码和学习记录。</p>
           </div>}
         </details>
       </section>;
     })}</div>
     {notices.length > 0 && <div className="note-row" role="status">{notices.map((notice, index) => <p key={`${index}:${notice}`}>{notice}</p>)}</div>}
-    <div className="note-row"><strong>环境与代码分开管理</strong><p>准备一种语言不妨碍使用另一种已就绪的语言。安装完成后可离线运行本地测试；学习备份不携带大型环境，换电脑后会重新检测。本地执行不会自动上传代码，也不是安全沙箱。</p></div>
+    <div className="note-row"><p>本地运行不会上传代码，但不是安全沙箱。请只运行可信代码。</p></div>
     <section className="reminder-section">
-      <h3>后台提醒验证</h3>
-      <p>创建一条 10 秒后的测试提醒，然后关闭窗口。应用留在菜单栏 / 托盘；完全退出后暂停提醒，下次启动保留逾期状态。</p>
+      <div className="heading-with-help"><h3>测试提醒</h3><HelpHint label="测试提醒说明">提醒在 10 秒后触发。关闭窗口后应用仍在菜单栏或托盘运行；完全退出后不再提醒。通知显示受系统权限和专注模式影响。</HelpHint></div>
       <div className="button-row">
         <button className="button" disabled={!api || reminderBusy} onClick={() => void reminderAction(() => api!.notifyAfter(10))}>创建测试提醒</button>
         <button className="button" disabled={!api || reminderBusy || !environment?.reminder} onClick={() => void reminderAction(() => api!.clearReminder())}>清除测试提醒</button>
         <button className="text-button" disabled={!api} onClick={() => refreshEnvironment(true).catch(error => onError(errorText(error)))}>刷新状态</button>
       </div>
-      <p className="field-help" role="status">{environment?.reminder ? `测试提醒：${new Date(environment.reminder.dueAt).toLocaleString('zh-CN')}${environment.reminder.deliveredAt ? ' · 已请求系统投递' : new Date(environment.reminder.dueAt).getTime() <= Date.now() ? ' · 已逾期' : ' · 等待到期'}` : '尚未安排测试提醒。'}系统是否显示通知受通知权限与专注模式影响。</p>
+      <p className="field-help" role="status">{environment?.reminder ? `测试提醒：${new Date(environment.reminder.dueAt).toLocaleString('zh-CN')}${environment.reminder.deliveredAt ? ' · 已请求系统投递' : new Date(environment.reminder.dueAt).getTime() <= Date.now() ? ' · 已逾期' : ' · 等待到期'}` : '尚未安排测试提醒'}</p>
     </section>
     <details className="reminder-section">
       <summary>性能诊断</summary>
-      <p>遇到卡顿时开始记录，再切换页面或输入代码。90 秒后自动停止，只记录前台帧耗时和页面类型，不包含题目、代码或 Key。</p>
+      <p>仅记录前台帧耗时和页面类型，不包含题目、代码或 Key。</p>
       <div className="button-row">
-        <button className="button" onClick={() => { setPerformanceNotice(''); if (performanceState.recording) stopPerformanceRecording(); else startPerformanceRecording(); }}>{performanceState.recording ? '停止记录' : '开始记录'}</button>
+        <button className="button" onClick={() => { setPerformanceNotice(''); if (performanceState.recording) stopPerformanceRecording(); else startPerformanceRecording(); }}>{performanceState.recording ? '停止记录' : '开始记录'}</button><HelpHint label="性能记录说明">开始后重现卡顿操作，切换页面不影响记录；90 秒后自动停止。记录仅保留在本次应用会话中。</HelpHint>
         <button className="text-button" disabled={!api || !performanceState.hasReport || performanceState.recording} onClick={() => { void api!.copyCode(performanceReport()).then(() => setPerformanceNotice('诊断报告已复制')).catch(error => onError(errorText(error))); }}>复制诊断报告</button>
       </div>
-      <p className="field-help" role="status">{performanceState.recording ? '正在记录，切换页面后会继续。' : performanceNotice || (performanceState.hasReport ? '记录已停止，可以复制报告用于排查。' : '默认关闭，记录仅保留在本次应用会话中。')}</p>
+      <p className="field-help" role="status">{performanceState.recording ? '正在记录…' : performanceNotice || (performanceState.hasReport ? '记录已停止' : '尚未记录')}</p>
     </details>
-    <dl className="system-details">
+    <details><summary>系统信息</summary><dl className="system-details">
       <dt>当前环境</dt><dd>{environment ? `${environment.platform} / ${environment.arch}` : '桌面环境未连接'}</dd>
       <dt>应用组件</dt><dd>{environment ? `Electron ${environment.electron} · Node ${environment.node} · SQLite ${environment.sqlite}` : '—'}</dd>
       <dt>数据目录</dt><dd>{environment?.dataDirectory || '—'}</dd>
-    </dl>
+    </dl></details>
   </section>;
 }

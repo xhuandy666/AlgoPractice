@@ -211,7 +211,7 @@ try {
   await page.getByRole('button', { name: '运行', exact: true }).click();
   await page.locator('.runtime-preparation').getByRole('button', { name: '安装并运行', exact: true }).waitFor();
   await page.locator('.runtime-preparation').getByText('更多安装选项', { exact: true }).click();
-  const workbenchOptIn = page.locator('.runtime-preparation').getByLabel('允许今后按需自动安装语言环境', { exact: false });
+  const workbenchOptIn = page.locator('.runtime-preparation').getByLabel('运行时自动安装缺失的语言环境', { exact: false });
   await workbenchOptIn.click();
   await until(async () => (await api('environment')).autoInstallRuntimes === true, 'explicit auto-install preference saves');
   await until(async () => await workbenchOptIn.isChecked(), 'workbench opt-in reflects persisted preference');
@@ -221,7 +221,7 @@ try {
   assert.deepEqual(await app.evaluate(() => globalThis.onboardingHttpAttempts), []);
   assert.equal((await api('environment')).autoInstallRuntimes, true);
   await nav('运行环境');
-  const autoInstall = page.getByLabel('允许按需自动安装语言环境', { exact: false });
+  const autoInstall = page.getByLabel('运行时自动安装缺失的语言环境', { exact: false });
   await until(async () => await autoInstall.isChecked(), 'persisted auto-install opt-in appears');
   await autoInstall.click();
   await until(async () => (await api('environment')).autoInstallRuntimes === false, 'user can revoke auto-install preference');

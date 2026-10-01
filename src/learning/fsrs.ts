@@ -9,6 +9,11 @@ export const FSRS_PARAMETERS: FSRSParameters = {
     1.4835, 0.0614, 0.2629, 1.6483, 0.6014, 1.8729, 0.5425, 0.0912, 0.0658, 0.1542],
   enable_fuzz: false, enable_short_term: true, learning_steps: ['1m', '10m'], relearning_steps: ['10m'],
 };
+export const PROBLEM_FSRS_VERSION = 'ts-fsrs@5.4.2/fsrs-6/algopractice-problem-v2';
+export const PROBLEM_FSRS_PARAMETERS: FSRSParameters = {
+  ...FSRS_PARAMETERS, w: [...FSRS_PARAMETERS.w], enable_short_term: false,
+  learning_steps: [], relearning_steps: [],
+};
 function serialize(card: Card): FsrsCardSnapshot {
   return { ...card, due: card.due.toISOString(), last_review: card.last_review?.toISOString() };
 }
@@ -19,10 +24,11 @@ export function newReviewCard(at: string): FsrsCardSnapshot { checkLibrary(); re
 export function advanceReviewCard(card: FsrsCardSnapshot, at: string, rating: ReviewRating,
   version: string, parameters: unknown): FsrsCardSnapshot {
   checkLibrary();
-  if (version !== FSRS_VERSION || JSON.stringify(parameters) !== JSON.stringify(FSRS_PARAMETERS)) {
+  const expected = version === FSRS_VERSION ? FSRS_PARAMETERS : version === PROBLEM_FSRS_VERSION ? PROBLEM_FSRS_PARAMETERS : null;
+  if (!expected || JSON.stringify(parameters) !== JSON.stringify(expected)) {
     throw new Error('Unsupported historical FSRS algorithm or parameters; review history was not changed');
   }
-  const scheduler = fsrs(FSRS_PARAMETERS);
+  const scheduler = fsrs(expected);
   return serialize(scheduler.next({ ...card, due: new Date(card.due), last_review: card.last_review ? new Date(card.last_review) : undefined },
     new Date(at), rating as Grade).card);
 }

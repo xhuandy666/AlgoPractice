@@ -11,6 +11,11 @@ import type { AiHelpState, AiLevel, AiRequestCompletion, AiRequestRecord, AiRequ
 import { learningDashboard } from './dashboard.ts';
 import { archiveDateBoundary } from '../shared/archive-date.ts';
 import { advanceReviewCard, FSRS_PARAMETERS, FSRS_VERSION, localDate, newReviewCard } from './fsrs.ts';
+import { ProblemReviewRepository } from './problem-review-repository.ts';
+import type { AdvanceReviewSessionInput, ProblemReviewAssessmentInput, ProblemReviewBatchInput, ProblemReviewCorrectionInput,
+  ProblemReviewEvent, ProblemReviewPlan, ProblemReviewPreviewInput, ReviewAssessmentDraftInput, ReviewOpportunityFilter,
+  ReviewPlanQuery, StartReviewSessionInput, SubmitReviewOpportunityInput } from '../shared/review-plan.ts';
+import type { PageRequest } from '../shared/learning.ts';
 
 type Row = Record<string, string | number | null>;
 type Transaction = <T>(operation: () => T) => T;
@@ -70,7 +75,10 @@ export function defaultLearningSettings(): LearningSettings {
 export class LearningRepository {
   private db: DatabaseSync;
   private transaction: Transaction;
-  constructor(db: DatabaseSync, transaction: Transaction, private readonly interviewMode?: (attemptId: string) => string | undefined) { this.db = db; this.transaction = transaction; }
+  private reviews: ProblemReviewRepository;
+  constructor(db: DatabaseSync, transaction: Transaction, private readonly interviewMode?: (attemptId: string) => string | undefined) {
+    this.db = db; this.transaction = transaction; this.reviews = new ProblemReviewRepository(db, transaction, () => this.getLearningSettings());
+  }
 
   registerAttachment(input: Attachment): Attachment {
     sha(input.hash); text(input.name, 'attachment name', 500); text(input.mimeType, 'attachment MIME type', 200);
@@ -296,131 +304,80 @@ export class LearningRepository {
       return settings;
     });
   }
+  private compatibleReview(plan: ProblemReviewPlan): ReviewItem {
+    return { id: plan.id, problemId: plan.problemId, target: 'understanding', language: 'none', dueAt: plan.dueAt,
+      scheduledAt: plan.scheduledAt, suspended: plan.suspended, card: plan.card, algorithmVersion: plan.algorithmVersion,
+      createdAt: plan.createdAt, updatedAt: plan.updatedAt };
+  }
+  private compatibleEvent(event: ProblemReviewEvent): ReviewEvent {
+    return { id: event.id, requestId: event.requestId, itemId: event.planId, kind: event.kind, rating: event.rating,
+      reviewedAt: event.observedAt, createdAt: event.createdAt, correctsEventId: event.correctsEventId,
+      algorithmVersion: event.algorithmVersion, attemptId: event.attemptId, learningDate: event.learningDate,
+      isInitialAssessment: event.isInitialAssessment };
+  }
   addReviewItem(input: AddReviewItemInput): ReviewItem {
-    text(input.problemId, 'problem id', 200);
-    if (!((input.target === 'understanding' && input.language === 'none') || (input.target === 'rewrite' && ['python', 'java'].includes(input.language)))) throw new Error('Review target and language do not match');
-    const at = timestamp(input.now ?? now());
-    return this.transaction(() => {
-      const existing = this.db.prepare('SELECT id FROM review_items WHERE problem_id = ? AND target = ? AND language = ?').get(input.problemId, input.target, input.language) as Row | undefined;
-      if (existing) return this.getReviewItem(existing.id as string)!;
-      const id = randomUUID(), card = canonical(newReviewCard(at));
-      this.db.prepare('INSERT INTO review_items VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, 0, ?, ?)')
-        .run(id, input.problemId, input.target, input.language, card, card, FSRS_VERSION, JSON.stringify(FSRS_PARAMETERS), at, at, at);
-      return this.getReviewItem(id)!;
-    });
+    return this.compatibleReview(this.reviews.addProblemReview(input.problemId, input.now));
   }
-  getReviewItem(id: string): ReviewItem | undefined {
-    const row = this.db.prepare('SELECT * FROM review_items WHERE id = ?').get(id) as Row | undefined;
-    return row ? { id, problemId: row.problem_id as string, target: row.target as ReviewItem['target'], language: row.language as ReviewItem['language'],
-      card: JSON.parse(row.card_json as string), dueAt: row.due_at as string, scheduledAt: row.scheduled_at as string | null, suspended: row.suspended === 1,
-      algorithmVersion: row.algorithm_version as string, createdAt: row.created_at as string, updatedAt: row.updated_at as string } : undefined;
-  }
+  getReviewItem(id: string): ReviewItem | undefined { const plan = this.reviews.resolveProblemReview(id); return plan ? this.compatibleReview(plan) : undefined; }
   listReviewItems(filter: ReviewFilter = {}): ReviewItem[] {
-    const clauses: string[] = [], values: string[] = [];
-    for (const [field, column] of [['problemId', 'problem_id'], ['target', 'target'], ['language', 'language']] as const) {
-      if (filter[field]) { clauses.push(`${column} = ?`); values.push(filter[field]!); }
-    }
-    return (this.db.prepare(`SELECT id FROM review_items ${clauses.length ? `WHERE ${clauses.join(' AND ')}` : ''} ORDER BY due_at, created_at, id`).all(...values) as Row[]).map(row => this.getReviewItem(row.id as string)!);
+    return this.reviews.listProblemReviews().filter(plan => !filter.problemId || plan.problemId === filter.problemId).map(plan => this.compatibleReview(plan));
   }
-  private reviewEvent(row: Row): ReviewEvent {
-    return { id: row.id as string, requestId: row.request_id as string, itemId: row.item_id as string, kind: row.kind as ReviewEvent['kind'], rating: row.rating as ReviewEvent['rating'],
-      reviewedAt: row.reviewed_at as string, createdAt: row.created_at as string, correctsEventId: row.corrects_event_id as string | null, algorithmVersion: row.algorithm_version as string, attemptId: row.attempt_id as string | null };
-  }
-  listReviewEvents(itemId: string): ReviewEvent[] { return (this.db.prepare('SELECT * FROM review_events WHERE item_id = ? ORDER BY rowid').all(itemId) as Row[]).map(row => this.reviewEvent(row)); }
-  private priorReviewRequest(requestId: string, requestHash: string): ReviewFeedbackResult | undefined {
-    const row = this.db.prepare('SELECT r.input_hash, e.* FROM review_requests r JOIN review_events e ON e.id = r.event_id WHERE r.request_id = ?').get(requestId) as Row | undefined;
-    if (!row) return undefined;
-    if (row.input_hash !== requestHash) throw new Error('Review request id conflicts with different input');
-    return { item: this.getReviewItem(row.item_id as string)!, event: this.reviewEvent(row) };
-  }
+  listReviewEvents(itemId: string): ReviewEvent[] { return this.reviews.listProblemReviewEvents(itemId).map(event => this.compatibleEvent(event)); }
   recordReview(input: ReviewFeedbackInput): ReviewFeedbackResult {
-    text(input.requestId, 'request id', 200); integer(input.rating, 'review rating', 1, 4);
-    const requestHash = hash(input);
-    return this.transaction(() => {
-      const prior = this.priorReviewRequest(input.requestId, requestHash); if (prior) return prior;
-      const item = this.getReviewItem(input.itemId); if (!item) throw new Error('Review item not found');
-      if (input.attemptId) {
-        const attempt = this.db.prepare('SELECT * FROM attempts WHERE id = ?').get(input.attemptId) as Row | undefined;
-        if (!attempt || attempt.problem_id !== item.problemId || (item.language !== 'none' && attempt.language !== item.language)) throw new Error('Review attempt does not match item and language');
-        if (attempt.ended_at === null) throw new Error('Finish the attempt before recording review feedback');
-        const same = this.db.prepare("SELECT * FROM review_events WHERE item_id = ? AND attempt_id = ? AND kind = 'review'").get(item.id, input.attemptId) as Row | undefined;
-        if (same) {
-          const lastCorrection = this.db.prepare("SELECT * FROM review_events WHERE corrects_event_id = ? ORDER BY rowid DESC LIMIT 1").get(same.id) as Row | undefined;
-          if ((lastCorrection?.rating ?? same.rating) !== input.rating) throw new Error('This attempt already has review feedback; use rating correction');
-          this.db.prepare('INSERT INTO review_requests VALUES (?, ?, ?)').run(input.requestId, requestHash, lastCorrection?.id ?? same.id);
-          return { item, event: this.reviewEvent(lastCorrection ?? same) };
-        }
-      }
-      const at = timestamp(input.reviewedAt ?? now());
-      if (at < item.createdAt) throw new Error('Review time precedes item creation');
-      const id = randomUUID();
-      this.db.prepare("INSERT INTO review_events VALUES (?, ?, ?, 'review', ?, ?, ?, NULL, ?, ?)")
-        .run(id, input.requestId, item.id, input.rating, at, now(), item.algorithmVersion, input.attemptId ?? null);
-      this.db.prepare('INSERT INTO review_requests VALUES (?, ?, ?)').run(input.requestId, requestHash, id);
-      this.replayReview(item.id);
-      return { item: this.getReviewItem(item.id)!, event: this.listReviewEvents(item.id).find(event => event.id === id)! };
-    });
+    const result = this.reviews.recordCompatibleReview(input); return { item: this.compatibleReview(result.plan), event: this.compatibleEvent(result.event) };
   }
   correctReview(input: CorrectReviewInput): ReviewFeedbackResult {
-    text(input.requestId, 'request id', 200); integer(input.rating, 'review rating', 1, 4);
-    const requestHash = hash({ operation: 'correction', ...input });
-    return this.transaction(() => {
-      const prior = this.priorReviewRequest(input.requestId, requestHash); if (prior) return prior;
-      const original = this.db.prepare("SELECT * FROM review_events WHERE id = ? AND kind = 'review'").get(input.eventId) as Row | undefined;
-      if (!original) throw new Error('Original review event not found');
-      const id = randomUUID();
-      this.db.prepare("INSERT INTO review_events VALUES (?, ?, ?, 'correction', ?, ?, ?, ?, ?, ?)")
-        .run(id, input.requestId, original.item_id, input.rating, original.reviewed_at, now(), original.id, original.algorithm_version, original.attempt_id);
-      this.db.prepare('INSERT INTO review_requests VALUES (?, ?, ?)').run(input.requestId, requestHash, id);
-      this.replayReview(original.item_id as string);
-      return { item: this.getReviewItem(original.item_id as string)!, event: this.listReviewEvents(original.item_id as string).find(event => event.id === id)! };
-    });
-  }
-  private replayReview(itemId: string): void {
-    const item = this.db.prepare('SELECT * FROM review_items WHERE id = ?').get(itemId) as Row;
-    const all = this.listReviewEvents(itemId), corrections = new Map<string, ReviewEvent>();
-    for (const event of all) {
-      if (event.algorithmVersion !== item.algorithm_version) throw new Error('Unsupported historical FSRS algorithm; review history was not changed');
-      if (event.kind === 'correction') corrections.set(event.correctsEventId!, event);
-    }
-    let card = JSON.parse(item.initial_card_json as string);
-    const reviews = all.filter(event => event.kind === 'review').sort((a, b) => a.reviewedAt.localeCompare(b.reviewedAt));
-    for (const event of reviews) card = advanceReviewCard(card, event.reviewedAt, corrections.get(event.id)?.rating ?? event.rating,
-      item.algorithm_version as string, JSON.parse(item.parameters_json as string));
-    this.db.prepare('UPDATE review_items SET card_json = ?, due_at = ?, updated_at = ? WHERE id = ?').run(canonical(card), card.due, now(), itemId);
+    const result = this.reviews.correctProblemReview(input); return { item: this.compatibleReview(result.plan), event: this.compatibleEvent(result.event) };
   }
   setReviewPlan(itemId: string, input: { suspended?: boolean; scheduledAt?: string | null }): ReviewItem {
-    if (Object.keys(input).some(key => !['suspended', 'scheduledAt'].includes(key))) throw new Error('Unknown review plan field');
-    if (input.suspended !== undefined && typeof input.suspended !== 'boolean') throw new Error('Invalid suspended flag');
-    const scheduled = input.scheduledAt === undefined ? undefined : input.scheduledAt === null ? null : timestamp(input.scheduledAt);
-    return this.transaction(() => { const item = this.getReviewItem(itemId); if (!item) throw new Error('Review item not found');
-      this.db.prepare('UPDATE review_items SET suspended = ?, scheduled_at = ?, updated_at = ? WHERE id = ?')
-        .run(input.suspended === undefined ? Number(item.suspended) : Number(input.suspended), scheduled === undefined ? item.scheduledAt : scheduled, now(), itemId);
-      return this.getReviewItem(itemId)!;
-    });
+    const plan = this.reviews.resolveProblemReview(itemId); if (!plan) throw new Error('Review item not found');
+    return this.compatibleReview(this.reviews.updateProblemReviews({ problemIds: [plan.problemId], ...input })[0]);
   }
   getTodayQueue(at = now()): TodayQueue {
-    at = timestamp(at); const settings = this.getLearningSettings(), date = localDate(at, settings.timeZone);
-    const done = new Set((this.db.prepare("SELECT item_id, reviewed_at FROM review_events WHERE kind = 'review'").all() as Row[])
-      .filter(row => localDate(row.reviewed_at as string, settings.timeZone) === date).map(row => row.item_id as string));
-    const remaining = settings.dailyReviewBudget === null ? null : Math.max(0, settings.dailyReviewBudget - done.size);
-    const all = this.listReviewItems(), due = all.filter(item => !item.suspended && item.dueAt <= at);
-    const eligible = due.filter(item => !item.scheduledAt || item.scheduledAt <= at);
-    let admitted = 0;
-    const items = eligible.filter(item => done.has(item.id) || remaining === null || admitted++ < remaining);
-    const fresh = (this.db.prepare(`SELECT h.problem_id FROM library_problem_heads h
-      JOIN problem_versions v ON v.problem_id = h.problem_id AND v.version = h.version
-      WHERE NOT EXISTS(SELECT 1 FROM attempts a WHERE a.problem_id = h.problem_id)
-      AND NOT EXISTS(SELECT 1 FROM review_items r WHERE r.problem_id = h.problem_id)
+    at = timestamp(at); const snapshot = this.reviews.getReviewPlanSnapshot({ view: 'today', limit: 100 }, at), settings = this.getLearningSettings();
+    const day = snapshot.summary.date, end = archiveDateBoundary(day, settings.timeZone, true);
+    const done = new Set((this.db.prepare('SELECT problem_id FROM problem_review_day_assessments WHERE learning_date=?').all(day) as Row[]).map(row => String(row.problem_id)));
+    const eligible = this.reviews.listProblemReviews().filter(plan => !plan.suspended && plan.dueAt && plan.dueAt < end
+      && (!plan.scheduledAt || plan.scheduledAt <= at) && !done.has(plan.problemId))
+      .sort((a, b) => (a.scheduledAt && a.scheduledAt > a.dueAt! ? a.scheduledAt : a.dueAt!).localeCompare(b.scheduledAt && b.scheduledAt > b.dueAt! ? b.scheduledAt : b.dueAt!) || a.problemId.localeCompare(b.problemId));
+    const admitted = snapshot.summary.remainingBudget === null ? eligible : eligible.slice(0, snapshot.summary.remainingBudget);
+    const fresh = (this.db.prepare(`SELECT h.problem_id FROM library_problem_heads h JOIN problem_versions v ON v.problem_id=h.problem_id AND v.version=h.version
+      WHERE NOT EXISTS(SELECT 1 FROM attempts a WHERE a.problem_id=h.problem_id)
+      AND NOT EXISTS(SELECT 1 FROM problem_review_plans r WHERE r.problem_id=h.problem_id)
       AND (length(trim(COALESCE(json_extract(v.snapshot_json, '$.starter.python'), ''), ${SQL_TRIM_WHITESPACE})) > 0
         OR length(trim(COALESCE(json_extract(v.snapshot_json, '$.starter.java'), ''), ${SQL_TRIM_WHITESPACE})) > 0)
-      AND (json_extract(v.snapshot_json, '$.mode') = 'acm' OR json_type(v.snapshot_json, '$.adapter') = 'object')
-      AND json_array_length(v.snapshot_json, '$.cases') > 0
-      ORDER BY h.created_at, h.problem_id LIMIT 3`).all() as Row[]).map(row => row.problem_id as string);
-    return { date, timeZone: settings.timeZone, budget: settings.dailyReviewBudget, reviewedToday: done.size, remainingBudget: remaining,
-      items, dueCount: due.length, overdueCount: due.filter(item => localDate(item.dueAt, settings.timeZone) < date).length,
-      deferredCount: due.length - eligible.length, suspendedCount: all.filter(item => item.suspended).length, newProblemIds: fresh };
+      AND (json_extract(v.snapshot_json, '$.mode')='acm' OR json_type(v.snapshot_json, '$.adapter')='object')
+      AND json_array_length(v.snapshot_json, '$.cases') > 0 ORDER BY h.created_at,h.problem_id LIMIT 3`).all() as Row[]).map(row => String(row.problem_id));
+    return { date: day, timeZone: settings.timeZone, budget: settings.dailyReviewBudget, reviewedToday: snapshot.summary.reviewedToday,
+      remainingBudget: snapshot.summary.remainingBudget, items: admitted.map(plan => this.compatibleReview(plan)),
+      dueCount: snapshot.summary.dueCount, overdueCount: snapshot.summary.overdueCount, deferredCount: snapshot.summary.deferredCount,
+      suspendedCount: snapshot.summary.suspendedCount, newProblemIds: fresh };
   }
+  addProblemReview(problemId: string) { return this.reviews.addProblemReview(problemId); }
+  addProblemReviews(input: { problemIds: string[] }) { return this.reviews.addProblemReviews(input); }
+  getProblemReview(problemId: string) { return this.reviews.getProblemReview(problemId); }
+  listProblemReviews() { return this.reviews.listProblemReviews(); }
+  updateProblemReviews(input: ProblemReviewBatchInput) { return this.reviews.updateProblemReviews(input); }
+  getReviewPlanSnapshot(query: ReviewPlanQuery = {}, at?: string) { return this.reviews.getReviewPlanSnapshot(query, at); }
+  getProblemReviewDetail(problemId: string, history: PageRequest = {}) { return this.reviews.getProblemReviewDetail(problemId, history); }
+  recordProblemReview(input: ProblemReviewAssessmentInput, at?: string) { return this.reviews.recordProblemReview(input, at); }
+  correctProblemReview(input: ProblemReviewCorrectionInput) { return this.reviews.correctProblemReview(input); }
+  previewProblemReview(input: ProblemReviewPreviewInput, at?: string) { return this.reviews.previewProblemReview(input, at); }
+  getProblemReviewRequest(requestId: string) { return this.reviews.getProblemReviewRequest(requestId); }
+  registerReviewAccepted(localRecordId: string) { return this.reviews.registerReviewAccepted(localRecordId); }
+  reviewOpportunities(filter: ReviewOpportunityFilter = {}) { return this.reviews.reviewOpportunities(filter); }
+  getReviewOpportunityForSubmission(localRecordId: string) { return this.reviews.getReviewOpportunityForSubmission(localRecordId); }
+  claimReviewOpportunity(id: string, at?: string) { return this.reviews.claimReviewOpportunity(id, at); }
+  skipReviewOpportunity(id: string) { return this.reviews.skipReviewOpportunity(id); }
+  submitReviewOpportunity(input: SubmitReviewOpportunityInput) { return this.reviews.submitReviewOpportunity(input); }
+  detachReviewAttempt(id: string) { this.reviews.detachReviewAttempt(id); }
+  getReviewAssessmentDraft(key: string) { return this.reviews.getReviewAssessmentDraft(key); }
+  saveReviewAssessmentDraft(input: ReviewAssessmentDraftInput) { return this.reviews.saveReviewAssessmentDraft(input); }
+  deleteReviewAssessmentDraft(key: string, expectedRevision?: number) { this.reviews.deleteReviewAssessmentDraft(key, expectedRevision); }
+  startReviewSession(input: StartReviewSessionInput) { return this.reviews.startReviewSession(input); }
+  getReviewSession(id?: string) { return this.reviews.getReviewSession(id); }
+  advanceReviewSession(input: AdvanceReviewSessionInput) { return this.reviews.advanceReviewSession(input); }
+  endReviewSession(id: string) { return this.reviews.endReviewSession(id); }
 
   recordActivity(input: ActivitySampleInput): ActivitySample {
     text(input.requestId, 'activity request id', 200); integer(input.durationMs, 'activity duration', 0, 30000);
@@ -490,9 +447,10 @@ export class LearningRepository {
       FROM runs WHERE created_at >= ? AND created_at <= ?${condition} GROUP BY date`).all(...args) as Row[]) {
       runs += row.count as number; passedRuns += row.passed as number; day(row.date as string).runs = row.count as number; day(row.date as string).passedRuns = row.passed as number;
     }
-    for (const row of this.db.prepare(`SELECT practice_local_date(reviewed_at) AS date, COUNT(*) AS count
-      FROM review_events WHERE kind = 'review' AND reviewed_at >= ? AND reviewed_at <= ?${condition} GROUP BY date`).all(...args) as Row[]) day(row.date as string).reviewCount = row.count as number;
-    const reviewedItems = this.db.prepare(`SELECT COUNT(DISTINCT item_id) AS count FROM review_events WHERE kind = 'review' AND reviewed_at >= ? AND reviewed_at <= ?${condition}`).get(...args)!.count as number;
+    for (const row of this.db.prepare(`SELECT learning_date AS date, COUNT(DISTINCT problem_id) AS count
+      FROM problem_review_effective_events WHERE is_initial=0 AND observed_at>=? AND observed_at<=?${condition} GROUP BY learning_date`).all(...args) as Row[]) day(row.date as string).reviewCount = row.count as number;
+    const reviewedItems = this.db.prepare(`SELECT COUNT(DISTINCT problem_id) AS count FROM problem_review_effective_events
+      WHERE is_initial=0 AND observed_at>=? AND observed_at<=?${condition}`).get(...args)!.count as number;
     return { activeMs, attempts, runs, passedRuns, reviewedItems, days: [...days.values()].sort((a, b) => a.date.localeCompare(b.date)) };
   }
 

@@ -16,7 +16,6 @@ test-results/
 /.hallmark/
 /.agents/
 /.codex/
-/AGENTS.md
 /design.md
 /design-dna.md
 /tests/**/*.md

@@ -12,9 +12,9 @@ export function learningDashboard(db: DatabaseSync, settings: LearningSettings, 
   const date = localDate(at, settings.timeZone), from = shiftDay(date, -365), to = date;
   month ??= date.slice(0, 7);
   if (typeof month !== 'string' || !/^\d{4}-(0[1-9]|1[0-2])$/.test(month)) throw new Error('复习月份无效。');
-  const monthStart = archiveDateBoundary(`${month}-01`, settings.timeZone);
+  const monthStart = `${month}-01`;
   const nextMonth = new Date(`${month}-01T12:00:00.000Z`); nextMonth.setUTCMonth(nextMonth.getUTCMonth() + 1);
-  const monthEnd = archiveDateBoundary(nextMonth.toISOString().slice(0, 10), settings.timeZone);
+  const monthEnd = nextMonth.toISOString().slice(0, 10);
   const days: LearningDay[] = Array.from({ length: 366 }, (_, i) => ({ date: shiftDay(from, i), activeMs: 0, completedAttempts: 0, completedProblems: 0, reviewCount: 0 }));
   // Precompute 367 boundaries once. The SQL callback then performs only a binary search, not an Intl
   // format for every activity pulse. Local day lengths can be 23/25 hours or even zero after a zone jump.
@@ -46,17 +46,18 @@ export function learningDashboard(db: DatabaseSync, settings: LearningSettings, 
     FROM attempts WHERE ended_at >= ? AND ended_at <= ? GROUP BY day_index`).all(start, at) as Row[];
   for (const row of completed) if (days[Number(row.day_index)]) Object.assign(days[Number(row.day_index)], { completedAttempts: Number(row.attempts), completedProblems: Number(row.problems) });
   const completedProblems = Number(db.prepare('SELECT COUNT(DISTINCT problem_id) AS count FROM attempts WHERE ended_at >= ? AND ended_at <= ?').get(start, at)!.count);
-  for (const row of db.prepare(`SELECT dashboard_day_index(reviewed_at) AS day_index, COUNT(*) AS count
-    FROM review_events WHERE kind = 'review' AND reviewed_at >= ? AND reviewed_at <= ? GROUP BY day_index`).all(start, at) as Row[]) {
-    if (days[Number(row.day_index)]) days[Number(row.day_index)].reviewCount = Number(row.count);
+  const dates = new Map(days.map(day => [day.date, day]));
+  for (const row of db.prepare(`SELECT learning_date AS date, COUNT(DISTINCT problem_id) AS count
+    FROM problem_review_effective_events WHERE is_initial=0 AND learning_date>=? AND learning_date<=? AND observed_at<=?
+    GROUP BY learning_date`).all(from, to, at) as Row[]) {
+    const day = dates.get(String(row.date)); if (day) day.reviewCount = Number(row.count);
   }
-  const reviewEvents = (db.prepare(`SELECT e.*, COALESCE((SELECT c.rating FROM review_events c
-    WHERE c.kind = 'correction' AND c.corrects_event_id = e.id ORDER BY c.rowid DESC LIMIT 1), e.rating) AS effective_rating
-    FROM review_events e WHERE e.kind = 'review' AND e.reviewed_at >= ? AND e.reviewed_at < ? AND e.reviewed_at <= ?
-    ORDER BY e.reviewed_at, e.rowid`).all(monthStart, monthEnd, at) as Row[]).map(row => ({
-      id: String(row.id), requestId: String(row.request_id), itemId: String(row.item_id), kind: 'review' as const,
-      rating: Number(row.effective_rating) as ReviewEvent['rating'], reviewedAt: String(row.reviewed_at), createdAt: String(row.created_at),
+  const reviewEvents = (db.prepare(`SELECT * FROM problem_review_effective_events
+    WHERE learning_date>=? AND learning_date<? AND observed_at<=? ORDER BY observed_at,stable_key`).all(monthStart, monthEnd, at) as Row[]).map(row => ({
+      id: String(row.id), requestId: String(row.request_id), itemId: String(row.plan_id), kind: 'review' as const,
+      rating: Number(row.effective_rating) as ReviewEvent['rating'], reviewedAt: String(row.observed_at), createdAt: String(row.created_at),
       correctsEventId: null, algorithmVersion: String(row.algorithm_version), attemptId: row.attempt_id as string | null,
+      learningDate: String(row.learning_date), isInitialAssessment: row.is_initial === 1,
     }));
   return { date, timeZone: settings.timeZone, dailyPracticeGoal: settings.dailyPracticeGoal, from, to, days,
     totals: { activeMs: days.reduce((total, day) => total + day.activeMs, 0), completedAttempts: days.reduce((total, day) => total + day.completedAttempts, 0),

@@ -133,7 +133,7 @@ const python = 'class Solution:\n    def arrayTotal(self, nums: list[int]) -> in
 const java = 'class Solution {\n    public String mirrorText(String text) {\n        return new StringBuilder(text).reverse().toString();\n    }\n}\n';
 const noteTitle = '数组求和：从边界想到循环';
 const markdown = '## 先确认边界\n\n空数组返回 0；负数和正数都参与累加。\n\n## 循环里保存什么\n\n`total` 表示已经遍历的元素之和。每读到一个数，就把它加进去。\n\n- 时间复杂度：O(n)\n- 额外空间：O(1)\n\n## 下次重写\n\n先说清楚变量含义，再独立写出循环；最后检查空数组和负数用例。\n';
-let confirmedNote, provider, pythonRun, javaRun;
+let confirmedNote, provider, pythonRun, javaRun, reviewAssessment;
 try {
   await load();
   const environment = await api('environment');
@@ -164,6 +164,8 @@ try {
   await page.getByRole('button', { name: '结束练习', exact: true }).click();
   await until(async () => !(await api('archiveOverview', pythonRun.attemptId)).attempt.isActive, 'Python practice archived');
   assert.equal((await api('archiveOverview', pythonRun.attemptId)).attempt.lastRunMatchesFinal, true);
+  assert.equal(await page.getByRole('dialog').count(), 0, 'local success and ending practice must not automatically ask for a rating');
+  assert.equal((await api('reviewOpportunities')).total, 0);
   pass('Python executes all three local cases and archives the tested final code', { runId: pythonRun.id, status: pythonRun.result.status });
 
   await nav('学习笔记');
@@ -180,22 +182,29 @@ try {
   javaRun = await runProblem('mirror-text', '反转字符串', 'java', java);
   await page.getByRole('button', { name: '结束练习', exact: true }).click();
   await until(async () => !(await api('archiveOverview', javaRun.attemptId)).attempt.isActive, 'Java practice archived');
+  assert.equal(await page.getByRole('dialog').count(), 0, 'ending another local practice must also remain quiet');
   pass('Java executes all three cases, including empty text and Chinese characters', { runId: javaRun.id, status: javaRun.result.status });
 
-  await api('addReviewItem', { problemId: 'array-total', target: 'understanding', language: 'none' });
-  const rewrite = await api('addReviewItem', { problemId: 'array-total', target: 'rewrite', language: 'python' });
-  await api('reviewFeedback', { requestId: randomUUID(), itemId: rewrite.id, rating: 3, attemptId: pythonRun.attemptId });
-  await api('addReviewItem', { problemId: 'mirror-text', target: 'rewrite', language: 'java' });
-  assert.equal((await api('reviewItems')).length, 3);
-  assert.equal((await api('reviewEvents', rewrite.id)).length, 1);
-  await nav('学习中心');
-  await page.getByRole('combobox', { name: '复习列表范围', exact: true }).selectOption('all');
-  await until(async () => (await page.locator('li.todo-row').count()) === 3, 'all three real review items render');
+  const reviews = await api('addProblemReviews', { problemIds: ['array-total', 'mirror-text'] });
+  assert.equal(reviews.length, 2);
+  assert.equal((await api('addProblemReviews', { problemIds: ['array-total'] }))[0].id, reviews.find(plan => plan.problemId === 'array-total').id);
+  reviewAssessment = await api('recordProblemReview', { requestId: randomUUID(), problemId: 'array-total', rating: 3, attemptId: pythonRun.attemptId });
+  assert.equal(reviewAssessment.event.source, 'manual'); assert.equal(reviewAssessment.event.isInitialAssessment, true);
+  assert.equal((await api('problemReviewDetail', 'array-total')).events.total, 1);
+  const reviewSnapshot = await api('reviewPlan', { view: 'all' });
+  assert.equal(reviewSnapshot.summary.totalCount, 2);
+  assert.equal(reviewSnapshot.summary.reviewedToday, 0, 'first assessment establishes a plan but is not another completed review');
+  assert.equal(reviewSnapshot.summary.firstAssessedToday, 1);
+  assert.equal(reviewSnapshot.summary.unassessedCount, 1);
+  await nav('复习计划');
+  await page.getByRole('navigation', { name: '复习视图' }).getByRole('button', { name: '全部题目', exact: true }).click();
+  await until(async () => (await page.locator('li.review-plan-row').count()) === 2, 'both unified problem review plans render');
+  assert.equal(await page.getByRole('combobox', { name: /复习目标|复习语言/ }).count(), 0);
   await shot('review.png');
-  pass('Real FSRS review items keep understanding and language-specific rewriting separate');
+  pass('Independent review plan renders one FSRS plan per problem; explicit manual first assessment leaves the other problem unassessed');
 
   await nav('模拟面试');
-  await page.getByRole('heading', { name: '给自己一场真实的限时练习', exact: true }).waitFor();
+  await page.getByRole('heading', { name: '模拟面试', exact: true, level: 1 }).waitFor();
   assert.equal(await page.getByRole('combobox', { name: '面试模式', exact: true }).inputValue(), 'strict');
   await page.getByLabel('抽样种子', { exact: true }).fill('每天进步一点');
   await shot('interview.png');
@@ -208,7 +217,9 @@ try {
   assert.deepEqual((await api('aiProvider')).config, provider.config); assert.equal((await api('aiProvider')).hasKey, false);
   assert.equal((await api('runDetail', pythonRun.id)).result.status, 'passed');
   assert.equal((await api('runDetail', javaRun.id)).result.status, 'passed');
-  assert.equal((await api('reviewItems')).length, 3);
+  assert.equal((await api('reviewPlan', { view: 'all' })).summary.totalCount, 2);
+  assert.equal((await api('problemReviewDetail', 'array-total')).events.items[0].id, reviewAssessment.event.id);
+  assert.equal(await page.getByRole('dialog').count(), 0, 'restart does not invent an automatic rating opportunity');
   await nav('学习笔记');
   await page.getByRole('complementary', { name: '笔记列表', exact: true }).getByRole('button').filter({ hasText: noteTitle }).click();
   assert.equal(await page.getByRole('textbox', { name: 'Markdown 正文', exact: true }).inputValue(), markdown);

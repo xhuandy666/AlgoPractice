@@ -1,7 +1,7 @@
 import type { AnswerFormat, AcmTestConfig } from './answer-format';
 /** Renderer-visible AI data. Credentials never appear in these structures. */
 export const AI_POLICY_VERSION = 'tilian-ai-policy-v2';
-export const AI_PROMPT_VERSION = 'tilian-chat-coach-v2.4';
+export const AI_PROMPT_VERSION = 'tilian-chat-coach-v2.5';
 /** Historical record compatibility only. New coach requests have no help levels. */
 export const AI_LEVELS = ['L0', 'L1', 'L2', 'L3', 'L4'] as const;
 export type AiLevel = typeof AI_LEVELS[number];
@@ -132,6 +132,8 @@ export interface AiRequestSnapshot {
   messages: AiMessage[];
   selectedNoteIds: string[]; selectedConversationIds: string[];
   clippedFields: string[];
+  /** Program-bound references actually sent to the model; absent on historical records. */
+  evidenceCatalog?: Array<AiEvidenceReference & { referenceId: string }>;
 }
 export interface AiEvidenceReference {
   runId: string;
@@ -163,7 +165,7 @@ export type AiErrorCode = 'NOT_CONFIGURED' | 'CREDENTIAL_UNAVAILABLE' | 'INVALID
   | 'UNSUPPORTED_RESPONSE' | 'RESPONSE_TOO_LARGE' | 'FORMAT_INVALID' | 'POLICY_VIOLATION'
   | 'CANCELLED' | 'INTERRUPTED' | 'STALE_PATCH' | 'REQUEST_CONFLICT' | 'STORAGE';
 /** Fixed diagnostic categories only; never include provider text or credentials. */
-export const AI_VALIDATION_REASONS = ['shape', 'schemaKind', 'localRun', 'officialRun', 'testCase', 'quote', 'evidenceKind', 'patchHash', 'patchClipped', 'patchGrounding', 'patchRange', 'patchKind', 'codeConflict', 'noteKind', 'guarantee', 'officialSuccess', 'localSuccess'] as const;
+export const AI_VALIDATION_REASONS = ['shape', 'schemaKind', 'localRun', 'officialRun', 'testCase', 'quote', 'evidenceKind', 'evidenceReference', 'patchHash', 'patchClipped', 'patchGrounding', 'patchRange', 'patchKind', 'codeConflict', 'noteKind', 'guarantee', 'officialSuccess', 'localSuccess'] as const;
 export type AiValidationReason = typeof AI_VALIDATION_REASONS[number];
 export interface AiError { code: AiErrorCode; message: string; retryable: boolean; httpStatus?: number; retryAfterMs?: number; validationReason?: AiValidationReason; }
 export interface AiUsage {

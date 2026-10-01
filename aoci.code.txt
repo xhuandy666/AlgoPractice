@@ -1,0 +1,201 @@
+#AOCI-CODE-VOLUME: 1
+
+===/Users/xhuandy/Documents/Codex/projects/algopractice/===
+.gitattributes[FV4T]: F:统一跨平台文本换行并保持PNG二进制原样 | R:- | A:文本自动识别并固定LF | S:-
+.gitignore[FS6T]: F:界定依赖构建物、私人学习数据、凭据与本地开发资料的Git排除边界 | R:- | A:保留env示例但排除数据库、备份及实际配置 | S:认知资产不应忽略；宿主配置保持本地
+.nvmrc[FV3T]: F:锁定开发与CI使用的Node版本 | R:code:package.json | A:Node24.17.0 | S:-
+AGENTS.md[SG7S]: F:约束模型使用AOCI认知、真实证据创作与任务收尾维护 | R:- | A:运行合同与实时Guide优先，完整传输后一次认知证明 | S:压缩后必须重新完整读取，禁止以历史摘要补答或伪造模型语义
+LICENSE[SG4T]: F:授予项目MIT许可并规定版权保留与免责 | R:- | A:分发需包含版权和许可声明 | S:-
+README.md[SU7M]: F:面向用户解释题炼与力扣互补的学习价值、安装及练习复习AI面试工作流 | R:code:package.json,code:runtime-manifest.json | A:v0.90.0三平台下载、独立运行时与源码命令，说明紧凑导航、分栏调整和固定来源切题 | S:旧截图明确标示；自带Key不保证AI免费；Hot100主动联网而非随包题面，本地通过非官方AC；升级前备份
+index.html[EU5T]: F:加载中文React界面并声明页面资源安全策略 | R:code:src/renderer/main.tsx | A:root挂载点与模块入口 | S:CSP禁止外部连接与对象资源，允许本地blob worker
+package-lock.json[FV6L]: F:记录npm依赖精确解析版本、完整性摘要与平台依赖以复现安装 | R:code:package.json | A:应用版本0.90.0，lockfileVersion3配合npm ci | S:包含安装脚本标记，跳过脚本会缺失Electron运行资源
+package.json[FV8S]: F:定义题炼版本、工具链和桌面验收脚本与三平台发行包边界 | R:code:scripts/build.mjs,code:scripts/prepare-windows-helper.mjs | A:0.90.0，Electron入口dist/main.cjs，Node24.17至25之前；提供复习与工作台导航验收 | S:postinstall准备Electron及Windows辅助程序；语言环境独立安装；macOS启用hardenedRuntime但仅临时签名
+runtime-manifest.json[FC7T]: F:固定Python及Temurin版本和受支持平台归档URL、大小、摘要与许可 | R:code:src/runner/managed-runtime.ts | A:macOS双架构和Windows x64；归档校验以清单为准 | S:运行时独立安装而非随应用打包
+tokens.css[FU6T]: F:声明暖白纸面、石墨文字与青绿色强调的应用和代码编辑器主题变量 | R:code:src/renderer/styles.css,code:src/renderer/Editor.tsx | A::root语义OKLCH颜色、字体回退、间距、圆角、面板及对话框阴影与动效时长缓动 | S:-
+tsconfig.json[FV6T]: F:配置ES2022严格TypeScript、React JSX和Bundler模块解析的项目检查范围 | R:- | A:compilerOptions；include覆盖源码、测试、脚本及Vite配置 | S:允许显式TS扩展名导入；该配置包含DOM与Node类型，不代表渲染器具有Node运行权限。
+vite.config.ts[FV7T]: F:配置桌面渲染器相对路径构建及Monaco净化模块替换和ES模块Worker | R:code:src/renderer/monaco-dompurify.ts | A:defineConfig；dist/renderer；assetsInlineLimit=0 | S:相对base支持本地协议加载；精确别名只替换目标dompurify模块，构建清空的范围为渲染器输出目录。
+
+===/Users/xhuandy/Documents/Codex/projects/algopractice/.github/ISSUE_TEMPLATE/===
+bug_report.yml[FQ3T]: F:收集版本系统、复现步骤和预期行为以支持问题定位 | R:- | A:版本与复现步骤必填 | S:反馈不得包含密钥或私人备份
+
+===/Users/xhuandy/Documents/Codex/projects/algopractice/.github/workflows/===
+ci.yml[OV7S]: F:在macOS双架构与Windows执行类型、单测、隔离桌面验收并打包验证应用 | R:code:package.json | A:main推送、PR或手工触发，按提交SHA上传安装包、便携归档及build-info | S:先安装独立语言环境；包须实际启动验收后上传；Mac仅临时签名，不代表开发者签名或公证
+windows-diagnostics.yml[OQ4T]: F:手工触发Windows冷启动辅助程序编译与耗时诊断 | R:code:scripts/windows-diagnostics.mjs | A:Windows2022执行，五分钟超时 | S:-
+
+===/Users/xhuandy/Documents/Codex/projects/algopractice/examples/===
+leetcode-links.csv[SB3T]: F:演示题目链接CSV的标题、标签和章节字段 | R:- | A:url,title,tags,chapter四列 | S:-
+practice.json[SB4T]: F:提供函数数组求和与ACM Unicode回显示例练习 | R:code:src/source/json.ts | A:schemaVersion1，含双语言模板与自建期望用例 | S:-
+
+===/Users/xhuandy/Documents/Codex/projects/algopractice/scripts/===
+build.mjs[OV8T]: F:构建Electron主进程、预加载和界面并汇总源码摘要与第三方许可 | R:code:package.json,code:scripts/check-package-boundary.mjs | A:输出dist应用、build-info及原始许可清单并检查包边界 | S:缺任一被打包组件许可即失败；Electron运行时许可必须保留，语言环境独立安装
+prepare-tests.mjs[XQ3T]: F:测试前创建证据目录并准备Windows运行辅助程序 | R:code:scripts/prepare-windows-helper.mjs | A:供npm pretest调用 | S:-
+prepare-windows-helper.mjs[OV7T]: F:在Windows x64编译原生进程树辅助程序并以源码与产物双摘要缓存 | R:code:src/runner/windows-job.ts | A:非Windows不操作；编译可取消并有超时输出上限 | S:从系统.NET编译器生成，不在最终用户运行代码时临时编译
+runtime-install.ts[EV6T]: F:提供Python与Java受管运行时安装、离线导入及恢复命令入口 | R:code:src/runner/managed-runtime.ts | A:支持root、archive、language与recover参数 | S:离线包必须选择单一语言；SIGINT传递取消并清理监听
+windows-diagnostics.mjs[XQ6T]: F:比较Node直启与生产Windows启动器的参数、标准输入和输出保真度及耗时 | R:code:src/runner/process.ts,code:src/runner/windows-job.ts | A:断言空参数、Unicode及引号往返和零退出码 | S:诊断不输出父进程环境或用户数据
+check-package-boundary.mjs[OV7T]: F:验证发行载荷白名单及运行时清单溯源，阻止私人资产和语言环境误入包 | R:code:package.json,code:scripts/build.mjs | A:checkPackageBoundary返回文件数和runtimesBundled状态 | S:拒绝dist链接、数据库、归档及认知开发资产；额外资源只允许既有Windows进程辅助程序
+
+===/Users/xhuandy/Documents/Codex/projects/algopractice/src/ai/===
+canonical.ts[LS7T]: F:校验AI配置与动作请求并用稳定JSON和SHA256冻结身份 | R:code:src/shared/ai-endpoint.ts,code:src/ai/errors.ts | A:接受chat、hint、diagnosis、official-review、note-draft，限制显式上下文标识和问题长度 | S:仅官方复盘允许且必须提交编号；GLM温度限0至1两位小数；拒绝未知字段、重复ID、非有限数和过深结构
+context.ts[AA8S]: F:冻结主进程可信练习、编号代码、引用目录和有界对话记忆为AI请求快照 | R:code:src/ai/canonical.ts,code:src/ai/coach-skill.ts,code:src/ai/conversation-memory.ts,code:src/ai/evidence-catalog.ts | A:buildRequestSnapshot及requestHash绑定动作、提供商、代码格式用例及实际发送消息 | S:官方复盘绑定提交ID；历史运行须不同代码或配置且不作当前证据；裁剪代码禁补丁，整轮记忆超量才移除并记ID；ACM不借官方结果，活动严格面试拒绝帮助
+credential-vault.ts[PS8T]: F:以系统安全存储加密AI密钥并绑定提供商及请求端点 | R:code:src/ai/canonical.ts,code:src/ai/errors.ts | A:串行设置、删除、检查凭据及主进程withKey作用域 | S:不降级明文；Linux不安全后端禁用，拒绝凭据目录或文件链接，暂存同步后原子替换
+errors.ts[CS6T]: F:将AI服务和校验失败投影为固定分类、具体安全提示与可取消异步操作 | R:code:src/shared/ai.ts | A:AiServiceError、publicAiError和withAbort，校验原因只接受白名单 | S:不透出服务端正文、URL、异常或修复提示；公共字段重新投影防篡改，迟到成功可丢弃清理
+help-card.ts[DB6T]: F:从可信运行历史判断是否展示一次性主动帮助卡 | R:code:src/shared/ai.ts | A:返回触发原因与连续失败数 | S:环境失败不计数，编辑不重置帮助卡；成功重置失败数，严格模式不自动展示
+index.ts[CA5T]: F:集中导出AI服务、凭据、快照、传输及回答校验能力 | R:code:src/ai/service.ts,code:src/ai/policy.ts | A:为主进程提供统一导入入口 | S:-
+legacy-policy.ts[DS6T]: F:兼容校验旧版分级AI记录及历史整行补丁 | R:code:src/ai/canonical.ts,code:src/shared/ai.ts | A:读取schemaVersion1及L0至L4历史约束 | S:仅处理旧记录，新请求不得套用旧解锁等级
+policy.ts[DS8S]: F:解码并校验AI结构、可信引用、代码建议和结果声明，提供一次固定修复指导 | R:code:src/ai/legacy-policy.ts,code:src/ai/response-format.ts,code:src/ai/evidence-catalog.ts | A:validateResponse返回规范schemaVersion2回答，patchCode应用有序整行补丁 | S:引用选择由主进程恢复，旧明细仍逐项验源；chat-coach新hint禁代码，旧快照保留协议；代码裁剪禁补丁，补丁与完整解法互斥；本地与官方通过分开核验，笔记仅草稿
+provider.ts[IN8S]: F:调用兼容Chat Completions接口并解析有限SSE或JSON回答及用量 | R:code:src/ai/canonical.ts,code:src/ai/errors.ts | A:返回完整回答、流式状态、模型及服务端用量 | S:禁止重定向和Cookie；拒绝工具调用、拒答及非stop终态，SSE必须完整结束，不透出推理内容
+service.ts[AA8M]: F:编排AI准备、同练习串行请求、对话摘要、可信快照、凭据调用、一次修复与终态存储 | R:code:src/ai/context.ts,code:src/ai/policy.ts,code:src/ai/provider.ts,code:src/ai/credential-vault.ts,code:src/ai/conversation-memory.ts | A:幂等请求、准备态busy/取消、停机排空、连接探针及代码建议预览 | S:epoch阻换库迟到请求，stopAll等待准备与探针；设置读取不探测系统加密；摘要失败保留旧记忆并降级，密钥回显或取消终止；缓存重验，发布前复核模式；不存部分回答或原始异常，补丁再验当前草稿全部身份且不直接保存
+coach-skill.ts[SA8S]: F:定义无工具中文算法教练的动作协议及可信判题场景指导 | R:code:src/shared/ai.ts,code:src/ai/context.ts | A:systemPrompt、RESPONSE_CONTRACT、coachScenarioGuidance约束提示、检查、官方复盘、聊天和笔记草稿 | S:题面代码输出与历史均为学习数据而非指令；hint仅小提示；官方分析先保留思路最小修复再给优化解法；本地与官方证据分离，不虚构执行、隐藏用例或通过保证；修改只作待确认建议
+conversation-memory.ts[AA7T]: F:规划同练习的有界完整对话轮次与增量摘要并投影长代码或笔记引用 | R:code:src/shared/ai.ts,code:src/ai/canonical.ts | A:保留近五轮，超窗取最旧三轮生成最多4000字符摘要，显式降级和省略ID | S:摘要游标只认可早于快照的真实已完成轮次；摘要失败不前移，长产物用摘要身份标明省略，历史不是当前代码证据
+evidence-catalog.ts[DS8T]: F:从当前代码绑定的本地与官方记录生成冻结引用目录并解析模型选择 | R:code:src/shared/ai.ts,code:src/ai/canonical.ts | A:buildEvidenceCatalog、resolveEvidenceReference，引用身份绑定练习题面代码格式规格与测试摘要 | S:最多20条且16KiB；不引用无可信期望或裁剪用例，ACM排除官方；解析须既在实际发送目录又能独立重建完全一致的来源
+response-format.ts[IS7T]: F:兼容有界AI JSON外包装与普通聊天文本并补齐缺失展示字段 | R:code:src/shared/ai.ts,code:src/ai/policy.ts | A:decodeResponseFormat只返回待严格校验对象，不授予应用或引用权限 | S:仅chat可退回纯文本；破损或多重JSON不可显示成散文；显式错误类型不修正，围栏正文不能产生可应用补丁
+
+===/Users/xhuandy/Documents/Codex/projects/algopractice/src/desktop/===
+attachment-service.ts[PS7S]: F:校验本机附件并按内容摘要发布、读取、导出及准备预览副本 | R:code:src/shared/learning.ts | A:附件上限20MiB，提供安全普通文件读取 | S:拒绝链接并复核inode；文件发布后才登记数据库，源码预览改用txt后缀
+backup-service.ts[PR8M]: F:验证并创建完整学习备份，以恢复日志实现换库和失败回滚 | R:code:src/desktop/attachment-service.ts,code:src/shared/maintenance.ts | A:创建、检查、列举、每日变化备份、恢复及数据库打开前中断恢复；纳入官方自动分析设置 | S:仅白名单普通TAR和完整摘要引用；恢复前备份，成功清凭据；旧设置补默认，数据库与清单版本设置须一致；每日不变跳过并保留七份，失败无法安全回库则保持维护态
+code-clipboard.ts[IU5T]: F:校验代码文本后写入系统剪贴板 | R:code:src/desktop/learning-controller.ts | A:接受最多1MiB UTF8文本和注入的写接口 | S:不提供剪贴板读取能力
+import-service.ts[AW8S]: F:把官方来源或文件预览转为持久导入任务，编排题单成员确认、串行内容/媒体缓存、暂停续传、单题刷新及Hot100首次便捷导入 | R:code:src/source/index.ts,code:src/storage/practice-store.ts,code:src/desktop/media-cache.ts,code:src/shared/builtin-lists.ts,code:src/shared/bridge.ts,code:src/desktop/main.ts | A:ImportService提供prepare/start/resume/job/pause/stop、prepareProblem/applyProblem和importHot100(beforeCommit)；后者返回固定listId及已有或新建任务，不代替显式续传；逐项结果持久化并通过changed/log通知 | S:Hot100仅首次显式请求固定URL，单飞且须100唯一无重复；已有题单或持久任务不联网、不复活移出成员、不自动续传，源身份冲突拒绝；stop世代与提交门禁阻迟到写入；普通start校验完整性/题单revision，请求键绑定preview；续传保留成功项，访问/网络错误暂停；单题刷新CAS且来源退化不清已有缓存
+learning-controller.ts[AG8S]: F:将AI、题目级复习与评分草稿会话、笔记附件提醒备份接入可信桌面IPC及生命周期 | R:code:src/desktop/learning-context.ts,code:src/desktop/official-ai-coach.ts,code:src/ai/service.ts,code:src/storage/practice-store.ts | A:登记学习通道，官方完成事件触发可选分析，提供暂停排空及换库重绑定 | S:评分时间和AC事实由存储解析；提示claim要求空闲可见前台且无面试关闭门禁；AI异步预览后同步复核，笔记先草稿后确认；活动只计1至15秒前台脉冲；附件清理与备份互斥；恢复只清本应用凭据
+logger.ts[LO6T]: F:以字段白名单写入有限体积的本机JSONL运维日志 | R:- | A:单文件1MiB，轮转保留四代 | S:过滤未知字段与疑似密钥，写入失败不得阻塞业务
+main.ts[EG9L]: F:编排安全Electron入口、题库练习档案面试官方判题学习服务及环境与恢复关闭生命周期 | R:code:src/desktop/preload.ts,code:src/desktop/maintenance-gate.ts,code:src/storage/practice-store.ts,code:src/runner/runtime-manager.ts,code:src/desktop/run-preparation.ts,code:src/desktop/learning-controller.ts | A:主帧可信IPC提供格式scope隔离草稿、预检令牌和运行快照、导入分页环境及学习通道；关闭和恢复允许评分草稿保存读取 | S:AlgoPractice数据与钥匙串身份不随显示名变化；渲染隔离非用户代码沙箱；恢复先冲刷停机排空后换库重绑；环境就绪及所有草稿格式用例会话身份复验后才建运行，令牌单用；迟到运行不盖新草稿；官方完成事件且非维护才交AI，自评提示额外受关闭面试前台门禁
+maintenance-gate.ts[MR7T]: F:在数据库恢复期间协调IPC冲刷、锁定与在途操作排空 | R:code:src/desktop/main.ts | A:idle、flush、locked阶段及run、beginFlush、lockAndDrain、release | S:flush额外允许评分草稿保存读取与原请求查证；维护只读例外固定，排空排除恢复自身防死锁
+media-cache.ts[IN7S]: F:下载许可来源题面图片并改写为本地内容寻址资源 | R:code:src/shared/library.ts | A:处理HTML图片并返回媒体缓存完整性 | S:最多二十图且每图8MiB；精确HTTPS白名单且无重定向或Cookie，失败图片清空地址
+official-service.ts[AN8S]: F:管理官方提交代码快照、幂等发送、结果轮询与显式续查 | R:code:src/storage/practice-store.ts,code:src/source/official-judge.ts | A:提供提交、恢复、暂停及状态事件 | S:中断POST不自动重放，送达不确定标unknown；已有判题ID只读续查；仅支持活动非严格练习与官方函数题模板
+preload.ts[IS8S]: F:经隔离桥暴露具名练习学习复习AI与运行环境能力及可清理事件订阅 | R:code:src/shared/bridge.ts,code:src/desktop/main.ts | A:window.algo实现DesktopBridge，涵盖题目级计划、机会claim补评、评分草稿会话和官方自动分析设置 | S:不暴露任意IPC或通道；所有输入仍须主进程验证；取消选择可返回false，订阅卸载须清理
+reminder-service.ts[AW7S]: F:按学习时区、免打扰和稍后设置投递并持久去重复习通知 | R:code:src/shared/maintenance.ts | A:提供启停、tick、snooze、设置更新和状态 | S:调用系统前认领投递，失败不自动重发；重启错过只记逾期，完全退出不安排系统补发
+source-session.ts[II8T]: F:维护隔离的力扣国服登录会话及带会话的题源与判题传输 | R:code:src/source/index.ts,code:src/source/official-judge.ts | A:提供来源adapter、officialJudge和登录窗生命周期 | S:仅允许无端口无凭据的国服HTTPS；登录窗无Node且沙箱隔离，拒绝权限、下载和跨站导航
+startup-errors.ts[CR6T]: F:将启动失败分类并提供保守的数据恢复指引 | R:code:src/desktop/main.ts | A:返回固定标题、消息及错误类别，最多检查五层cause | S:不展示原始异常，不建议静默重建数据库
+learning-context.ts[AA8T]: F:从持久练习或指定官方提交快照构造AI证据并复核后写回精确草稿 | R:code:src/storage/practice-store.ts,code:src/shared/answer-format.ts | A:buildPracticeAiContext、runAiEvidence、applyPracticeAiPatch | S:官方复盘用已提交代码而非后来草稿；结束练习用冻结代码用例；匹配运行同时绑定代码格式规格测试摘要，补丁复验活动草稿CAS且保留用例
+practice-format.ts[DB7T]: F:区分显式答题格式与可失效的保存偏好，解析练习格式 | R:code:src/shared/answer-format.ts,code:src/desktop/main.ts | A:selectPracticeFormat按原生格式、偏好及请求选择 | S:只在未显式请求且没有旧活动函数练习时，将原生ACM题的失效函数偏好回退；不覆盖旧练习契约
+run-preparation.ts[CW8T]: F:管理进程内一次性运行意图及其环境引用生命周期 | R:code:src/desktop/main.ts | A:RunPreparations创建、校验、消费和取消令牌 | S:身份不符不能消费；替换、取消和30分钟过期只释放一次，令牌不持久化且启动不重放
+official-ai-coach.ts[AW8T]: F:由官方完成事件排队可选提交快照分析并与同练习手动AI串行协作 | R:code:src/ai/service.ts,code:src/storage/practice-store.ts,code:src/desktop/learning-controller.ts | A:completed、wake、pause、resume、idle及稳定官方分析请求ID | S:只处理活动非严格函数练习有效官方结果；provider准备后重验门禁与busy；无启动历史扫描或本地触发，暂停清队且恢复不重放
+
+===/Users/xhuandy/Documents/Codex/projects/algopractice/src/interview/===
+company.ts[DD6T]: F:解析企业题单文件并生成内容寻址的校验预览 | R:code:src/source/imports.ts,code:src/source/identify.ts | A:返回数据集、逐行错误、重复数及未导入题目 | S:URL与题目ID须一致，仅完整相同项去重；未知频率不得补成事实
+sampling.ts[KB7T]: F:根据难度主题企业条件构造题池并执行可复现分层不放回抽样 | R:code:src/interview/company.ts,code:src/shared/capability.ts | A:校验规则、构造题池和确定种子抽样版本 | S:频率加权要求同窗口同口径无冲突，缺题时不得静默降低配额
+schema.ts[PD7T]: F:定义企业题单、面试会话与练习归属的SQLite第5版迁移 | R:code:src/shared/interview.ts | A:导出STRICT表、唯一约束和不可变触发器SQL | S:最多一场活动面试，结束会话和企业数据集禁止更新
+service.ts[AB8S]: F:编排面试题池预检、开始、可信计时、答案确认和冻结报告及复盘 | R:code:src/interview/sampling.ts,code:src/storage/practice-store.ts | A:提供会话操作与通道、响应及AI授权门禁；答案和复盘按持久化Attempt格式规格读写 | S:题库头刷新不能改变面试格式；不提供计时中自由格式切换。严格模式屏蔽历史帮助及旧响应；异常时钟冻结，截止前确认才计入，迟到内容只作复盘
+
+===/Users/xhuandy/Documents/Codex/projects/algopractice/src/learning/===
+dashboard.ts[LD7T]: F:以本地学习日聚合活动时长、结束练习、题目级有效自评及月历记录 | R:code:src/shared/archive-date.ts,code:src/learning/fsrs.ts,code:src/learning/problem-review-repository.ts | A:learningDashboard返回366天统计、月度有效事件及复习队列 | S:实测脉冲按本地午夜拆分，不猜历史时长；初次自评不计复习完成，复习数按题目与学习日去重
+fsrs.ts[KB7T]: F:固定旧卡片与题目级FSRS调度配置并提供可审计评分推进及本地日期转换 | R:code:src/shared/learning.ts | A:旧v1与problem-v2算法身份、完整参数、newReviewCard及advanceReviewCard | S:精确校验库版本和历史参数，未知配置拒绝重放；关闭fuzz，题目v2禁短期步骤而旧v1保持原参数
+repository.ts[PD8L]: F:在学习共享事务中维护笔记附件、活动和AI记录，并兼容投影题目级复习为旧接口 | R:code:src/learning/fsrs.ts,code:src/learning/dashboard.ts,code:src/learning/problem-review-repository.ts | A:笔记版本确认、附件候选、学习设置统计、AI请求幂等终态及复习兼容调用 | S:AI笔记先草稿后确认；评分交题目级存储而非重建旧独立任务；删练习只解除来源，附件清理消费明确候选并保守保留正文引用
+schema.ts[PD8M]: F:定义学习域表结构、来源解关联与题目级复习schema9迁移约束 | R:code:src/learning/repository.ts,code:src/learning/problem-review-repository.ts,code:src/storage/practice-store.ts | A:笔记附件AI活动旧表及题目计划、事件、每日评分、AC机会、草稿、会话和有效事件视图 | S:正文版本、评分事件与终态AI不可变；来源只可非空转空；题目日评分唯一，更正独立保留；附件删除候选无外键以允许后续重试
+problem-review-migration.ts[PR8T]: F:在既有数据库升级事务中合并旧复习项目与事件为题目级计划和历史映射 | R:code:src/learning/problem-review-repository.ts,code:src/learning/fsrs.ts,code:src/learning/schema.ts,code:src/storage/practice-store.ts | A:migrateProblemReviewData按策略幂等生成计划、事件、请求映射及迁移报告 | S:先验证全部旧算法及更正来源；同练习取更正后最低评分，首锚点与较晚延期保留；静态旧AC只建已消费基线，不自动纳入无计划题目
+problem-review-repository.ts[PD9L]: F:持久化并重放题目级复习计划、自评更正、每日官方AC机会、评分草稿与复习会话 | R:code:src/shared/review-plan.ts,code:src/learning/fsrs.ts,code:src/learning/schema.ts,code:src/storage/practice-store.ts | A:共享连接事务提供计划查询、显式评级、更正延期暂停、机会claim和补评、草稿CAS及会话推进 | S:计划按题唯一，评分按题与学习日唯一；更正追加不可变日志并重放，不覆写原事实；官方AC必须来自持久可信结果，提示仅当前日消费一次；提交草稿冻结评分时间和请求且查证未知结果后才清理；浏览不代替明确自评或跳过
+
+===/Users/xhuandy/Documents/Codex/projects/algopractice/src/renderer/===
+AiPanel.tsx[AU7M]: F:组织无等级AI教练对话、小提示、代码检查、官方复盘及代码和笔记建议预览 | R:code:src/shared/ai.ts,code:src/renderer/CodeComparison.tsx,code:src/renderer/styles.css,code:src/renderer/HelpHint.tsx | A:显示准备与请求busy、摘要降级、可选笔记和对话上下文，提供请求取消、差异确认与笔记草稿 | S:请求先冲刷草稿；历史记录不冒充当前运行，官方分析绑定提交；异步生命周期拒绝迟到回包和重复发送；建议先预览再应用，非活动页停订阅
+AiSettings.tsx[AU7T]: F:编辑AI提供商预设、兼容参数和加密密钥并提供显式连接测试 | R:code:src/shared/ai.ts,code:src/shared/ai-endpoint.ts,code:src/renderer/HelpHint.tsx | A:保存接口、测试已保存配置、清除Key并显示真实流式与用量状态 | S:端点身份改变须重输已有密钥，未保存配置不得测试；提交即清输入，缺安全存储禁保存；不读取或显示已有Key，未知用量不填零
+App.tsx[AU8M]: F:编排桌面导航和保留式练习工作台，接合来源顺序切题、可调分栏、判题AI笔记及题目级复习 | R:code:src/renderer/usePractice.ts,code:src/renderer/useRuntimeGate.ts,code:src/renderer/usePracticeNavigation.ts,code:src/renderer/useWorkbenchLayout.ts,code:src/renderer/pending-saves.ts,code:src/renderer/useOfficialReviewPrompt.ts,code:src/shared/bridge.ts | A:进入练习折叠可手动展开导航；题面邻题按钮与非输入态Alt方向键；连接题库筛选来源、复习队列及独立归档草稿 | S:导航运行结束提交均先冲刷并防并发；邻题仅浏览不推进评分会话且保持格式scope；编辑器和模态窗口不触发切题键；旧运行不用于当前诊断；环境意图绑定代次并随编辑切页失效，ACM不可直提力扣
+ArchivePage.tsx[AU7S]: F:分页回看练习档案、代码差异、本地官方结果和学习记录并提供独立草稿恢复 | R:code:src/shared/archive-date.ts,code:src/renderer/CodeComparison.tsx,code:src/renderer/HelpHint.tsx | A:按学习时区和日期筛选，懒加载笔记AI，确认删除已结束普通练习 | S:详情与运行须归属所选练习；明确最终代码是否运行；删除告知保留笔记评分草稿及备份，恢复不覆盖原草稿
+CodeComparison.tsx[IU6T]: F:以统一主题展示双语言代码的只读行内差异 | R:code:src/renderer/Editor.tsx,code:src/runner/types.ts | A:接收前后代码、语言和可访问名称 | S:两侧模型不可编辑，输入更新或卸载销毁模型与编辑器
+DesktopRoot.tsx[EU7T]: F:按启动面试状态选择恢复面试工作台或普通应用 | R:code:src/renderer/App.tsx,code:src/renderer/InterviewWorkbench.tsx | A:活动会话ID决定根界面，退出面试后重载列表 | S:状态读取失败停留错误加载页，不误入普通模式；无桥接直接预览
+Editor.tsx[IU7T]: F:封装双语言Monaco编辑器、令牌主题与用户代码诊断定位 | R:code:tokens.css,code:src/runner/types.ts | A:接受代码、语言、只读、诊断及运行编辑回调 | S:主题按令牌签名缓存；外部代码同步不触发编辑回调，卸载销毁模型，诊断仅映射用户代码
+EnvironmentPage.tsx[AU7M]: F:按语言展示环境发现安装与空间状态并组织本机环境、提醒及性能诊断操作 | R:code:src/shared/bridge.ts,code:src/renderer/RuntimePreparation.tsx,code:src/renderer/performance-monitor.ts,code:src/renderer/HelpHint.tsx | A:安装离线导入选择重检重置卸载取消，设置按需自动安装并复制有限诊断报告 | S:每语言独立互斥且代次防旧轮询盖新进度；自动安装默认关闭，未知空间不猜；卸载限托管环境；明确本地执行不是沙箱和完全退出不提醒
+HistoricalCodePanel.tsx[AU7T]: F:只读显示历史代码并支持复制和带版本校验的备注自动保存 | R:code:src/renderer/Editor.tsx,code:src/renderer/pending-saves.ts | A:保存备注携带expectedRevision并通知列表刷新 | S:冲突保留用户输入，仅更新服务端版本供显式重试；备注纳入全局保存屏障
+ImportPage.tsx[AU7T]: F:提供链接CSV或JSON导入预览、题单成员确认、来源登录及持久导入任务管理 | R:code:src/shared/bridge.ts,code:src/renderer/Hot100Card.tsx,code:src/renderer/HelpHint.tsx,code:src/source/index.ts | A:显式预览并确认startImport，运行可暂停，其余未完成任务可继续重试；嵌入Hot100入口 | S:输入变化使旧预览失效，不完整成员禁确认；移出仅解绑保留档案；导航题库不承诺改变筛选
+InterviewPage.tsx[AU7T]: F:配置限时模拟面试抽题规则、预检题池并管理企业题单导入及报告入口 | R:code:src/shared/interview.ts,code:src/renderer/InterviewWorkbench.tsx,code:src/renderer/HelpHint.tsx | A:预览并显式开始面试，显示不足条件及企业文件确认 | S:题池不足不静默放宽；开始前冲刷并冻结编辑；未知企业数据日期保持未知
+InterviewWorkbench.tsx[AU8T]: F:承载限时模拟面试保存运行、严格转辅导及结束后的冻结报告和复盘草稿 | R:code:src/shared/interview.ts,code:src/renderer/pending-saves.ts,code:src/renderer/AiPanel.tsx | A:恢复会话、切题前保存、执行本地测试补测、明确结束和复盘；记录参考与AI帮助 | S:截止后内容仅复盘，报告绑定冻结代码；严格模式禁止AI历史参考，转辅导永久留痕；面试加入复习使用题目级计划而非语言独立卡
+LearningSettingsPage.tsx[AU7T]: F:配置每日复习预算时区提醒、AI接口与本地备份恢复 | R:code:src/renderer/AiSettings.tsx,code:src/renderer/HelpHint.tsx,code:src/shared/bridge.ts | A:保存设置、创建手工备份、检查归档并明确确认替换恢复 | S:备份前冲刷，忙时保留原列表；恢复提示停机排空并先备份且清密钥会话；不含运行环境或日志，完全退出不发送提醒
+LibraryPage.tsx[AU7T]: F:按搜索题单章节难度与能力分页浏览本机题库并传递当前来源顺序进入练习 | R:code:src/shared/bridge.ts,code:src/shared/practice-navigation.ts,code:src/renderer/Hot100Card.tsx,code:src/renderer/ui.tsx | A:每页30条，onOpen带无分页筛选来源；题单解绑CAS、题面刷新预览和Hot100快捷入口 | S:邻题来源保持实际筛选与题单排序而非全库；移出只解绑不删草稿档案；新版题面不替换进行中快照，查看Hot100清其它筛选但不联网更新
+Markdown.tsx[CS8T]: F:净化并展示Markdown笔记和AI内容，分发外链及附件操作 | R:code:src/renderer/MarkdownEditor.tsx,code:src/renderer/AiPanel.tsx | A:接收正文与外链、附件回调 | S:图片仅允许哈希标识的本地附件，远程图片替换提示；链接阻止默认跳转，必须经回调处理
+MarkdownEditor.tsx[CU6T]: F:提供受控Markdown编辑、格式工具栏、快捷键与净化预览 | R:code:src/renderer/markdown-editing.ts,code:src/renderer/Markdown.tsx | A:value与onChange、禁用状态及外链回调；预览关闭编辑工具 | S:输入法组合不触发格式快捷键，命令保留选区，未确认笔记仍为草稿
+NotesPage.tsx[AU7T]: F:分页管理题目或专题笔记、Markdown正文、附件标签及确认版本 | R:code:src/renderer/MarkdownEditor.tsx,code:src/renderer/pending-saves.ts,code:src/renderer/HelpHint.tsx | A:串行自动草稿保存、显式确认、历史继续编辑、附件导入导出和删除 | S:重试保留请求ID及版本条件，已保存或待提交笔记不可改归属；附件任务也在保存屏障内，明确删除不会删除历史AI引用或已有备份
+OfficialJudgePanel.tsx[CU6T]: F:展示官方提交阶段、资源指标和失败用例并提供登录及续查入口 | R:code:src/shared/official.ts,code:src/renderer/ui.tsx | A:接收提交记录和当前代码题面身份及操作回调 | S:unknown提示先核对官网避免重投；只有当前版本匹配且未通过结果可进入AI分析
+ProblemPicker.tsx[CU5T]: F:为笔记关联题目提供防抖查询与受控选择 | R:code:src/shared/bridge.ts,code:src/shared/learning.ts | A:通过problemPage获取最多三十条搜索选项 | S:另查当前选中项并去重，避免筛选丢失选中题目
+ReviewRating.tsx[AU6T]: F:兼容旧入口收集四档自评并投影到统一题目级复习计划 | R:code:src/shared/learning.ts,code:src/renderer/pending-saves.ts | A:显式确认后调用不分语言的understanding计划及reviewFeedback，显示下次到期或待评估 | S:不再创建语言重写独立卡；首次提交冻结请求与评级，失败重试不得改输入或重复评分
+SubmissionHistory.tsx[AU6T]: F:按题目语言和答题格式分页合并本地与官方提交历史 | R:code:src/shared/submission-history.ts,code:src/renderer/submission-history.css | A:提供格式筛选、来源状态和备注列表及选中回调 | S:隐藏停读停订阅，尾页空时回退；记录键包含来源与ID，列表不承载代码正文
+TodayPage.tsx[AU7T]: F:以今日目标时长连续天数、题目级复习摘要与热力图组织学习中心 | R:code:src/renderer/learning-calendar.ts,code:src/shared/review-plan.ts,code:src/renderer/learning-center.css,code:src/renderer/HelpHint.tsx | A:并行读取dashboard与今日复习摘要，调整新题目标，进入计划及按学习日查看档案 | S:完成题数为已结束练习去重而非官方AC，新题目标不等复习量；初次评估不计复习完成；generation防旧响应，热图半年或一年不改近一年汇总
+WorkbenchNoteDialog.tsx[AU7S]: F:在工作台弹窗恢复和编辑当前题目笔记，自动存草稿并支持确认 | R:code:src/renderer/MarkdownEditor.tsx,code:src/renderer/pending-saves.ts | A:接受题目、初始笔记ID及关闭错误回调 | S:无ID时分页找最近用户草稿且核验归属；Escape先保存，失败保留窗口，关闭恢复原焦点
+interview.css[CU6T]: F:样式化面试配置、倒计时、企业数据和冻结复盘报告 | R:code:src/renderer/InterviewPage.tsx,code:src/renderer/InterviewWorkbench.tsx | A:提供面试class及窄屏响应布局 | S:末尾同时覆盖窄屏全局侧栏，影响不只面试页
+learning-calendar.ts[KB6T]: F:计算学习时区日期、日期月历、兼容复习安排和连续学习天数 | R:code:src/renderer/TodayPage.tsx,code:src/shared/learning.ts | A:dateKey、addDays、shiftMonth、42格monthGrid及learningStreak | S:日期运算用UTC避夏令时，未评估及暂停卡不入安排，延期与到期取晚且逾期归今天；今天无活动从昨天续算
+learning-center.css[CU7M]: F:样式化今日进度、复习摘要与全宽学习热力图并保留兼容任务日历规则 | R:code:src/renderer/TodayPage.tsx,code:tokens.css | A:语义色阶、桌面紧凑布局、窄屏纵排、可见焦点和减少动效 | S:不覆盖全局壳层；热图只在自身横向滚动，半年一年采用不同格密度；旧任务样式不代表当前仍显示旧卡复习模块
+main.tsx[EU6T]: F:加载本地字体和样式并以React严格模式挂载桌面根组件 | R:code:src/renderer/DesktopRoot.tsx,code:tokens.css | A:挂载页面root元素 | S:样式依次加载全局、面试、学习中心，后者可覆盖共享壳层
+markdown-editing.ts[KU6T]: F:以纯函数完成Markdown格式切换、选区还原与笔记标题推断 | R:code:src/renderer/MarkdownEditor.tsx,code:src/renderer/NotesPage.tsx | A:导出编辑命令、编辑结果与noteTitle | S:围栏长于正文最长反引号串，标题按显式值与正文标题优先推断并限长
+monaco-dompurify.ts[IS7T]: F:为Monaco创建独立净化器实例以隔离其内部钩子 | R:code:src/renderer/Editor.tsx,code:src/renderer/ui.tsx | A:默认导出绑定window的DOMPurify实例 | S:替换Monaco旧副本但不复用题面净化实例，防止编辑器钩子污染
+note-composer.css[CU5T]: F:定义工作台笔记模态窗口和Markdown编辑预览布局 | R:code:src/renderer/WorkbenchNoteDialog.tsx,code:src/renderer/MarkdownEditor.tsx | A:提供弹窗、工具栏、反馈与640px窄屏样式 | S:减少动态效果时禁用入场动画，内容独立滚动保留首尾操作
+pending-saves.ts[CW8T]: F:提供跨组件保存任务登记、顺序冲刷及多所有者编辑冻结 | R:code:src/renderer/usePractice.ts,code:src/renderer/NotesPage.tsx | A:注册保存回调并发布冻结状态hook | S:冻结按owner集合计数，单流程解冻不能解除其他冻结；冲刷失败即拒绝
+performance-monitor.ts[CO6T]: F:把帧、长任务和前台焦点事件接入性能记录器并发布状态 | R:code:src/renderer/performance-recorder.ts,code:src/renderer/EnvironmentPage.tsx | A:开始停止、页面切换、状态订阅及JSON报告 | S:跨页保持录制，九十秒自动停止并清理观察器和监听
+performance-recorder.ts[KO7T]: F:有界记录前台帧耗时、长任务与页面切换慢帧并汇总诊断 | R:code:src/renderer/performance-monitor.ts | A:生成tilian-performance-v1报告，包含复习页固定白名单与90秒上限 | S:只数值时间和固定页面，不采DOM代码输入；后台帧不累计，环形样本有界
+styles.css[CU7L]: F:定义浅色侧栏共享壳层、分栏练习工作台和各业务页面的响应式控件 | R:code:tokens.css,code:src/renderer/App.tsx,code:src/renderer/AiPanel.tsx | A:按data-group-start分组导航；提供表单面板与工作台列宽；AI会话独立滚动并固定输入区空间 | S:后置规则覆盖前置布局；隐藏工作台必须display:none；740px以下纵排；AI输入区不可随长回答收缩消失
+submission-history.css[CU5T]: F:布局提交历史、格式筛选标签及只读代码和备注面板 | R:code:src/renderer/SubmissionHistory.tsx,code:src/renderer/HistoricalCodePanel.tsx | A:列表、格式标识和窄屏备注样式 | S:历史面板覆盖通用结果布局，保留独立编辑器最低高度
+ui.tsx[CS7T]: F:集中提供中文运行状态错误格式图标及安全题面渲染 | R:code:src/shared/library.ts,code:src/runner/types.ts | A:statusText、时间值格式、含sidebar图标及Statement | S:HTML净化只允许本地哈希媒体并剥离链接地址，缺图明确提示；纯文本单独展示示例，本地通过不标官方AC
+usePractice.ts[AW8T]: F:管理按题目语言格式作用域隔离的代码及ACM用例草稿与练习切换 | R:code:src/renderer/pending-saves.ts,code:src/shared/bridge.ts | A:串行CAS保存、冲刷、打开、结束、快照及匹配身份写回 | S:超量用例先拒绝再渲染，切换先清旧工作区；迟到刷新不回退revision或覆盖新世代，关闭保存失败不确认
+AcmInputPanel.tsx[CU7T]: F:编辑ACM标准输入、多组期望输出及比较方式并就地说明判定边界 | R:code:src/shared/answer-format.ts,code:src/renderer/acm-input.css,code:src/renderer/HelpHint.tsx | A:受控用例增删选择与精确或归一化比较，最多50组 | S:未设期望与显式空字符串不同；配置修改不使旧测试自动有效，不宣称官方判题
+RuntimePreparation.tsx[CU7S]: F:原位展示语言环境准备、下载元数据及阶段进度和恢复操作 | R:code:src/shared/runtime.ts,code:src/renderer/runtime-presentation.ts,code:src/renderer/HelpHint.tsx | A:安装已有环境离线包取消与自动安装回调，ready与意图失效分别提示 | S:组件不启动代码，工作台复核待运行身份；commit禁取消，传输百分比不是整体安装；非沙箱及独立安装边界保留
+acm-input.css[CU5T]: F:布局ACM用例选择、标准输入期望编辑及比较说明并适配窄栏 | R:code:src/renderer/AcmInputPanel.tsx,code:tokens.css | A:560px容器内输入期望双列，文本框可缩放，用例按钮和600px窄屏响应 | S:同时让工作台语言格式栏换行，避免选择器产生横向溢出
+runtime-preparation.css[CU5T]: F:样式化原位环境提示、阶段进度、语言卡片及安装偏好 | R:code:src/renderer/RuntimePreparation.tsx,code:src/renderer/EnvironmentPage.tsx | A:复用主题令牌，提供窄屏与减少动效样式 | S:来源长地址可折行，窄屏提示独立滚动且高度不超过45vh
+runtime-presentation.ts[CU5T]: F:统一环境来源、阶段文案、容量与传输百分比显示 | R:code:src/shared/bridge.ts,code:src/shared/runtime.ts | A:runtimeBytes、runtimeTransferPercent及中文标签字典 | S:未知或非法大小显示尚未测量，仅下载和复制阶段提供有界百分比
+useRuntimeGate.ts[AW8T]: F:协调工作台环境检查、按需安装与一次性有效运行意图续接 | R:code:src/shared/bridge.ts,code:src/renderer/App.tsx | A:准备、安装、选择、取消及偏好操作，按语言跟踪安装任务 | S:编辑切页关窗或维护使旧意图失效；同语言安装中不替换续跑请求；仅主动运行且用户已允许时自动下载
+Hot100Card.tsx[AU7T]: F:按本机Hot100题单与导入任务呈现首次导入、缓存进度和暂停续传入口 | R:code:src/shared/builtin-lists.ts,code:src/shared/bridge.ts,code:src/renderer/hot100-card.css,code:src/renderer/HelpHint.tsx | A:点击才调用导入暂停继续，状态以aria-live宣布，已有题单提供查看入口 | S:挂载不联网不续传，ref阻同拍重复；导入成功后刷新失败只重试刷新；无正式题单禁查看，任务缓存数不保证百题全部离线
+hot100-card.css[FU5T]: F:以共享语义令牌呈现Hot100卡片的信息层级、状态、进度、错误和按钮布局，并适配窄屏 | R:code:src/renderer/Hot100Card.tsx,code:tokens.css | A:定义hot100-card及子元素样式；700px以下改为纵向卡片和可换行按钮；缩减动态偏好下禁用动画与过渡 | S:-
+HelpHint.tsx[CU6T]: F:为控件提供支持悬停焦点与触摸固定的简短非交互问号说明 | R:code:src/renderer/help-hint.css | A:HelpHint用aria-describedby及原生popover顶层定位、边界约束和Escape或外部点击关闭 | S:全局只开一个提示；顶层避免模态inert与容器裁剪，卸载移除监听定时器和popover
+ProblemReviewRating.tsx[AU8M]: F:以可恢复模态自评处理官方AC补评、主动复习和评分更正 | R:code:src/shared/review-plan.ts,code:src/renderer/review-draft-recovery.ts,code:src/renderer/pending-saves.ts,code:src/renderer/review-rating.css | A:四档评级与1至4快捷键、安排预览、CAS草稿保存、原请求查证重试、明确稍后或关闭 | S:不默认评分；提交冻结来源评级学习日和请求，未知回包先查原结果；只等价读回丢失ACK不覆盖他人；永久日槽冲突仅明确关闭后作废本草稿；跨日保持冻结观察，退出先保存并恢复焦点
+ReviewPlanPage.tsx[AU8S]: F:组织题目级每日复习行动、筛选批量管理、负担日历、评分时间线和补评详情 | R:code:src/shared/review-plan.ts,code:src/shared/practice-navigation.ts,code:src/renderer/ProblemReviewRating.tsx,code:src/renderer/review-plan.css,code:src/renderer/learning-calendar.ts | A:今日全部日历视图、预算设置、添加题目、延期暂停恢复、开始或继续会话并传递来源列表或冻结队列 | S:初次评估与复习完成分开；批改用计划revision，复习量只推荐不改到期；详情开题保留当时筛选来源；旧合并历史及来源删除明确显示，代次防迟到覆盖且关闭详情恢复焦点
+WorkbenchSplitter.tsx[CU7T]: F:提供题面记录宽度及测试结果高度的拖动键盘与点击式分隔控件 | R:code:src/renderer/workbench-layout.ts,code:src/renderer/workbench-layout.css | A:可聚焦separator与ARIA范围，方向键HomeEnd微调、Enter或双击复位，按钮提供缩小扩大默认 | S:捕获单指针且pointercancel失焦卸载均清理；全局拖动样式按owner清理，兄弟组件不能终止另一活跃手势；所有变化钳制有效范围
+ai-chat.css[CU6T]: F:以对话消息及固定提问区呈现AI教练和次级证据建议 | R:code:src/renderer/AiPanel.tsx,code:tokens.css | A:用户与教练消息、独立滚动会话、快捷动作、上下文控件和面试底部尺寸 | S:提问区不随长回答收缩消失；窄屏历史AI面板限高且独立滚动，遵守减少动效偏好
+help-hint.css[CU5T]: F:样式化问号触发器与原生popover说明及相邻控件组合 | R:code:src/renderer/HelpHint.tsx,code:tokens.css | A:24px触摸目标、可见焦点、固定顶层说明和视窗内最大宽度 | S:-
+official-review-prompt.ts[DW7T]: F:为实时官方AC自评提示提供场景代次门禁和claim后持久状态复核 | R:code:src/shared/official.ts,code:src/shared/review-plan.ts,code:src/renderer/useOfficialReviewPrompt.ts | A:OfficialReviewPromptGuard生成当前题工作区学习日ticket，revalidateReviewPrompt最多三次复查 | S:只接受完成且有可信判题ID的accepted事件；前台丢失阻塞切题跨日使ticket失效，seen有界；内存去重不是SQLite每日账本
+review-draft-recovery.ts[DR8T]: F:只读核验评分草稿丢失ACK等价恢复与永久日槽冲突可作废身份 | R:code:src/shared/review-plan.ts,code:src/renderer/learning-calendar.ts,code:src/renderer/ProblemReviewRating.tsx | A:matchesReviewDraftIdentity、equivalentCommittedReviewDraft及canDiscardConflictedReviewDraft | S:来源请求评级观察日时区和提交时间须一致；手工未冻结观察必须位于原调用窗口；不替换他人草稿，不把未知回包当新评分，作废前须查原请求且无结果
+review-plan.css[CU7S]: F:呈现题目级复习行动列表、七日负担月历、详情时间线和批量对话框 | R:code:src/renderer/ReviewPlanPage.tsx,code:tokens.css | A:语义令牌、筛选批操作、可见焦点、桌面双栏与窄屏详情优先、低高度紧凑规则 | S:七日图值同时有文字访问入口；减少动效禁动画及平滑滚动，正文长标识可折行
+review-rating.css[CU6T]: F:样式化题目自评模态的来源四档选择、预览确认及安全错误状态 | R:code:src/renderer/ProblemReviewRating.tsx,code:tokens.css | A:顶层backdrop、可见焦点、受控视窗高度和480px单列布局 | S:长来源可折行，模态自身滚动且减少动效禁过渡
+review-workbench.css[CU5T]: F:布局工作台复习会话状态和操作并避免窄短视窗裁剪 | R:code:src/renderer/App.tsx,code:tokens.css | A:会话栏可换行，1024px操作占满宽度，740px短视窗容器纵向滚动 | S:短视窗复习工作台不收缩并保留500px最低高度
+useOfficialReviewPrompt.ts[AW8T]: F:从本轮实时官方AC事件编排当前前台场景的一次自评提示 | R:code:src/renderer/official-review-prompt.ts,code:src/shared/bridge.ts,code:src/renderer/learning-calendar.ts | A:读取设置时区、查机会claim重验并公开opportunity、dismiss和invalidate，订阅判题及生命周期 | S:不扫描启动历史；只允许等待提交按钮清理，切页失焦模态维护跨日即弃链；claim回复后再读持久状态，已消费未显示机会留管理页，不自动重放
+usePracticeNavigation.ts[AW7T]: F:加载并冻结本次进入练习的来源顺序，投影当前题目的上下邻题与读取状态 | R:code:src/shared/practice-navigation.ts,code:src/renderer/App.tsx | A:usePracticeNavigation提供索引总数前后ID、加载错误和显式重试 | S:切题不重新加载来源；切换来源的同次渲染即隔离旧邻题，卸载或替换以AbortController拒绝迟到结果
+useWorkbenchLayout.ts[AW7T]: F:测量工作台内容盒并协调题面历史和结果区尺寸、响应式模式与本机偏好 | R:code:src/renderer/workbench-layout.ts,code:src/renderer/App.tsx | A:提供容器ref、CSS尺寸、合法范围、默认值及changeSize | S:只在活动工作台测量；工具栏换行高度独立扣除，主导航展开也触发重排；卸载清观察器监听和动画帧，存储失败不阻使用
+workbench-layout.css[CU6T]: F:按实际可用尺寸布局三栏工作台、上下编辑结果区与可访问分隔控件 | R:code:src/renderer/useWorkbenchLayout.ts,code:src/renderer/WorkbenchSplitter.tsx,code:tokens.css | A:data-layout控制三列、历史下移及全纵排，保留AI输入区和独立滚动 | S:强选择器覆盖旧视窗规则且显式指定列防自动布局错位；拖动指针样式作用全页，历史下移或纵排隐藏横向分隔
+workbench-layout.ts[KU7T]: F:计算有界工作台分栏、结果高度和分隔键盘行为，并读写版本化尺寸偏好 | R:code:src/renderer/WorkbenchSplitter.tsx,code:src/renderer/useWorkbenchLayout.ts | A:calculateWorkbenchLayout、calculateResultLayout及偏好校验；三种布局模式 | S:尺寸来自内容盒而非窗口；右栏最大60%并给编辑器和题面留最小空间；偏好存比例，非法值回退；上下箭头与右栏方向映射不同
+workbench-navigation.css[CU5T]: F:呈现紧凑主导航、持续可见的展开按钮与题面邻题入口和状态 | R:code:src/renderer/App.tsx,code:tokens.css | A:data-sidebar-collapsed保留64px图标栏和44px导航目标，邻题状态可折行 | S:折叠标签仅视觉隐藏而保留辅助读取；覆写旧窄屏横向导航，不改变展开状态的既有布局
+workbench-navigation.ts[KU6T]: F:以纯函数决定练习进出时主导航折叠及安全邻题快捷键 | R:code:src/shared/bridge.ts,code:src/renderer/App.tsx | A:sidebarAfterNavigation与practiceShortcutDirection识别Alt左右方向键 | S:同页保留手动选择，进练习折叠离开展开；编辑态模态组合输入重复或已处理事件不切题
+
+===/Users/xhuandy/Documents/Codex/projects/algopractice/src/runner/===
+diagnostics.ts[IU7S]: F:把Java和Python编译运行异常映射回用户原始代码位置 | R:code:src/runner/types.ts,code:src/runner/wrappers.ts | A:提供Java诊断解析、Python诊断校验及异常捕获包装代码 | S:Java函数包装多两行须偏移，列坐标转UTF16；包装器自身错误不能标为用户行
+index.ts[AB8S]: F:校验并冻结执行请求，在临时目录编译运行双语言用例并比较结果 | R:code:src/runner/process.ts,code:src/runner/wrappers.ts,code:src/runner/values.ts | A:runCode返回结果并发送有序阶段事件，支持取消及输出上限 | S:无期望值仅completed而非passed；多用例共享执行期限和总输出预算；临时目录清理失败改内部错误；不是安全沙箱
+managed-runtime.ts[RR8S]: F:按固定清单下载或复制校验运行时并用锁和日志原子安装与恢复 | R:code:runtime-manifest.json,code:src/runner/runtime-inspect.ts,code:src/runner/process.ts | A:installRuntime及recoverRuntimeInstallations，报告各阶段进度 | S:HTTPS原始源及跳转白名单、跳转与总时限有界；摘要大小吻合才解压，切换后迟到取消安全收尾，冲突保留双方
+process.ts[RR8T]: F:以受限环境启动子进程并管理整组取消、超时、输出上限及宿主退出清理 | R:code:src/runner/windows-job.ts | A:runProcess返回退出码、输出、原因和耗时 | S:POSIX用独立进程组与FD存活守卫，Windows用Job；不继承完整环境，但不构成文件或网络沙箱
+runtime-inspect.ts[RC7T]: F:检查绝对可执行路径并实际探测Python或匹配Java编译运行环境 | R:code:src/runner/process.ts,code:src/runner/runtime-paths.ts | A:返回ready、missing、incompatible、cancelled或error | S:拒绝系统安装启动器与Store别名；仅接受CPython3.14.x或OpenJDK25，java与javac完整版本必须一致
+runtime-paths.ts[RC5T]: F:按平台和受管根目录定位Python、Java及同目录编译器路径 | R:code:src/runner/types.ts | A:默认根来自环境变量或当前目录.runtime | S:macOS JDK使用Contents/Home布局
+types.ts[CB7T]: F:定义双语言执行请求、类型适配、用例、诊断与阶段结果协议 | R:- | A:涵盖ACM和函数、原地观测及精确浮点多重集比较 | S:int64及bigint跨JS与IPC必须十进制字符串，诊断位置指向用户原始文本
+values.ts[KB7T]: F:校验序列化类型和值并归一化链表树及实现结果比较 | R:code:src/runner/types.ts | A:类型深度限制、原地观测类型和精确浮点多重集比较 | S:大整数禁止JS Number，树拒绝不可达节点；多重集比较保留重复次数而非集合去重
+windows-job.ts[RR8S]: F:提供Windows Job原生辅助源码及可靠参数引用与启动命令 | R:code:scripts/prepare-windows-helper.mjs,code:src/runner/process.ts | A:配置绝对辅助路径并生成带owner PID的启动参数 | S:创建进程时加入Job以免竞态，只继承标准流；Job关闭杀后代，不允逃逸；不在运行时动态编译
+wrappers.ts[IB8S]: F:为双语言函数题生成类型化用例调用、链表树适配和独立结构化结果输出 | R:code:src/runner/diagnostics.ts,code:src/runner/types.ts | A:支持返回值或原地参数及有效区间观测 | S:用户stdout不是结果协议；大整数按字符串传输，循环共享节点及超限输出拒绝，原地有效区间须校验
+runtime-discovery.ts[RC8S]: F:在有界候选中解析可用本地解释器或JDK并记录来源与探针结果 | R:code:src/runner/runtime-inspect.ts,code:src/runner/runtime-paths.ts | A:resolveRuntime与runtimeDiscoveryPaths；显式、测试、托管、系统优先级 | S:显式或测试选择失效不借其他环境；拒绝项目路径、OS安装别名及真实路径绕回，发现不下载
+runtime-manager.ts[RR8S]: F:管理按语言独立的运行时安装取消、引用保护、容量查询及受控卸载 | R:code:src/runner/managed-runtime.ts,code:src/runner/runtime-discovery.ts | A:RuntimeManager状态、探测、安装、retain、details与uninstall | S:同源同语言单飞；运行阻安装，待运行阻卸载；只删带所有权标记的直接子目录，退出等待卸载，未知容量不猜
+
+===/Users/xhuandy/Documents/Codex/projects/algopractice/src/shared/===
+ai-endpoint.ts[CS7T]: F:统一AI接口URL身份与Chat Completions请求端点补全 | R:- | A:去除尾斜线，已有完整端点不重复追加 | S:远程必须HTTPS，仅回环允许HTTP，禁止凭据、查询和片段
+ai.ts[CA8M]: F:定义跨层AI配置、可信快照与引用目录、结构化回答及补丁建议契约 | R:code:src/shared/answer-format.ts | A:提供商预设、AiTrustedContext、AiRequestSnapshot、AiResponse和AiRepository，固定提示与校验版本 | S:凭据不进入渲染类型；可信上下文由主进程构造，引用目录必须实际发送且旧记录可缺失；运行和补丁绑定格式规格测试摘要，历史非当前证据；未知用量为null，旧等级仅兼容，笔记须确认
+archive-date.ts[CB7T]: F:计算指定时区本地日期的UTC起始边界及次日边界 | R:- | A:archiveDateBoundary | S:通过二分定位本地日期边界，避免夏令时午夜跳变时直接拼接零点造成归档错位。
+bridge.ts[CE9S]: F:声明渲染器与主进程间练习学习、题目级复习、环境及导入的受限能力契约 | R:code:src/shared/answer-format.ts,code:src/shared/runtime.ts,code:src/shared/ai.ts,code:src/shared/library.ts,code:src/shared/review-plan.ts | A:DesktopBridge提供格式草稿运行准备、复习计划机会评分草稿会话和具名事件订阅 | S:静态类型不代替主进程验证；恢复中的评分草稿与原请求查询保留明确能力；取消选择可返回false，运行令牌不是可恢复任务，订阅须清理
+capability.ts[DB7T]: F:依据语言模板、函数适配及样例证据计算题目可运行等级与说明 | R:code:src/shared/library.ts | A:capability | S:所有用例具有显式expected才算样例验证；本地能力或样例通过均不代表官方AC。
+demo-problems.ts[CB5T]: F:提供数组求和、BMP文本反转与ACM标准输入求和的本地样例及双语言模板 | R:code:src/runner/types.ts | A:DemoProblem；demoProblems | S:样例为本地演示题，不能当作远程题库缓存或官方判题覆盖。
+interview.ts[CB8T]: F:定义公司题集、抽题规则、面试会话、帮助记录及答案版本契约 | R:code:src/runner/types.ts | A:InterviewRules；InterviewSession；公司题集与复盘类型 | S:答案绑定代码摘要和草稿版本；计时异常与模式切换保留记录，历史频次缺失不能填零。
+learning.ts[CB8S]: F:定义版本化笔记、兼容复习投影、学习统计与有界列表的跨层契约 | R:code:src/shared/library.ts,code:src/shared/review-plan.ts,code:src/storage/practice-store.ts | A:Note、ReviewItem、ReviewEvent、LearningDashboard和分页类型 | S:未自评卡片和到期可为null，旧事件可无学习日和首次标记；结束练习非官方通过；列表省略代码测试正文及finalTestConfig但保留格式身份；更正关联原事件
+library.ts[CB8S]: F:定义题目内容与能力证据、题单修订预览以及可恢复导入任务的状态契约 | R:code:src/runner/types.ts | A:ProblemContent；LibraryProblem；ListRefreshPreview；ImportJob | S:成员完整性独立于题面下载成功；同请求键不同输入须拒绝，显式重试不得清除已导入内容。
+maintenance.ts[CR8T]: F:定义提醒状态、带摘要的备份清单和恢复期间服务停写及重建生命周期 | R:code:src/shared/ai.ts,code:src/shared/learning.ts | A:BackupManifest；RestoreLifecycle；BackupServiceOptions；ReminderSettings | S:恢复前必须刷盘并等待异步回调；清理凭据仅限本应用，重建数据库后方可恢复写入。
+official.ts[CB8T]: F:定义官方提交状态、判题结果和不可变代码版本快照的数据契约 | R:code:src/storage/practice-store.ts | A:OfficialSubmission；OfficialJudgeResult；OfficialSubmitInput | S:官方未返回的用例数保持缺失而非零；unknown与error区分无法确认提交结果。
+presentation.ts[CU5T]: F:将本地演示题转换为题库预览数据并统一难度与来源的中文标签 | R:code:src/shared/demo-problems.ts,code:src/shared/capability.ts | A:demoContent；previewProblems；difficultyLabel；sourceLabel | S:预览版本固定为preview且时间为空，不是持久化题库记录。
+submission-history.ts[CD7T]: F:定义按格式筛选的本地及官方历史列表、代码详情和版本化备注协议 | R:code:src/shared/official.ts,code:src/shared/learning.ts | A:SubmissionHistoryFilter及Item、Detail、SaveSubmissionRemarkInput | S:列表不携带代码与判题载荷，格式和规格属于快照；备注CAS且最多240字符
+answer-format.ts[CB8T]: F:定义独立答题格式与ACM测试配置，投影原生或自定义执行规格 | R:code:src/shared/library.ts,code:src/runner/types.ts | A:校验及规范序列化用例、默认配置、resolvePracticeSpec | S:原始题面不可覆盖；函数转ACM不伪造输入或答案；未设期望不等于空输出，最多50组且总UTF8不超1MiB
+runtime.ts[CB6T]: F:定义可安全交给渲染器的环境状态和固定下载归档元数据 | R:code:src/shared/bridge.ts | A:RuntimeState及RuntimeArtifactInfo | S:解压和峰值空间允许未知；展示类型不具备执行探测或安装权限
+builtin-lists.ts[CB6T]: F:统一内置官方Hot100导入快捷入口的身份与完整性预期 | R:code:src/desktop/import-service.ts,code:src/renderer/Hot100Card.tsx | A:导出冻结HOT100，包含规范题单ID、官方URL、标题和100成员预期 | S:只声明导入入口，不携带可再分发题面数据
+practice-navigation.ts[CW7T]: F:捕获题库筛选、复习视图或会话队列并分页解析稳定邻题序列 | R:code:src/shared/bridge.ts,code:src/shared/learning.ts,code:src/shared/review-plan.ts | A:PracticeNavigationSource、来源构造器、resolvePracticeNavigation和位置投影，保序去重ID | S:来源去掉分页限制但保留真实查询顺序；复习跨页校验计划设置身份及学习日时区，数量或边界变化拒绝混用；Abort拒绝迟到结果，冻结会话仅供浏览不推进评分
+review-plan.ts[CB8S]: F:定义题目级复习计划、审计事件、官方AC机会、自评草稿与队列会话跨层协议 | R:code:src/shared/learning.ts,code:src/learning/problem-review-repository.ts | A:查询摘要负担日历、计划批改revision、评分更正预览、机会claim及草稿和会话操作 | S:计划未评估允许空卡空到期；事件保留有效评级学习日算法和来源删除事实；草稿冻结观察时间请求及提交状态；会话位置与跳过独立于浏览，初次评估独立统计
+
+===/Users/xhuandy/Documents/Codex/projects/algopractice/src/source/===
+errors.ts[CN7T]: F:统一题源错误代码、可重试标志与原始字段结构校验 | R:- | A:SourceError；record；requiredString；requiredCount；checkCancelled | S:缺失字段或结构变化必须报SCHEMA_CHANGED，不可降格为空题单。
+identify.ts[IN7T]: F:识别力扣国服题目、学习计划和收藏链接并按规范身份去重 | R:code:src/source/errors.ts,code:src/source/types.ts | A:parseSource；identifySources | S:仅接受标准HTTPS国服域名且无端口和内嵌凭据；讨论帖不在支持范围。
+imports.ts[IB8S]: F:解析链接、CSV和JSON导入内容，校验执行适配并生成完整成员预览 | R:code:src/source/index.ts,code:src/source/problem-content.ts,code:src/source/json.ts | A:parseCSV；parseImportInput；previewImport | S:最多4MiB及1000条；同题冲突内容报错，重复成员保留首次位置；整数精度与expected必须来自显式证据。
+index.ts[IB8S]: F:实现力扣学习计划、收藏分页和单题元数据或正文的题源适配 | R:code:src/source/transport.ts,code:src/source/problem-content.ts | A:LeetCodeCnSourceAdapter；fetchProblemContent | S:分页数量、重复成员或前后修订不一致即失败；null数据不能证明为空，私有收藏只使用用户会话。
+json.ts[CD7T]: F:无损解析大整数JSON及连续样例值，并将题面HTML转换为分析用文本 | R:code:src/source/errors.ts | A:parseLosslessJSON；jsonValuePrefix；htmlText | S:不安全整数在JSON.parse之前保留为十进制字符串；HTML转文本不承担渲染安全净化职责。
+official-judge.ts[IN9S]: F:通过隔离会话提交代码、查询认证与判题结果并规范化官方错误 | R:code:src/shared/official.ts | A:LeetCodeOfficialJudge；parseOfficialCheck；officialProblemSlug；validCsrfCookie | S:Cookie与CSRF不离开主进程；提交网络失败可能已送达，必须标记不确定并核对官方记录，不能自动重投。
+problem-content.ts[IB8S]: F:将题源函数类型、模板和公开样例转换为分级可执行内容 | R:code:src/runner/values.ts,code:src/source/json.ts,code:src/shared/library.ts | A:mapSourceType；typedValue；problemContent | S:只有已核对比较策略且输入输出逐项对应才写expected；歧义降为仅执行，绝不合成期望答案或宣称官方AC。
+transport.ts[IN8T]: F:为题源提供受限HTML与GraphQL传输、大小超时控制和响应证据摘要 | R:code:src/source/errors.ts,code:src/source/types.ts | A:SourceTransport；SourceAdapterOptions | S:只允许力扣HTTPS并阻止未经验证跳转；不绕过登录验证，GraphQL部分错误拒绝作为成功数据。
+types.ts[CN7T]: F:定义题源身份、完整分页证据、元数据与正文能力及导入预览的接口 | R:code:src/shared/library.ts,code:src/source/errors.ts | A:SourceReference；SourcePlan；Observation；SourceAdapter；ImportPreview | S:元数据接口不保留题面与模板正文；成员完整性必须带计数或分页证据，认证字段描述传输方式而非权限保证。
+
+===/Users/xhuandy/Documents/Codex/projects/algopractice/src/storage/===
+pagination.ts[CD7T]: F:统一分页边界、结果元数据及SQL字面搜索与空白处理 | R:code:src/shared/learning.ts | A:pageBounds；pageResult；searchText；literalLike；SQL_TRIM_WHITESPACE | S:limit限制1至100；LIKE转义通配符，SQL空白集匹配JS trim避免能力判断漂移。
+practice-store.ts[PD9L]: F:以SQLite事务持久化版本题库、格式隔离草稿和不可变提交，并协调面试题目复习与备份 | R:code:src/learning/repository.ts,code:src/learning/problem-review-migration.ts,code:src/learning/schema.ts,code:src/storage/answer-format-schema.ts,code:src/shared/answer-format.ts | A:schema9；草稿CAS运行幂等和结束快照，题目级复习代理；可信官方AC终态与机会同事务登记 | S:单实例后构造；1至8升级先校验含已提交WAL的旧库备份，再事务迁移失败回滚；未知草稿保留legacy，不按新题库头猜格式。已结束档案删除仅解绑评分来源并保留独立草稿笔记；恢复不覆盖，备份固定读快照；中断运行及未知官方提交不重放
+submission-history-schema.ts[PD7T]: F:定义v7迁移，将可变提交备注与不可变本地或官方提交快照分离 | R:code:src/storage/practice-store.ts | A:MIGRATE_V7；submission_remarks；题目语言索引 | S:备注必须且只能绑定一种提交来源，版本为正、最多240字符，删除提交级联删除备注。
+answer-format-schema.ts[PD8T]: F:定义schema8迁移以按答题格式隔离草稿活动练习并冻结结束测试配置 | R:code:src/storage/practice-store.ts | A:MIGRATE_V8新增格式规格、用例JSON及复合唯一键 | S:尝试格式来自不可变题面；草稿只在活动归属或全部历史版本一致时推断，否则保留legacy，不按当前题库头猜测

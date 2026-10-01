@@ -25,7 +25,7 @@ export function Hot100Card({ api, lists, jobs, onChanged, onView, viewLabel = '�
   const job = localJob && (!savedJob || localJob.updatedAt > savedJob.updatedAt) ? localJob : savedJob ?? localJob;
   const exists = Boolean(list || job || created);
   const message = busy === 'import' ? '正在联网读取官方题单，随后缓存题面…'
-    : job ? statusLabel[job.status] : exists ? '题单已在本机保存' : '点击后开始导入，无需复制链接。';
+    : job ? statusLabel[job.status] : exists ? '题单已在本机保存' : '';
 
   async function operation(action: NonNullable<typeof busy>) {
     if (!api || inFlight.current) return;
@@ -51,13 +51,13 @@ export function Hot100Card({ api, lists, jobs, onChanged, onView, viewLabel = '�
   return <section className="hot100-card" aria-labelledby={headingId}>
     <div className="hot100-card-main">
       <div className="hot100-card-heading"><span className="hot100-card-kicker">常用题单</span><h3 id={headingId}>{HOT100.title}</h3></div>
-      <p id={descriptionId} className="hot100-card-description">联网读取力扣官方题单及题面；已缓存内容可离线使用。启动应用或浏览此页不会自动导入。</p>
-      <p className="hot100-card-status" role="status" aria-live="polite" aria-atomic="true">{message}{list ? ` · 本机题单 ${list.items.length} 道题` : ''}{job ? ` · 本次已缓存 ${job.counts.imported + job.counts.reused} / ${job.total}` : ''}</p>
+      <p id={descriptionId} className="hot100-card-description">首次导入需联网；已缓存题面可离线使用。</p>
+      {message && <p className="hot100-card-status" role="status" aria-live="polite" aria-atomic="true">{message}{list ? ` · 本机题单 ${list.items.length} 道题` : ''}</p>}
       {job && <div className="hot100-card-progress">
         <progress max={Math.max(1, job.total)} value={Math.max(0, job.total - job.counts.pending - job.counts.running)} aria-label="Hot100 最近导入任务进度" />
         <p>最近任务 {job.total} 项：已缓存 {job.counts.imported + job.counts.reused} · 待处理 {job.counts.pending + job.counts.running} · 失败 {job.counts.failed} · 受限 {job.counts.restricted}{job.counts.link_only > 0 ? ` · 仅链接 ${job.counts.link_only}` : ''}{job.counts.skipped > 0 ? ` · 已跳过 ${job.counts.skipped}` : ''}</p>
       </div>}
-      {(error || job?.error) && <p className="hot100-card-error" role="alert">{error || job?.error?.message} <span>已保存的题单和进度会保留；可检查网络或登录状态后重试。</span></p>}
+      {(error || job?.error) && <p className="hot100-card-error" role="alert">{error || job?.error?.message} <span>题单和进度已保留，可检查网络或登录状态后重试。</span></p>}
     </div>
     <div className="hot100-card-actions">
       {!exists ? <button className="button primary" aria-describedby={descriptionId} disabled={!api || !!busy} onClick={() => void operation('import')}>{busy === 'import' ? '正在准备 Hot100…' : error ? '重试导入 Hot100' : '一键导入 Hot100'}</button>

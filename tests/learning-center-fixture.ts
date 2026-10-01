@@ -56,10 +56,14 @@ try {
   store.recordActivity({ requestId: 'cross-midnight', attemptId: crossing.id, durationMs: 20000, occurredAt: new Date().toISOString() });
   clock(crossStart + 30000); store.finishAttempt(crossing.id, { code });
   clock(actualNow);
-  const pending = store.addReviewItem({ problemId: ids[0], target: 'rewrite', language: 'python', now: new Date(instant(add(today, -2))).toISOString() });
+  // New plans remain unassessed until an explicit observation. No fake due date from adding a card.
+  const pendingSeed = store.addReviewItem({ problemId: ids[0], target: 'rewrite', language: 'python' });
+  store.recordProblemReview({ requestId: 'pending-initial', problemId: ids[0], rating: 1 }, new Date(instant(add(today, -7))).toISOString());
+  const pending = store.getReviewItem(pendingSeed.id)!;
   const paused = store.addReviewItem({ problemId: ids[2], target: 'understanding', language: 'none', now: new Date(instant(add(today, -4))).toISOString() });
   store.setReviewPlan(paused.id, { suspended: true });
   const completed = store.addReviewItem({ problemId: ids[4], target: 'rewrite', language: 'python', now: new Date(instant(add(today, -7))).toISOString() });
+  store.recordProblemReview({ requestId: 'completed-initial', problemId: ids[4], rating: 1 }, new Date(instant(add(today, -8))).toISOString());
   store.recordReview({ requestId: 'completed-today', itemId: completed.id, rating: 4, reviewedAt: new Date(Math.max(instant(today, 0), actualNow - 3600000)).toISOString() });
   const previousMonth = add(today.slice(0, 8) + '01', -1);
   const previous = store.addReviewItem({ problemId: ids[5], target: 'understanding', language: 'none', now: new Date(instant(add(previousMonth, -7))).toISOString() });
@@ -67,6 +71,7 @@ try {
   store.setReviewPlan(previous.id, { scheduledAt: new Date(instant(add(today, 8))).toISOString() });
   for (const [problemIndex, offset] of [[1, 2], [3, 4], [6, 6], [7, 11]]) {
     const item = store.addReviewItem({ problemId: ids[problemIndex], target: 'rewrite', language: problemIndex === 3 ? 'java' : 'python', now: new Date(instant(add(today, -1))).toISOString() });
+    store.recordProblemReview({ requestId: `future-initial-${problemIndex}`, problemId: ids[problemIndex], rating: 1 }, new Date(instant(add(today, -4))).toISOString());
     store.setReviewPlan(item.id, { scheduledAt: new Date(instant(add(today, offset))).toISOString() });
   }
   const settings = store.getLearningSettings(), dashboard = store.getLearningDashboard();

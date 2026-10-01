@@ -84,7 +84,8 @@ test('Empty-code invented Run evidence gets a fixed evidence-empty repair hint a
     if (calls === 1) return sseCompletion(JSON.stringify(unsupported));
     const parts = messages[1].content.split('\n\n'); assert.equal(parts.length, 2);
     const repair = JSON.parse(parts[1]);
-    assert.deepEqual(Object.keys(repair).sort(), ['reason', 'repairHint', 'task']); assert.equal(repair.reason, 'POLICY_VIOLATION');
+    assert.deepEqual(Object.keys(repair).sort(), ['allowedEvidence', 'evidenceItemFormat', 'reason', 'repairHint', 'task']); assert.equal(repair.reason, 'POLICY_VIOLATION');
+    assert.deepEqual(repair.allowedEvidence, []); assert.match(repair.repairHint, /Copy an exact referenceId/);
     assert.match(repair.repairHint, /no matching run.*evidence:\[\]/);
     assert.ok(!JSON.stringify(messages).includes('PRIVATE-PROVIDER')); assert.ok(!JSON.stringify(messages).includes('NONEXISTENT'));
     const valid = answer(request, source); valid.explanation = '先确认要返回的是两个不同下标，试着用一个短数组描述它们需要满足的关系。';
@@ -171,7 +172,8 @@ test('Forged official citations fail after one repair with a safe validation rea
         const parts = messages.at(-1).content.split('\n\n'); assert.equal(parts.length, 2);
         const repair = JSON.parse(parts[1]);
         assert.equal(repair.reason, 'POLICY_VIOLATION'); assert.equal(typeof repair.repairHint, 'string');
-        assert.deepEqual(Object.keys(repair).sort(), ['reason', 'repairHint', 'task']);
+        assert.deepEqual(Object.keys(repair).sort(), ['allowedEvidence', 'evidenceItemFormat', 'reason', 'repairHint', 'task']);
+        assert.ok(repair.allowedEvidence.length > 0); assert.match(repair.repairHint, /Copy an exact referenceId/);
       }
       return sseCompletion(JSON.stringify(wireAnswer));
     });

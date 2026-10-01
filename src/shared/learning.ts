@@ -28,7 +28,7 @@ export interface FsrsCardSnapshot {
 }
 export interface ReviewItem {
   id: string; problemId: string; target: ReviewTarget; language: ReviewLanguage;
-  dueAt: string; scheduledAt: string | null; suspended: boolean; card: FsrsCardSnapshot;
+  dueAt: string | null; scheduledAt: string | null; suspended: boolean; card: FsrsCardSnapshot | null;
   algorithmVersion: string; createdAt: string; updatedAt: string;
 }
 export interface AddReviewItemInput { problemId: string; target: ReviewTarget; language: ReviewLanguage; now?: string; }
@@ -39,6 +39,7 @@ export interface CorrectReviewInput { requestId: string; eventId: string; rating
 export interface ReviewEvent {
   id: string; requestId: string; itemId: string; kind: 'review' | 'correction'; rating: ReviewRating;
   reviewedAt: string; createdAt: string; correctsEventId: string | null; algorithmVersion: string; attemptId: string | null;
+  learningDate?: string; isInitialAssessment?: boolean;
 }
 export interface ReviewFeedbackResult { item: ReviewItem; event: ReviewEvent; }
 export interface ReviewFilter { problemId?: string; target?: ReviewTarget; language?: ReviewLanguage; }

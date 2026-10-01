@@ -132,14 +132,16 @@ test('Empty chat with matching failure allows a concrete diagnosis and does not 
     assert.match(system, /Do not stop at a leading question/);
     assert.ok(!system.includes('ONE small conceptual nudge')); assert.ok(!system.includes('1–2 short sentences'));
     assert.ok(!system.includes('Keep nextSteps:[], evidence:[], inferences:[]'));
-    assert.equal(snapshot.promptVersion, 'tilian-chat-coach-v2.4');
+    assert.equal(snapshot.promptVersion, 'tilian-chat-coach-v2.5');
   }
 });
 test('An empty request does not create a program-selected help tier; template and implemented code retain the same adaptive policy', () => {
   const source = context();
   const blank = buildRequestSnapshot(input(), { ...source, code: 'class Solution:\n    def solve(self, nums):\n        pass\n', run: null }, config());
   const implemented = buildRequestSnapshot(input(), source, config());
-  assert.equal(blank.messages[0].content, implemented.messages[0].content);
+  assert.notEqual(blank.messages[0].content, implemented.messages[0].content);
+  // The adaptive teaching policy is shared; trusted observed-result guidance differs.
+  for (const snapshot of [blank, implemented]) assert.match(snapshot.messages[0].content, /Judge meaningful progress from actual work yourself/);
   assert.match(blank.messages[0].content, /one core concept, one small example and one next step/);
   assert.match(blank.messages[0].content, /do not invent a bug/);
   assert.equal(JSON.parse(blank.messages[1].content).learningContext.run, null);

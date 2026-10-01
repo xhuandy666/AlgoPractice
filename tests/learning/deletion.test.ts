@@ -85,10 +85,10 @@ test('deleting a finished archive detaches provenance and preserves every rating
     assert.deepEqual(store.getAIRequest(value.cached.id), { ...value.cached, cachedFromRequestId: null });
     assert.deepEqual(raw.prepare('SELECT * FROM drafts ORDER BY scope_id').all(), drafts);
     assert.equal(raw.prepare('SELECT COUNT(*) AS count FROM draft_restorations').get()?.count, 0);
-    assert.equal(store.getArchiveStatistics().activeMs, 0); assert.equal(store.getArchiveStatistics().reviewedItems, 1);
+    assert.equal(store.getArchiveStatistics().activeMs, 0); assert.equal(store.getArchiveStatistics().reviewedItems, 0, 'first assessment is retained but is not a review completion');
     assert.deepEqual(store.listAttachmentDeletionCandidates(), [], 'archive note links do not own independent note files');
     const corrected = store.correctReview({ requestId: 'after-delete-correction', eventId: value.review.event.id, rating: 3 });
-    assert.equal(corrected.event.attemptId, null); assert.equal(corrected.item.card.reps, 1); store.integrityCheck();
+    assert.equal(corrected.event.attemptId, null); assert.ok(corrected.item.card); assert.equal(corrected.item.card.reps, 1); store.integrityCheck();
   } finally { raw.close(); }
 });
 
@@ -113,11 +113,11 @@ test('archive deletion rolls back all detachments on a write error and on a defe
   } finally { raw.close(); }
 });
 
-test('schema 4 permits only nonempty provenance to become null while all immutable content stays protected', t => {
+test('schema 9 permits only nonempty provenance to become null while all immutable content stays protected', t => {
   const { store, dbPath } = fixture(t), value = graph(store), raw = new DatabaseSync(dbPath);
   try {
     const cases = [
-      { table: 'review_events', key: 'id', id: value.review.event.id, field: 'attempt_id', source: value.ended.id, protected: 'rating' },
+      { table: 'problem_review_events', key: 'id', id: value.review.event.id, field: 'attempt_id', source: value.ended.id, protected: 'rating' },
       { table: 'note_versions', key: 'note_id', id: value.note.id, field: 'ai_request_id', source: 'source-ai', protected: 'markdown' },
       { table: 'attempts', key: 'id', id: value.finishedChild.id, field: 'restored_from_run_id', source: value.run.id, protected: 'final_code' },
       { table: 'ai_requests', key: 'id', id: value.cached.id, field: 'cached_from_request_id', source: 'source-ai', protected: 'response_json' },
@@ -134,13 +134,14 @@ test('schema 4 permits only nonempty provenance to become null while all immutab
   } finally { raw.close(); }
 });
 
-test('a real schema 3 WAL database upgrades to 7 only after an unchanged schema 3 backup is published', t => {
+test('a real schema 3 WAL database upgrades to 9 only after an unchanged schema 3 backup is published', t => {
   const { store, directory, dbPath } = fixture(t), value = graph(store), legacyPath = join(directory, 'legacy-v3.sqlite'), legacy = legacyV3(legacyPath, dbPath);
   try {
     const before = rows(legacy), upgraded = new PracticeStore(legacyPath);
     try {
-      assert.ok(upgraded.migrationBackupPath?.includes('.before-v8-')); assert.equal(legacy.prepare('PRAGMA user_version').get()?.user_version, 8);
-      const after = rows(legacy, true); delete after.attachment_deletion_candidates; delete after.company_datasets; delete after.interview_sessions; delete after.interview_attempts; delete after.official_submissions; delete after.submission_remarks; assert.deepEqual(after, before);
+      assert.ok(upgraded.migrationBackupPath?.includes('.before-v9-')); assert.equal(legacy.prepare('PRAGMA user_version').get()?.user_version, 9);
+      const after = rows(legacy, true); assert.deepEqual(Object.fromEntries(Object.keys(before).map(name => [name, after[name]])), before);
+      assert.equal(legacy.prepare('SELECT COUNT(*) AS count FROM problem_review_migrations').get()!.count, 1);
       const backup = new DatabaseSync(upgraded.migrationBackupPath!, { readOnly: true });
       try { assert.equal(backup.prepare('PRAGMA user_version').get()?.user_version, 3); assert.deepEqual(rows(backup), before); } finally { backup.close(); }
       assert.equal(PracticeStore.inspectBackupSnapshot(upgraded.migrationBackupPath!).schemaVersion, 3); assert.deepEqual(PracticeStore.inspectBackupSnapshot(upgraded.migrationBackupPath!).attachments, [value.file]);
@@ -151,24 +152,24 @@ test('a real schema 3 WAL database upgrades to 7 only after an unchanged schema 
   } finally { legacy.close(); }
 });
 
-test('a failed schema 3 to 7 migration restores every original trigger and row and keeps its pre-migration backup', t => {
+test('a failed schema 3 to 9 migration restores every original trigger and row and keeps its pre-migration backup', t => {
   const { store, directory, dbPath } = fixture(t); graph(store);
   const legacyPath = join(directory, 'failed-v3.sqlite'), legacy = legacyV3(legacyPath, dbPath);
   try {
     legacy.exec('CREATE TABLE attachment_deletion_candidates (injected_conflict TEXT)');
     const beforeRows = rows(legacy), beforeSchema = legacy.prepare('SELECT name, sql FROM sqlite_schema ORDER BY name').all();
-    assert.throws(() => new PracticeStore(legacyPath), /Schema v8 migration failed/); assert.equal(legacy.prepare('PRAGMA user_version').get()?.user_version, 3);
+    assert.throws(() => new PracticeStore(legacyPath), /Schema v9 migration failed/); assert.equal(legacy.prepare('PRAGMA user_version').get()?.user_version, 3);
     assert.deepEqual(rows(legacy), beforeRows); assert.deepEqual(legacy.prepare('SELECT name, sql FROM sqlite_schema ORDER BY name').all(), beforeSchema);
-    const backupName = readdirSync(directory).find(name => name.startsWith('failed-v3.sqlite.before-v8-') && name.endsWith('.sqlite')); assert.ok(backupName);
+    const backupName = readdirSync(directory).find(name => name.startsWith('failed-v3.sqlite.before-v9-') && name.endsWith('.sqlite')); assert.ok(backupName);
     const backup = new DatabaseSync(join(directory, backupName!), { readOnly: true });
     try { assert.equal(backup.prepare('PRAGMA user_version').get()?.user_version, 3); assert.deepEqual(rows(backup), beforeRows); } finally { backup.close(); }
   } finally { legacy.close(); }
 });
 
-test('a deleted archive stays deleted after schema 4 backup and restore while retained learning data remains exact', async t => {
+test('a deleted archive stays deleted after schema 9 backup and restore while retained learning data remains exact', async t => {
   const { store, directory } = fixture(t), value = graph(store); store.deleteEndedAttempt(value.ended.id);
   const note = store.getNote(value.note.id), card = store.getReviewItem(value.reviewItem.id), backupPath = join(directory, 'after-delete.sqlite'); await store.backupTo(backupPath);
-  assert.equal(PracticeStore.inspectBackupSnapshot(backupPath).schemaVersion, 8); assert.deepEqual(PracticeStore.inspectBackupSnapshot(backupPath).attachments, [value.file]);
+  assert.equal(PracticeStore.inspectBackupSnapshot(backupPath).schemaVersion, 9); assert.deepEqual(PracticeStore.inspectBackupSnapshot(backupPath).attachments, [value.file]);
   const restoredPath = join(directory, 'restored.sqlite'); PracticeStore.restoreBackup(backupPath, restoredPath); const restored = new PracticeStore(restoredPath);
   try {
     assert.equal(restored.migrationBackupPath, null); assert.equal(restored.getAttempt(value.ended.id), undefined);

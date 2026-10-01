@@ -7,7 +7,7 @@ import { DatabaseSync } from 'node:sqlite';
 import { test } from 'node:test';
 import { createEmptyCard, fsrs, Rating } from 'ts-fsrs';
 import { PracticeStore, hashCode } from '../../src/storage/practice-store.ts';
-import { FSRS_PARAMETERS, FSRS_VERSION } from '../../src/learning/fsrs.ts';
+import { PROBLEM_FSRS_PARAMETERS, PROBLEM_FSRS_VERSION } from '../../src/learning/fsrs.ts';
 import type { AiRequestSeed, AiRequestSnapshot, AiResponse } from '../../src/shared/ai.ts';
 
 function fixture(t: { after: (fn: () => void) => void }) {
@@ -79,43 +79,47 @@ test('note write failures roll back the new version, confirmed head and attachme
   store.integrityCheck();
 });
 
-test('real FSRS ratings and historical correction replay preserve original review times and isolate languages', t => {
+test('problem-level FSRS ratings and correction replay preserve original times and merge all language and target enrollment', t => {
   const { store } = fixture(t), createdAt = '2026-01-01T00:00:00.000Z';
   const py = store.addReviewItem({ problemId: 'p1', target: 'rewrite', language: 'python', now: createdAt });
   const java = store.addReviewItem({ problemId: 'p1', target: 'rewrite', language: 'java', now: createdAt });
   const concept = store.addReviewItem({ problemId: 'p1', target: 'understanding', language: 'none', now: createdAt });
   assert.equal(store.addReviewItem({ problemId: 'p1', target: 'rewrite', language: 'python' }).id, py.id);
-  assert.throws(() => store.addReviewItem({ problemId: 'p1', target: 'understanding', language: 'python' }), /do not match/);
+  assert.equal(java.id, py.id); assert.equal(concept.id, py.id); assert.equal(py.card, null); assert.equal(py.dueAt, null);
+  assert.equal(store.addReviewItem({ problemId: 'p1', target: 'understanding', language: 'python' }).id, py.id);
   const times = ['2026-01-02T12:00:00.000Z', '2026-01-10T12:00:00.000Z', '2026-02-01T12:00:00.000Z'];
   const original = times.map((reviewedAt, index) => store.recordReview({ requestId: `r${index}`, itemId: py.id, rating: [1, 3, 2][index] as 1 | 2 | 3, reviewedAt }).event);
   const before = store.getReviewItem(py.id)!;
   assert.deepEqual(store.recordReview({ requestId: 'r2', itemId: py.id, rating: 2, reviewedAt: times[2] }).item, before);
-  assert.throws(() => store.recordReview({ requestId: 'r2', itemId: py.id, rating: 4, reviewedAt: times[2] }), /conflicts/);
+  assert.throws(() => store.recordReview({ requestId: 'r2', itemId: py.id, rating: 4, reviewedAt: times[2] }), /不同输入/);
   const correction = store.correctReview({ requestId: 'correct-1', eventId: original[0].id, rating: 4 });
-  const scheduler = fsrs(FSRS_PARAMETERS); let expected = createEmptyCard(new Date(createdAt));
+  const scheduler = fsrs(PROBLEM_FSRS_PARAMETERS); let expected = createEmptyCard(new Date(times[0]));
   for (const [index, at] of times.entries()) expected = scheduler.next(expected, new Date(at), ([Rating.Easy, Rating.Good, Rating.Hard] as const)[index]).card;
   assert.deepEqual(correction.item.card, JSON.parse(JSON.stringify(expected)));
-  assert.equal(correction.item.algorithmVersion, FSRS_VERSION);
+  assert.equal(correction.item.algorithmVersion, PROBLEM_FSRS_VERSION);
   assert.equal(correction.event.reviewedAt, original[0].reviewedAt);
   assert.deepEqual(store.listReviewEvents(py.id).slice(0, 3), original);
   assert.deepEqual(store.correctReview({ requestId: 'correct-1', eventId: original[0].id, rating: 4 }), correction);
-  assert.deepEqual(store.getReviewItem(java.id), java); assert.deepEqual(store.getReviewItem(concept.id), concept);
-  assert.equal(correction.item.card.reps, 3, 'correction does not count as a fourth review');
+  assert.deepEqual(store.getReviewItem(java.id), correction.item); assert.deepEqual(store.getReviewItem(concept.id), correction.item);
+  assert.ok(correction.item.card); assert.equal(correction.item.card.reps, 3, 'correction does not count as a fourth review');
 });
 
-test('one attempt produces one feedback per review item even when reopened with a new request id', t => {
+test('one problem has one daily assessment across languages while only the same request retries without a new observation', t => {
   const { store, attempt } = fixture(t);
   store.finishAttempt(attempt.id, { code: 'print(1)' });
   const item = store.addReviewItem({ problemId: 'p1', target: 'rewrite', language: 'python' });
   const first = store.recordReview({ requestId: 'rate-1', itemId: item.id, attemptId: attempt.id, rating: 3 });
-  assert.deepEqual(store.recordReview({ requestId: 'rate-2', itemId: item.id, attemptId: attempt.id, rating: 3 }), first);
-  assert.throws(() => store.recordReview({ requestId: 'rate-3', itemId: item.id, attemptId: attempt.id, rating: 4 }), /use rating correction/);
+  assert.deepEqual(store.recordReview({ requestId: 'rate-1', itemId: item.id, attemptId: attempt.id, rating: 3 }), first);
+  assert.throws(() => store.recordReview({ requestId: 'rate-2', itemId: item.id, attemptId: attempt.id, rating: 3 }), /当天已有自评/);
+  assert.throws(() => store.recordReview({ requestId: 'rate-3', itemId: item.id, attemptId: attempt.id, rating: 4 }), /当天已有自评/);
   assert.equal(store.listReviewEvents(item.id).length, 1);
   const java = store.addReviewItem({ problemId: 'p1', target: 'rewrite', language: 'java' });
-  assert.throws(() => store.recordReview({ requestId: 'wrong-language', itemId: java.id, attemptId: attempt.id, rating: 3 }), /does not match/);
+  assert.equal(java.id, item.id);
+  assert.throws(() => store.recordReview({ requestId: 'other-language', itemId: java.id, attemptId: attempt.id, rating: 3 }), /当天已有自评/);
   store.correctReview({ requestId: 'change', eventId: first.event.id, rating: 4 });
-  const retried = store.recordReview({ requestId: 'rate-4', itemId: item.id, attemptId: attempt.id, rating: 4 });
-  assert.equal(retried.item.card.reps, 1); assert.equal(retried.event.rating, 4);
+  const retried = store.recordReview({ requestId: 'rate-1', itemId: item.id, attemptId: attempt.id, rating: 3 });
+  assert.ok(retried.item.card); assert.equal(retried.item.card.reps, 1); assert.equal(retried.event.rating, 3, 'journal original remains immutable');
+  assert.equal(store.getProblemReview('p1')!.latestRating, 4);
 });
 
 test('unsupported historical FSRS versions reject correction without appending an event or changing the card', t => {
@@ -124,31 +128,32 @@ test('unsupported historical FSRS versions reject correction without appending a
   const review = store.recordReview({ requestId: 'one', itemId: item.id, rating: 3 });
   const raw = new DatabaseSync(dbPath);
   try {
-    raw.exec('DROP TRIGGER immutable_review_identity');
-    raw.prepare('UPDATE review_items SET algorithm_version = ? WHERE id = ?').run('unsupported-historical-version', item.id);
+    raw.exec('DROP TRIGGER immutable_problem_review_plan');
+    raw.prepare('UPDATE problem_review_plans SET algorithm_version = ? WHERE id = ?').run('unsupported-historical-version', item.id);
     const before = store.getReviewItem(item.id);
-    assert.throws(() => store.correctReview({ requestId: 'unsupported', eventId: review.event.id, rating: 1 }), /Unsupported historical FSRS/);
+    assert.throws(() => store.correctReview({ requestId: 'unsupported', eventId: review.event.id, rating: 1 }), /不支持该复习算法/);
     assert.deepEqual(store.getReviewItem(item.id), before); assert.equal(store.listReviewEvents(item.id).length, 1);
   } finally { raw.close(); }
 });
 
 test('daily budgets, DST timezone boundaries, suspension and postponement never rewrite FSRS due dates', t => {
-  const { store } = fixture(t), start = '2026-03-08T04:00:00.000Z', at = '2026-03-08T07:30:00.000Z';
+  const { store } = fixture(t), start = '2026-03-06T04:00:00.000Z', at = '2026-03-08T07:30:00.000Z';
   store.updateLearningSettings({ timeZone: 'America/New_York' });
   const items = Array.from({ length: 5 }, (_, index) => {
     const id = `queue-${index}`; store.startAttempt({ problemId: id, language: 'python', problemVersion: 'v1' });
-    return store.addReviewItem({ problemId: id, target: 'understanding', language: 'none', now: start });
+    const item = store.addReviewItem({ problemId: id, target: 'understanding', language: 'none', now: start });
+    store.recordReview({ requestId: `initial-${index}`, itemId: item.id, rating: 1, reviewedAt: start }); return item;
   });
   const initial = store.getTodayQueue(at); assert.equal(initial.date, '2026-03-08'); assert.equal(initial.items.length, 3);
-  assert.equal(initial.overdueCount, 5, '04:00 UTC is the previous local day');
+  assert.equal(initial.overdueCount, 5, 'all five initial observations scheduled a prior learning day');
   store.recordReview({ requestId: 'queue-review', itemId: items[0].id, rating: 3, reviewedAt: '2026-03-08T05:30:00.000Z' });
-  store.setReviewPlan(items[1].id, { scheduledAt: '2026-03-09T12:00:00.000Z' });
+  store.setReviewPlan(items[1].id, { scheduledAt: '2026-03-08T15:00:00.000Z' });
   store.setReviewPlan(items[2].id, { suspended: true });
   const savedDue = store.listReviewItems().map(item => [item.id, item.dueAt]);
   const queue = store.getTodayQueue(at); assert.equal(queue.reviewedToday, 1); assert.equal(queue.remainingBudget, 2);
-  assert.equal(queue.deferredCount, 1); assert.equal(queue.suspendedCount, 1); assert.equal(queue.items.length, 3, 'same-day relearning does not consume another problem slot');
+  assert.equal(queue.deferredCount, 1); assert.equal(queue.suspendedCount, 1); assert.equal(queue.items.length, 2, 'completed, paused and later-today problems are outside the recommended queue');
   store.updateLearningSettings({ dailyReviewBudget: 0, timeZone: 'Asia/Shanghai' });
-  assert.equal(store.getTodayQueue(at).items.length, 1);
+  assert.equal(store.getTodayQueue(at).items.length, 0, 'zero budget does not admit already-assessed same-day relearning');
   store.updateLearningSettings({ dailyReviewBudget: null }); assert.equal(store.getTodayQueue(at).remainingBudget, null);
   assert.deepEqual(store.listReviewItems().map(item => [item.id, item.dueAt]), savedDue);
   assert.throws(() => store.updateLearningSettings({ timeZone: 'Not/AZone' }));
@@ -209,7 +214,7 @@ test('backup snapshot lists historical attachment and media references with its 
   const target = join(directory, 'snapshot.sqlite'); await store.backupTo(target);
   store.deleteNote(note.id, 2); store.updateLearningSettings({ dailyReviewBudget: 1 });
   const inspected = PracticeStore.inspectBackupSnapshot(target);
-  assert.equal(inspected.schemaVersion, 8); assert.deepEqual(inspected.mediaHashes, [mediaHash]);
+  assert.equal(inspected.schemaVersion, 9); assert.deepEqual(inspected.mediaHashes, [mediaHash]);
   assert.deepEqual(inspected.attachments.map(file => file.hash).sort(), [firstFile.hash, secondFile.hash].sort());
   assert.deepEqual(inspected.learningSettings, settings);
   const restored = join(directory, 'restored.sqlite'); PracticeStore.restoreBackup(target, restored);
@@ -227,8 +232,8 @@ test('schema 2 migration backs up committed WAL data and preserves every P2 row 
   const before = legacy.prepare('SELECT * FROM drafts').all();
   const upgraded = new PracticeStore(dbPath);
   try {
-    assert.ok(upgraded.migrationBackupPath?.includes('.before-v8-'));
-    assert.deepEqual(legacy.prepare('SELECT problem_id, language, scope_id, code, code_hash, revision, saved_at FROM drafts').all(), before); assert.equal(legacy.prepare('PRAGMA user_version').get()?.user_version, 8);
+    assert.ok(upgraded.migrationBackupPath?.includes('.before-v9-'));
+    assert.deepEqual(legacy.prepare('SELECT problem_id, language, scope_id, code, code_hash, revision, saved_at FROM drafts').all(), before); assert.equal(legacy.prepare('PRAGMA user_version').get()?.user_version, 9);
     const backup = new DatabaseSync(upgraded.migrationBackupPath!, { readOnly: true });
     try { assert.equal(backup.prepare('PRAGMA user_version').get()?.user_version, 2); assert.deepEqual(backup.prepare('SELECT * FROM drafts').all(), before); } finally { backup.close(); }
     assert.equal(upgraded.getDraft('p2', 'python')?.revision, 9); assert.deepEqual(upgraded.listNotes(), []); upgraded.integrityCheck();
@@ -237,17 +242,17 @@ test('schema 2 migration backs up committed WAL data and preserves every P2 row 
   } finally { upgraded.close(); legacy.close(); }
 });
 
-test('failed schema 2 to 7 migration rolls back and retains an untouched usable source backup', t => {
+test('failed schema 2 to 9 migration rolls back and retains an untouched usable source backup', t => {
   const directory = mkdtempSync(join(tmpdir(), 'algopractice-v3-fail ')); t.after(() => rmSync(directory, { recursive: true, force: true }));
   const dbPath = join(directory, 'practice.sqlite'), legacy = new DatabaseSync(dbPath);
   legacy.exec(readFileSync(new URL('../storage/fixtures/p2-schema.sql', import.meta.url), 'utf8'));
   legacy.exec('CREATE TABLE review_items (conflicting_fixture TEXT) STRICT');
-  assert.throws(() => new PracticeStore(dbPath), /Schema v8 migration failed/);
+  assert.throws(() => new PracticeStore(dbPath), /Schema v9 migration failed/);
   try {
     assert.equal(legacy.prepare('PRAGMA user_version').get()?.user_version, 2);
     assert.equal(legacy.prepare("SELECT name FROM sqlite_schema WHERE name = 'notes'").get(), undefined);
     assert.equal(legacy.prepare('PRAGMA integrity_check').get()?.integrity_check, 'ok');
-    const backup = readdirSync(directory).find(name => name.includes('.before-v8-') && name.endsWith('.sqlite'));
+    const backup = readdirSync(directory).find(name => name.includes('.before-v9-') && name.endsWith('.sqlite'));
     assert.ok(backup); const archived = new DatabaseSync(join(directory, backup), { readOnly: true });
     try { assert.equal(archived.prepare('PRAGMA user_version').get()?.user_version, 2); } finally { archived.close(); }
   } finally { legacy.close(); }

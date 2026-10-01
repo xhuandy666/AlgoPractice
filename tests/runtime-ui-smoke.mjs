@@ -58,9 +58,9 @@ try {
   await page.setContent('<!doctype html><html lang="zh-CN"><meta name="viewport" content="width=device-width, initial-scale=1"><body><label>保留的草稿<textarea id="draft">print(1)</textarea></label><main id="root"></main></body></html>');
   await page.addStyleTag({ content: compiled.outputFiles.find(file => file.path.endsWith('.css')).text });
   await page.addScriptTag({ content: compiled.outputFiles.find(file => file.path.endsWith('.js')).text });
-  await page.getByRole('heading', { name: '把练习环境准备好。' }).waitFor();
+  await page.getByRole('heading', { name: '运行环境' }).waitFor();
   await wait(() => document.querySelector('.runtime-state-label[data-state=ready]'));
-  const auto = page.getByLabel('允许按需自动安装语言环境', { exact: false });
+  const auto = page.getByLabel('运行时自动安装缺失的语言环境', { exact: false });
   assert.equal(await auto.isChecked(), false);
   await auto.check(); await wait(() => window.fixture.calls.some(call => call[0]==='auto' && call[1]===true));
   assert.equal(await auto.isChecked(), true);
@@ -153,7 +153,7 @@ try {
     await page.getByRole('heading', {name:'标准输入与测试',exact:true}).waitFor();
     await page.screenshot({path:resolve(directory,'acm-narrow.png'),fullPage:true});
     await page.setViewportSize({width:1100,height:900}); await page.evaluate(() => window.fixture.show('environment'));
-    await page.getByRole('heading', {name:'把练习环境准备好。',exact:true}).waitFor();
+    await page.getByRole('heading', {name:'运行环境',exact:true}).waitFor();
     await wait(() => document.querySelector('.runtime-state-label[data-state=ready]'));
     await page.screenshot({path:resolve(directory,'environment.png'),fullPage:true});
   }

@@ -42,6 +42,15 @@
 .daily-metric-caption { font-size: 12px; color: var(--color-muted); line-height: 1.5; }
 .daily-study .daily-metric-caption > span { color: var(--color-accent); margin-left: 4px; }
 .center-message { color: var(--color-success); margin-top: 14px; font-size: 13px; }
+.center-review-summary { display: flex; align-items: center; justify-content: space-between; gap: 20px; padding: 22px 26px; margin-top: 18px; border: 1px solid var(--color-rule); border-radius: var(--radius-md); background: var(--color-surface); }
+.center-review-summary > div { min-width: 0; }
+.center-review-summary h3 { font-size: 18px; line-height: 1.5; font-weight: 600; }
+.center-review-summary p { font-size: 13px; line-height: 1.8; color: var(--color-ink-2); margin-top: 6px; }
+.center-review-summary .center-review-eyebrow { font-size: 12px; color: var(--color-accent); margin: 0 0 4px; font-weight: 600; }
+.center-review-summary > button { flex-shrink: 0; min-height: 40px; }
+.center-load-error { display: flex; flex-wrap: wrap; gap: 12px; align-items: center; margin-top: 16px; color: var(--color-error); font-size: 13px; line-height: 1.8; }
+@media (max-width: 840px) { .center-review-summary { padding: 20px; } }
+@media (max-width: 740px) { .center-review-summary { flex-direction: column; align-items: flex-start; gap: 14px; } }
 .review-planner { display: grid; grid-template-columns: minmax(0, 1.45fr) minmax(300px, 1fr); gap: 18px; margin-top: 18px; align-items: stretch; }
 .review-calendar, .review-todos { background: var(--color-surface); border: 1px solid var(--color-rule); border-radius: 14px; min-width: 0; padding: 22px; }
 .review-todos { display: flex; flex-direction: column; }

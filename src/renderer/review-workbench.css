@@ -1,0 +1,12 @@
+.review-session-bar { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: var(--space-xs); flex-shrink: 0; }
+.review-session-bar > span { min-width: 0; overflow-wrap: anywhere; }
+.review-session-bar .button-row { display: flex; flex-wrap: wrap; gap: var(--space-xs); }
+.review-session-bar button { white-space: normal; }
+@media (max-width: 1024px) {
+  .review-session-bar { align-items: flex-start; }
+  .review-session-bar .button-row { width: 100%; }
+}
+@media (max-height: 740px) {
+  .workbench-screen:has(.review-session-bar) { overflow-y: auto; }
+  .workbench-screen:has(.review-session-bar) .workbench { flex-shrink: 0; min-height: 500px; }
+}

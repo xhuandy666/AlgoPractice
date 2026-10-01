@@ -40,8 +40,9 @@ export function monthGrid(month: string): Array<{ date: string; inMonth: boolean
 export function reviewPlan(items: ReviewItem[], today: string, timeZone: string): Map<string, ReviewItem[]> {
   const result = new Map<string, ReviewItem[]>();
   for (const item of items) {
-    if (item.suspended) continue;
+    if (item.suspended || !item.dueAt) continue;
     const effective = Math.max(Date.parse(item.dueAt), Date.parse(item.scheduledAt ?? item.dueAt));
+    if (!Number.isFinite(effective)) continue;
     const due = dateKey(new Date(effective).toISOString(), timeZone);
     const date = due < today ? today : due;
     const day = result.get(date);

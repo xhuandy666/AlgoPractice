@@ -56,10 +56,16 @@ jobs:
         run: npm run test:desktop
       - name: Check learning dashboard and review calendar
         run: npm run test:learning-center
+      - name: Check problem review plans and first-Accepted self-rating with isolated fixtures
+        run: npm run test:reviews
       - name: Check official judge and adaptive coach integration with isolated fixtures
         run: npm run test:official
+      - name: Check AI evidence references and repair through local protocol fixtures
+        run: npm run test:ai
       - name: Check workbench notes and historical code comparison
         run: npm run test:workbench
+      - name: Check compact navigation, pane resizing and source-bound adjacent problems
+        run: npm run test:workbench-navigation
       - name: Check missing-runtime preparation and ACM editing
         run: npm run test:onboarding
       - name: Run Python and Java in function and ACM formats

@@ -114,7 +114,7 @@ try {
   assert.equal(await page.evaluate(()=>window.fixture.calls.filter(call=>call[0]==='import').length),importCount);
   passed.push('Failed local refresh after successful import offers refresh, never duplicate import');
   await page.evaluate(()=>window.fixture.completed());
-  await page.getByRole('status').getByText('本次已缓存 3 / 3',{exact:false}).waitFor();
+  await page.locator('.hot100-card-progress').getByText('最近任务 3 项：已缓存 3',{exact:false}).waitFor();
   await page.setViewportSize({width:375,height:850});
   assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth),true);
   assert.equal(await page.getByText('100题已全部离线',{exact:false}).count(),0);

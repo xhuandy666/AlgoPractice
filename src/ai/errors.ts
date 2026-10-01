@@ -30,6 +30,7 @@ const validationMessages: Record<AiValidationReason, string> = {
   testCase: 'AI 引用的测试用例与当前记录不一致，请重新分析。',
   quote: 'AI 引用的数据与运行或提交记录不一致，请重新分析。',
   evidenceKind: 'AI 引用的错误类型与本次运行不一致，请重新分析。',
+  evidenceReference: 'AI 回答选择了本次上下文之外的引用，修复后仍无法核对，请重试。',
   patchHash: 'AI 的修改建议不对应当前代码版本，请重新分析。',
   patchClipped: '代码上下文不完整，无法安全应用 AI 的修改建议，请缩小问题范围。',
   patchGrounding: 'AI 的修改建议缺少可核对的依据，请重新分析。',

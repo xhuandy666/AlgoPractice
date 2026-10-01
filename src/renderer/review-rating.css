@@ -1,0 +1,36 @@
+.problem-rating-dialog { width: min(660px, calc(100vw - 32px)); max-height: calc(100dvh - 32px); margin: auto; padding: 0; border: 1px solid var(--color-rule); border-radius: var(--radius-md); color: var(--color-ink); background: var(--color-surface); box-shadow: var(--shadow-dialog); overflow: auto; }
+.problem-rating-dialog::backdrop { background: var(--color-backdrop); }
+.problem-rating-dialog :is(button, input):focus-visible { outline: 2px solid var(--color-focus); outline-offset: 3px; }
+.problem-rating-header { display: flex; align-items: flex-start; gap: 16px; padding: 24px 26px 18px; border-bottom: 1px solid var(--color-rule); }
+.problem-rating-header > div { flex: 1; min-width: 0; }
+.problem-rating-eyebrow { color: var(--color-accent); font-size: 12px; font-weight: 600; margin: 0 0 8px; }
+.problem-rating-header h2 { font-size: 23px; line-height: 1.4; text-wrap: balance; }
+.problem-rating-subject { color: var(--color-ink-2); font-size: 14px; margin-top: 8px; overflow-wrap: anywhere; }
+.problem-rating-close { flex: 0 0 40px; min-height: 40px; font-size: 24px; color: var(--color-muted); }
+.problem-rating-body { padding: 20px 26px; }
+.problem-rating-context { color: var(--color-ink-2); font-size: 14px; line-height: 1.8; overflow-wrap: anywhere; }
+.problem-rating-context strong { font-weight: 600; }
+.problem-rating-options { margin: 20px 0 16px; border: 0; padding: 0; display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
+.problem-rating-options legend { color: var(--color-ink-2); padding: 0 0 10px; font-size: 13px; }
+.problem-rating-option { display: flex; align-items: flex-start; gap: 10px; border: 1px solid var(--color-control-rule); border-radius: var(--radius-sm); padding: 14px 12px; min-width: 0; cursor: pointer; transition: background-color var(--dur-micro) var(--ease-out), border-color var(--dur-micro) var(--ease-out); }
+.problem-rating-option input { flex: 0 0 16px; width: 16px; height: 16px; min-height: 0; padding: 0; margin-top: 4px; accent-color: var(--color-accent); }
+.problem-rating-option > span { min-width: 0; }
+.problem-rating-option strong { display: flex; gap: 8px; align-items: center; font-size: 15px; }
+.problem-rating-option kbd { color: var(--color-muted); background: var(--color-paper-2); border: 1px solid var(--color-rule); border-radius: 4px; font: 12px var(--font-body); padding: 2px 5px; }
+.problem-rating-option small { display: block; color: var(--color-ink-2); font-size: 12px; line-height: 1.7; margin-top: 5px; }
+.problem-rating-option[data-selected=true] { border-color: var(--color-accent); background: var(--color-accent-soft); box-shadow: inset 0 0 0 1px var(--color-accent); }
+.problem-rating-options:disabled .problem-rating-option { cursor: default; }
+.problem-rating-preview { min-height: 72px; padding: 13px 14px; background: var(--color-paper-2); border-radius: var(--radius-sm); color: var(--color-ink-2); font-size: 13px; line-height: 1.8; }
+.problem-rating-preview strong { color: var(--color-ink); }
+.problem-rating-warning, .problem-rating-error { margin-top: 12px; font-size: 13px; line-height: 1.8; overflow-wrap: anywhere; }
+.problem-rating-warning { color: var(--color-warning); }
+.problem-rating-error { color: var(--color-error); }
+.problem-rating-confirmed { padding: 18px 16px; margin-top: 20px; background: var(--color-accent-soft); border-radius: var(--radius-sm); }
+.problem-rating-confirmed > strong { font-size: 20px; color: var(--color-accent); }
+.problem-rating-confirmed p { margin-top: 8px; font-size: 14px; line-height: 1.8; }
+.problem-rating-footer { display: flex; flex-direction: column; gap: 12px; padding: 16px 26px 20px; border-top: 1px solid var(--color-rule); }
+.problem-rating-footer > span { color: var(--color-muted); font-size: 12px; line-height: 1.6; }
+.problem-rating-footer > div { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 10px; }
+@media (max-width: 740px), (max-height: 620px) { .problem-rating-header { padding: 18px 20px 14px; } .problem-rating-body { padding: 16px 20px; } .problem-rating-footer { padding: 14px 20px 16px; } .problem-rating-options { margin-block: 14px; gap: 8px; } .problem-rating-option { padding: 10px; } }
+@media (max-width: 480px) { .problem-rating-options { grid-template-columns: minmax(0, 1fr); } .problem-rating-footer > div { display: grid; grid-template-columns: minmax(0, 1fr); } }
+@media (prefers-reduced-motion: reduce) { .problem-rating-dialog * { transition: none !important; animation: none !important; } }
