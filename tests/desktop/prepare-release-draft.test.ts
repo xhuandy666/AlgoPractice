@@ -1,12 +1,14 @@
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
-import { readFile } from 'node:fs/promises';
-import { resolve } from 'node:path';
+import { readFile, mkdtemp, mkdir, writeFile, rm } from 'node:fs/promises';
+import { resolve, join } from 'node:path';
+import { tmpdir } from 'node:os';
+import { execFileSync } from 'node:child_process';
 import { test } from 'node:test';
 import { fileURLToPath } from 'node:url';
 // The release entry point is intentionally plain Node.js for the manual workflow.
 // @ts-expect-error The standalone .mjs tool has no TypeScript declaration.
-import { assertSafePaths, collectSourceInputs, expectedReleaseAssets, releaseConfiguration, releaseCreateArguments, releaseForTag, runtimeAssets, validateBuildInfo, validateCiEvidence } from '../../scripts/prepare-release-draft.mjs';
+import { assertSafePaths, collectSourceInputs, expectedReleaseAssets, extractZipEntry, listZipEntries, releaseConfiguration, releaseCreateArguments, releaseForTag, runtimeAssets, validateBuildInfo, validateCiEvidence } from '../../scripts/prepare-release-draft.mjs';
 
 const sha = 'a'.repeat(40);
 const configuration = { runId: '123456', tag: 'v0.90.0', sha, repo: 'xhuandy666/AlgoPractice', version: '0.90.0' };
@@ -50,6 +52,25 @@ test('payload boundaries reject traversal, duplicate paths, private data and bun
   assert.throws(() => assertSafePaths(['dist/file', 'dist/file']));
   assert.throws(() => assertSafePaths([]));
   assert.doesNotThrow(() => assertSafePaths(['release/AlgoPractice-0.90.0-win-x64.zip'], false));
+});
+
+test('macOS ZIP inspection preserves exact Chinese member names and binary contents', { skip: process.platform !== 'darwin', timeout: 15000 }, async t => {
+  const directory = await mkdtemp(join(tmpdir(), 'algopractice-release-unicode-'));
+  t.after(() => rm(directory, { recursive: true, force: true }));
+  const app = join(directory, '题炼.app'), zip = join(directory, 'unicode.zip'), destination = join(directory, 'extracted');
+  const members = ['Contents/Resources/app.asar', 'Contents/MacOS/题炼', 'Contents/Resources/icon.icns'];
+  const bytes = Buffer.from([0, 255, 13, 10, 128, 42]);
+  await mkdir(join(app, 'Contents/Resources'), { recursive: true });
+  await mkdir(join(app, 'Contents/MacOS')); await mkdir(destination);
+  for (const member of members) await writeFile(join(app, member), bytes);
+  execFileSync('/usr/bin/ditto', ['-c', '-k', '--keepParent', app, zip]);
+  const entries: string[] = await listZipEntries(zip);
+  for (const member of members) {
+    const entry = `题炼.app/${member}`; assert.ok(entries.includes(entry));
+    assert.deepEqual(await readFile(await extractZipEntry(zip, entry, destination)), bytes);
+  }
+  await assert.rejects(extractZipEntry(zip, '../outside', destination));
+  await assert.rejects(extractZipEntry(zip, '题炼.app/Contents/*', destination));
 });
 
 test('build verification binds every individual source input, runtime manifest and dependency version', () => {

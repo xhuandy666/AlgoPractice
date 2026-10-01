@@ -154,6 +154,23 @@ async function fileTree(root, prefix = '') {
   return files;
 }
 
+const zipEnvironment = () => ({ ...process.env, LANG: 'en_US.UTF-8', LC_ALL: 'en_US.UTF-8' });
+
+export async function listZipEntries(archive) {
+  // Apple's Info-ZIP -Z1 can mangle Unicode member names even when CRC verification passes.
+  const entries = (await command('/usr/bin/tar', ['-tf', archive], { env: zipEnvironment() })).trim().split('\n');
+  assertSafePaths(entries); return entries;
+}
+
+export async function extractZipEntry(archive, entry, folder) {
+  assertSafePaths([entry]);
+  assert.ok(!/[?*\[\]]/.test(entry), 'Selected archive member must not be a wildcard');
+  await command('/usr/bin/tar', ['-xf', archive, '-C', folder, entry], { env: zipEnvironment() });
+  const extracted = join(folder, entry);
+  assert.ok((await lstat(extracted)).isFile(), 'Selected archive member must be an ordinary file');
+  return extracted;
+}
+
 function verifyPayload(path, expected, asar) {
   const pkg = JSON.parse(asar.extractFile(path, 'package.json').toString('utf8'));
   assert.equal(pkg.name, expected.pkg.name); assert.equal(pkg.version, expected.pkg.version);
@@ -186,25 +203,24 @@ function verifyPe(bytes, x64) {
 
 async function verifyZip(archive, platform, expected, temporary, asar) {
   await command('unzip', ['-tq', archive]);
-  const entries = (await command('unzip', ['-Z1', archive])).trim().split('\n');
-  assertSafePaths(entries);
+  const entries = await listZipEntries(archive);
   const payloads = entries.filter(entry => /(?:^|\/)resources\/app\.asar$|\.app\/Contents\/Resources\/app\.asar$/.test(entry));
   assert.equal(payloads.length, 1, 'Archive must contain exactly one application payload');
   const folder = await mkdtemp(join(temporary, `${platform.key}-zip-`));
-  await command('unzip', ['-j', archive, payloads[0], '-d', folder]);
-  const payload = join(folder, 'app.asar');
+  const payload = await extractZipEntry(archive, payloads[0], folder);
   const result = verifyPayload(payload, expected, asar);
   const executable = entries.filter(entry => platform.key === 'windows' ? /(?:^|\/)题炼\.exe$/.test(entry) : entry.endsWith('.app/Contents/MacOS/题炼'));
   assert.equal(executable.length, 1);
-  await command('unzip', ['-j', archive, executable[0], '-d', folder]);
+  const executablePath = await extractZipEntry(archive, executable[0], folder);
   if (platform.key === 'windows') {
-    verifyPe(await readFile(join(folder, '题炼.exe')), true);
+    verifyPe(await readFile(executablePath), true);
     assert.equal(entries.filter(entry => /(?:^|\/)resources\/windows-job-helper\.exe$/.test(entry)).length, 1);
   } else {
-    assert.equal((await command('lipo', ['-archs', join(folder, '题炼')])).trim(), platform.target === 'darwin-arm64' ? 'arm64' : 'x86_64');
+    assert.equal((await command('lipo', ['-archs', executablePath])).trim(), platform.target === 'darwin-arm64' ? 'arm64' : 'x86_64');
     const icons = entries.filter(entry => entry.endsWith('.app/Contents/Resources/icon.icns'));
-    assert.equal(icons.length, 1); await command('unzip', ['-j', archive, icons[0], '-d', folder]);
-    assert.equal(await fileDigest(join(folder, 'icon.icns')), expected.iconHash, 'macOS icon differs from HEAD');
+    assert.equal(icons.length, 1);
+    const iconPath = await extractZipEntry(archive, icons[0], folder);
+    assert.equal(await fileDigest(iconPath), expected.iconHash, 'macOS icon differs from HEAD');
   }
   return { ...result, payloadHash: await fileDigest(payload) };
 }

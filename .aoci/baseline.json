@@ -1,7 +1,7 @@
 {
   "version": 1,
   "created_at": "2026-09-16T14:59:32Z",
-  "updated_at": "2026-10-01T17:42:18Z",
+  "updated_at": "2026-10-01T18:06:57Z",
   "files": {
     ".gitattributes": {
       "role": "index",
@@ -113,9 +113,9 @@
       "normalized_sha256": "386d8c56935394c081e91133b5c67d887a01ec7596dedbb6eab37aa045d7420e"
     },
     "aoci.code.txt": {
-      "sha256": "823dfa2d805d3a4bd8665a91cd1dc6702c2d29d969383ed990851d23e48f1a1d",
-      "size": 67457,
-      "normalized_sha256": "823dfa2d805d3a4bd8665a91cd1dc6702c2d29d969383ed990851d23e48f1a1d"
+      "sha256": "5232504a7853e402cda29761302c720da552f0eb353d49c48c073235e62c15da",
+      "size": 67546,
+      "normalized_sha256": "5232504a7853e402cda29761302c720da552f0eb353d49c48c073235e62c15da"
     },
     "aoci.meta.txt": {
       "role": "index",
@@ -176,9 +176,9 @@
       "normalized_sha256": "00328f0dd019b18d7e307d3ec067fbcd3b8ac80411a53a6f2543956ffc77949f"
     },
     "scripts/prepare-release-draft.mjs": {
-      "sha256": "6769f4f9a11fe7bc257ccd270448b3cfb5dc74650aa92f5110abc55f2053cd4c",
-      "size": 24352,
-      "normalized_sha256": "6769f4f9a11fe7bc257ccd270448b3cfb5dc74650aa92f5110abc55f2053cd4c"
+      "sha256": "ab643111d8b7d340b86cfd69b9c1e9eb2d4ec7f0c477b67ce2e86939f974a276",
+      "size": 25068,
+      "normalized_sha256": "ab643111d8b7d340b86cfd69b9c1e9eb2d4ec7f0c477b67ce2e86939f974a276"
     },
     "scripts/prepare-tests.mjs": {
       "role": "index",
@@ -1278,9 +1278,9 @@
     },
     "tests/desktop/prepare-release-draft.test.ts": {
       "role": "observe",
-      "sha256": "06b02020db84ed6917fce17f57b7ddaa74283784eee0df9ce9490555b54ce5ab",
-      "size": 10674,
-      "normalized_sha256": "06b02020db84ed6917fce17f57b7ddaa74283784eee0df9ce9490555b54ce5ab"
+      "sha256": "ed6b7f76e873c18d0b0e13813c77b10cbfd420a9f3b8718ebdbeb541157a704e",
+      "size": 12140,
+      "normalized_sha256": "ed6b7f76e873c18d0b0e13813c77b10cbfd420a9f3b8718ebdbeb541157a704e"
     },
     "tests/desktop/review-draft-recovery.test.ts": {
       "role": "observe",
