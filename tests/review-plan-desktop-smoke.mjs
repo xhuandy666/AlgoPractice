@@ -23,12 +23,18 @@ const report = { startedAt: new Date().toISOString(), synthetic: true, platform:
   dataDirectory, captureDirectory, assertions: [], screenshots: [], rendererErrors: [], httpAttempts: [],
   limitations: ['Synthetic judge responses are not live LeetCode verification.', 'This local smoke covers the current host, not remote macOS Intel/Windows CI.'] };
 let app, page, cdp;
-const api = (method, ...args) => page.evaluate(({ method, args }) => window.algo[method](...args), { method, args });
+async function bounded(promise, description, timeout = 25000) {
+  let guard;
+  try { return await Promise.race([promise, new Promise((_, reject) => {
+    guard = setTimeout(() => reject(new Error(`Timed out: ${description}`)), timeout);
+  })]); } finally { clearTimeout(guard); }
+}
+const api = (method, ...args) => bounded(page.evaluate(({ method, args }) => window.algo[method](...args), { method, args }), `isolated IPC ${method}`);
 const nav = name => page.getByRole('navigation', { name: '主导航' }).getByRole('button', { name, exact: true }).click();
 const pass = (name, details = true) => { report.assertions.push({ name, details, passed: true }); console.log('PASS', name); };
 async function until(check, description, timeout = 25000) {
   const deadline = Date.now() + timeout;
-  while (Date.now() < deadline) { if (await check()) return; await delay(100); }
+  while (Date.now() < deadline) { if (await bounded(check(), description, Math.max(1, deadline - Date.now()))) return; await delay(100); }
   throw new Error(`Timed out: ${description}`);
 }
 async function focus() { await app.evaluate(({ app, BrowserWindow }) => { app.focus({ steal: true }); BrowserWindow.getAllWindows()[0].show(); BrowserWindow.getAllWindows()[0].focus(); }); }
@@ -102,12 +108,29 @@ async function launch(profileDirectory = dataDirectory) {
 }
 async function close() {
   if (!app) return;
-  await until(async () => !(await api('backups')).busy, 'isolated automatic backup settles');
-  const state = await app.evaluate(() => { const state = globalThis.reviewPlanSmoke; state.releaseRecordAck?.(); return { blocked: state.blocked }; });
-  report.httpAttempts.push(...state.blocked);
   const closing = app; app = null;
-  const guard = setTimeout(() => { report.cleanupError = 'Isolated review test process did not exit within 15 seconds'; process.exitCode = 1; closing.process().kill('SIGKILL'); }, 15000);
-  try { await closing.close(); } finally { clearTimeout(guard); }
+  const stopIsolatedProcess = () => {
+    const child = closing.process();
+    if (child.exitCode !== null || child.signalCode !== null) return;
+    const pid = child.pid;
+    if (!Number.isInteger(pid) || pid <= 0) throw new Error('Missing isolated Electron process identity');
+    if (process.platform === 'win32') execFileSync('taskkill', ['/pid', String(pid), '/T', '/F'], { stdio: 'pipe' });
+    else closing.process().kill('SIGKILL');
+  };
+  // The guard covers every pre-close IPC, not only app.close; Windows launch uses a shell.
+  const guard = setTimeout(() => {
+    report.cleanupError = 'Isolated review test shutdown exceeded 45 seconds'; process.exitCode = 1;
+    try { stopIsolatedProcess(); } catch { /* A process that already exited needs no second kill. */ }
+  }, 45000);
+  try {
+    await until(async () => !(await api('backups')).busy, 'isolated automatic backup settles');
+    const state = await bounded(closing.evaluate(() => { const state = globalThis.reviewPlanSmoke; state.releaseRecordAck?.(); return { blocked: state.blocked }; }), 'release isolated held acknowledgement', 5000);
+    report.httpAttempts.push(...state.blocked);
+    await bounded(closing.close(), 'isolated Electron exits', 15000);
+  } catch (error) {
+    try { stopIsolatedProcess(); } catch { /* Keep the original diagnostic. */ }
+    throw error;
+  } finally { clearTimeout(guard); }
 }
 
 try {
@@ -321,7 +344,8 @@ try {
   const faultKey = `problem-review:manual:${fixture.ids[1]}`;
   await until(async () => (await api('reviewAssessmentDraft', faultKey))?.rating === 2, 'real draft commits despite lost reply');
   const originalDraft = await api('reviewAssessmentDraft', faultKey);
-  await page.keyboard.press('Escape'); await faultDialog.waitFor({ state: 'hidden' });
+  console.log('CHECK Lost draft acknowledgement: explicit close flushes the committed input');
+  await faultDialog.getByRole('button', { name: '关闭自评', exact: true }).click(); await faultDialog.waitFor({ state: 'hidden' });
   await faultDetail.getByRole('button', { name: '记录今天的复习', exact: true }).click();
   faultDialog = page.getByRole('dialog'); await faultDialog.waitFor();
   await until(async () => await faultDialog.getByRole('radio', { name: /困难/ }).isChecked(), 'lost draft reply preserves original selection');
@@ -360,7 +384,15 @@ try {
   assert.deepEqual(report.rendererErrors, []); assert.deepEqual(report.httpAttempts, []);
   report.success = true;
 } catch (error) { report.success = false; report.error = error.stack || String(error);
-  if (page && !page.isClosed()) { await shot('failure.png').catch(() => {}); report.visibleFailure = await page.getByRole('dialog').innerText().catch(() => null); }
+  if (page && !page.isClosed()) {
+    await bounded(shot('failure.png'), 'capture isolated failure', 5000).catch(() => {});
+    report.visibleFailure = await bounded(page.getByRole('dialog').innerText(), 'read isolated failure dialog', 5000).catch(() => null);
+    report.failureState = await bounded(page.evaluate(() => ({ activeTag: document.activeElement?.tagName,
+      activeLabel: document.activeElement?.getAttribute('aria-label'), visibility: document.visibilityState, focused: document.hasFocus(),
+      alerts: Array.from(document.querySelectorAll('.problem-rating-dialog [role=alert]'), element => element.textContent) })), 'read isolated failure state', 5000).catch(() => null);
+    console.error('Isolated failure dialog:', report.visibleFailure);
+    console.error('Isolated failure state:', JSON.stringify(report.failureState));
+  }
   console.error(report.error); process.exitCode = 1; }
 finally { await close().catch(error => { report.cleanupError = String(error); process.exitCode = 1; });
   await writeFile(join(directory, 'report.json'), JSON.stringify(report, null, 2)); console.log('Report:', join(directory, 'report.json')); }

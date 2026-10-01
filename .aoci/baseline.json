@@ -1,7 +1,7 @@
 {
   "version": 1,
   "created_at": "2026-09-16T14:59:32Z",
-  "updated_at": "2026-10-01T14:52:25Z",
+  "updated_at": "2026-10-01T16:04:09Z",
   "files": {
     ".gitattributes": {
       "role": "index",
@@ -60,6 +60,11 @@
       "size": 4893,
       "normalized_sha256": "a196086481b0d044eb179de52e940d9d3c9f3c60a2e13b9d9676c38daad467a3"
     },
+    ".github/workflows/release-draft.yml": {
+      "sha256": "6b06ff9a42f6774b8674566ca458ebf6fc6d4858468e8c6defd658c50a79c50c",
+      "size": 1762,
+      "normalized_sha256": "6b06ff9a42f6774b8674566ca458ebf6fc6d4858468e8c6defd658c50a79c50c"
+    },
     ".github/workflows/windows-diagnostics.yml": {
       "role": "index",
       "sha256": "036b234c81614ea3bdc79a8015b4c09c44fb651ec9de6dba30f5ef6f65dc8e39",
@@ -108,9 +113,9 @@
       "normalized_sha256": "386d8c56935394c081e91133b5c67d887a01ec7596dedbb6eab37aa045d7420e"
     },
     "aoci.code.txt": {
-      "sha256": "8284662d8d27663dd99e1123d50833dd40241101be14324792f60a50691d3777",
-      "size": 65978,
-      "normalized_sha256": "8284662d8d27663dd99e1123d50833dd40241101be14324792f60a50691d3777"
+      "sha256": "97678cb78f1741314809261055654dc53fb7fbc265754aad7ce9ff99e53c5d29",
+      "size": 67004,
+      "normalized_sha256": "97678cb78f1741314809261055654dc53fb7fbc265754aad7ce9ff99e53c5d29"
     },
     "aoci.meta.txt": {
       "role": "index",
@@ -169,6 +174,11 @@
       "sha256": "00328f0dd019b18d7e307d3ec067fbcd3b8ac80411a53a6f2543956ffc77949f",
       "size": 2253,
       "normalized_sha256": "00328f0dd019b18d7e307d3ec067fbcd3b8ac80411a53a6f2543956ffc77949f"
+    },
+    "scripts/prepare-release-draft.mjs": {
+      "sha256": "582b382dd16e0725264002b7ad7390e67c11965edb681bf6c63792bf55712fd4",
+      "size": 23211,
+      "normalized_sha256": "582b382dd16e0725264002b7ad7390e67c11965edb681bf6c63792bf55712fd4"
     },
     "scripts/prepare-tests.mjs": {
       "role": "index",
@@ -1266,6 +1276,12 @@
       "size": 11762,
       "normalized_sha256": "f7b3fb6a875d6122ee2f75c8e9aee78344555381df5aab74d98acd8e43aeb21c"
     },
+    "tests/desktop/prepare-release-draft.test.ts": {
+      "role": "observe",
+      "sha256": "2c8ffa3692b030b288a892e9ef7b4bd49ae8b9a28f7324193c31ad7cad4ef8a7",
+      "size": 9879,
+      "normalized_sha256": "2c8ffa3692b030b288a892e9ef7b4bd49ae8b9a28f7324193c31ad7cad4ef8a7"
+    },
     "tests/desktop/review-draft-recovery.test.ts": {
       "role": "observe",
       "sha256": "68486cd1895d2efe199ae32117d09fd5cfaea9a3fc27d41d180044e8cb3c1b29",
@@ -1502,9 +1518,9 @@
     },
     "tests/review-plan-desktop-smoke.mjs": {
       "role": "observe",
-      "sha256": "0fe684fe9d2d2d8939fc62173dc1b22960bba25b106033224c015557f05b2a01",
-      "size": 33042,
-      "normalized_sha256": "0fe684fe9d2d2d8939fc62173dc1b22960bba25b106033224c015557f05b2a01"
+      "sha256": "089cd1ac1fd28f9765afaf3f7f37b56ff6309fe0ec2d27d6d21e1d794b5dfad5",
+      "size": 35079,
+      "normalized_sha256": "089cd1ac1fd28f9765afaf3f7f37b56ff6309fe0ec2d27d6d21e1d794b5dfad5"
     },
     "tests/review-plan-fixture.ts": {
       "role": "observe",

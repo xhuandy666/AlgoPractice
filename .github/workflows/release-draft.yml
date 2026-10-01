@@ -1,0 +1,51 @@
+name: Prepare verified release draft
+
+on:
+  workflow_dispatch:
+    inputs:
+      ci_run_id:
+        description: Successful Desktop checks run for this exact main commit
+        type: string
+        required: true
+      release_tag:
+        description: Release tag matching package.json, for example v0.90.0
+        type: string
+        required: true
+
+permissions: {}
+
+concurrency:
+  group: release-draft-${{ inputs.release_tag }}
+  cancel-in-progress: false
+
+jobs:
+  draft:
+    name: Validate archives and upload draft only
+    if: github.ref == 'refs/heads/main'
+    runs-on: macos-15
+    timeout-minutes: 20
+    permissions:
+      actions: read
+      contents: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+      ALGOPRACTICE_RELEASE_RUN_ID: ${{ inputs.ci_run_id }}
+      ALGOPRACTICE_RELEASE_TAG: ${{ inputs.release_tag }}
+      ALGOPRACTICE_RELEASE_STAGING: ${{ runner.temp }}/algopractice-release-draft
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+      - name: Install archive verification dependencies without running package scripts
+        run: npm ci --ignore-scripts
+      - name: Install Windows installer inspection tool on the temporary CI runner
+        env:
+          HOMEBREW_NO_AUTO_UPDATE: '1'
+        run: brew install sevenzip
+      - name: Verify exact-commit packages and upload fourteen explicit draft assets
+        run: node scripts/prepare-release-draft.mjs --ci-run-id "$ALGOPRACTICE_RELEASE_RUN_ID" --release-tag "$ALGOPRACTICE_RELEASE_TAG"

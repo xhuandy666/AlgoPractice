@@ -21,6 +21,7 @@ bug_report.yml[FQ3T]: F:收集版本系统、复现步骤和预期行为以支�
 ===/Users/xhuandy/Documents/Codex/projects/algopractice/.github/workflows/===
 ci.yml[OV7S]: F:在macOS双架构与Windows执行类型、单测、隔离桌面验收并打包验证应用 | R:code:package.json | A:main推送、PR或手工触发，按提交SHA上传安装包、便携归档及build-info | S:先安装独立语言环境；包须实际启动验收后上传；Mac仅临时签名，不代表开发者签名或公证
 windows-diagnostics.yml[OQ4T]: F:手工触发Windows冷启动辅助程序编译与耗时诊断 | R:code:scripts/windows-diagnostics.mjs | A:Windows2022执行，五分钟超时 | S:-
+release-draft.yml[OV7T]: F:手工调度macOS临时运行器校验指定三平台CI并代传未公开发行草稿 | R:code:scripts/prepare-release-draft.mjs,code:.github/workflows/ci.yml | A:仅main，传入CI运行ID与版本标签；只授予读取Actions和写入发行的权限，按标签串行 | S:输入经环境变量传递；跳过npm安装脚本且不启动应用；工作流只建草稿，不自动发布或替换既有版本
 
 ===/Users/xhuandy/Documents/Codex/projects/algopractice/examples/===
 leetcode-links.csv[SB3T]: F:演示题目链接CSV的标题、标签和章节字段 | R:- | A:url,title,tags,chapter四列 | S:-
@@ -33,6 +34,7 @@ prepare-windows-helper.mjs[OV7T]: F:在Windows x64编译原生进程树辅助程
 runtime-install.ts[EV6T]: F:提供Python与Java受管运行时安装、离线导入及恢复命令入口 | R:code:src/runner/managed-runtime.ts | A:支持root、archive、language与recover参数 | S:离线包必须选择单一语言；SIGINT传递取消并清理监听
 windows-diagnostics.mjs[XQ6T]: F:比较Node直启与生产Windows启动器的参数、标准输入和输出保真度及耗时 | R:code:src/runner/process.ts,code:src/runner/windows-job.ts | A:断言空参数、Unicode及引号往返和零退出码 | S:诊断不输出父进程环境或用户数据
 check-package-boundary.mjs[OV7T]: F:验证发行载荷白名单及运行时清单溯源，阻止私人资产和语言环境误入包 | R:code:package.json,code:scripts/build.mjs | A:checkPackageBoundary返回文件数和runtimesBundled状态 | S:拒绝dist链接、数据库、归档及认知开发资产；额外资源只允许既有Windows进程辅助程序
+prepare-release-draft.mjs[OV8M]: F:绑定当前main提交与成功三平台CI，核验实际归档并上传十四项发行草稿资产 | R:code:package.json,code:runtime-manifest.json,code:scripts/build.mjs,code:scripts/check-package-boundary.mjs | A:校验CI来源、逐文件构建摘要、ASAR边界许可图标、DMG签名及NSIS与ZIP载荷一致性；独立运行时验大小摘要并生成校验单 | S:既有标签或发行拒绝覆盖；依赖macOS和7zz，安装器不执行；语言下载不带GitHub授权；草稿上传后逐项复核远端摘要大小，失败不自动发布
 
 ===/Users/xhuandy/Documents/Codex/projects/algopractice/src/ai/===
 canonical.ts[LS7T]: F:校验AI配置与动作请求并用稳定JSON和SHA256冻结身份 | R:code:src/shared/ai-endpoint.ts,code:src/ai/errors.ts | A:接受chat、hint、diagnosis、official-review、note-draft，限制显式上下文标识和问题长度 | S:仅官方复盘允许且必须提交编号；GLM温度限0至1两位小数；拒绝未知字段、重复ID、非有限数和过深结构
