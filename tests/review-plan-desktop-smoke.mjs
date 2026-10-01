@@ -232,10 +232,17 @@ try {
   assert.equal(await page.getByRole('complementary', { name: '练习记录与 AI', exact: true }).count(), 0, 'answers and AI start collapsed');
   const freshWorkspace = await api('workspace', fixture.ids[3], 'python', `review:${session.id}`);
   assert.equal(freshWorkspace.draft?.code ?? freshWorkspace.problem.content.starter.python, fixture.code, 'fresh review begins at template; an untouched template need not yet be persisted');
-  // Current Chromium uses Monaco's native EditContext; older hosts use a textarea.
-  await page.locator('.coding-pane .monaco-editor :is(.native-edit-context, .inputarea)').first().focus();
-  await page.keyboard.press(process.platform === 'darwin' ? 'Meta+End' : 'Control+End');
-  await page.keyboard.type('\n# recoverable review draft');
+  // Exercise Monaco's normal paste path on both native EditContext and textarea hosts.
+  // Confirm input reached the model before testing the immediate language-switch save barrier.
+  const reviewEditor = page.locator('.coding-pane .monaco-editor');
+  await reviewEditor.locator('.view-lines').click({ position: { x: 80, y: 15 } });
+  await page.keyboard.press(process.platform === 'darwin' ? 'Meta+ArrowDown' : 'Control+End');
+  await page.keyboard.press('End');
+  await reviewEditor.locator('[role=textbox]').evaluate(element => {
+    const clipboardData = new DataTransfer(); clipboardData.setData('text/plain', '\n# recoverable review draft');
+    element.dispatchEvent(new ClipboardEvent('paste', { clipboardData, bubbles: true, cancelable: true }));
+  });
+  await until(async () => (await reviewEditor.locator('.view-lines').innerText()).replaceAll('\u00a0', ' ').includes('# recoverable review draft'), 'review edit reaches the model before switching');
   await page.getByRole('combobox', { name: '编程语言', exact: true }).selectOption('java');
   await until(async () => await page.getByRole('combobox', { name: '编程语言', exact: true }).isEnabled() && await page.getByRole('combobox', { name: '编程语言', exact: true }).inputValue() === 'java', 'review language switch settles');
   assert.ok((await api('loadDraft', fixture.ids[3], 'python', `review:${session.id}`)).code.includes('# recoverable review draft'));
