@@ -68,6 +68,9 @@ jobs:
         run: npm run test:hot100
       - name: Package macOS installer and portable archive
         if: runner.os == 'macOS'
+        # CI uses the configured ad-hoc identity ("-"), without signing credentials.
+        env:
+          CSC_FOR_PULL_REQUEST: 'true'
         run: npx electron-builder --mac --${{ matrix.architecture }} --publish never
       - name: Verify macOS application and archives
         if: runner.os == 'macOS'

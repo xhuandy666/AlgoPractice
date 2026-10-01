@@ -99,6 +99,7 @@ export function App() {
   useEffect(() => { let alive = true; const timer = setTimeout(() => { if (api) void api.problemPage({ search: command, limit: 20 }).then(value => { if (alive) setCommandProblems(value.items); }).catch(error => { if (alive) setError(errorText(error)); }); else setCommandProblems(library.problems); }, 150); return () => { alive = false; clearTimeout(timer); }; }, [api, command, library]);
   const frozen = useEditsFrozen(); const navigationBusy = useRef(false);
   const [maintenance, setMaintenance] = useState(false); const [panel, setPanel] = useState<'history' | 'ai'>('history');
+  useEffect(() => api?.onAiEvent(event => { if (event.kind === 'official-review' && event.attemptId === attemptId && event.phase === 'queued' && page === 'workbench') setPanel('ai'); }), [api, attemptId, page]);
   const [endedAttempt, setEndedAttempt] = useState<Attempt | null>(null); const [reviewItem, setReviewItem] = useState<ReviewItem | null>(null);
   const [help, setHelp] = useState<AiHelpDecision | null>(null);
   async function setPage(next: Page) {

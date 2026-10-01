@@ -22,13 +22,20 @@ export function buildPracticeAiContext(store: PracticeStore, input: AiRequestInp
   const attempt = store.getAttempt(input.attemptId); if (!attempt) throw new Error('练习不存在。');
   const content = attempt.problemSnapshot as unknown as ProblemContent;
   const draft = store.getDraft(attempt.problemId, attempt.language, attempt.draftScopeId, attempt.answerFormat);
+  const submitted = input.officialSubmissionId ? store.getOfficialSubmission(input.officialSubmissionId) : undefined;
+  if (input.kind === 'official-review') {
+    if (!submitted || attempt.answerFormat !== 'function' || submitted.attemptId !== attempt.id || submitted.problemId !== attempt.problemId
+      || submitted.problemVersion !== attempt.problemVersion || submitted.language !== attempt.language || submitted.status !== 'completed'
+      || !submitted.submissionId || !submitted.result || ['internal_error', 'unknown'].includes(submitted.result.status)
+      || hashCode(submitted.code) !== submitted.codeHash) throw new Error('请等待这次官方提交返回有效的判题结果。');
+  } else if (input.officialSubmissionId) throw new Error('只有官方分析可以选择提交快照。');
   const interview = store.getInterviewForAttempt(attempt.id), item = interview?.items.find(item => item.attemptId === attempt.id);
   // Finished archives must not borrow a later practice's mutable code or stdin, even when it reuses the same scope.
   const config: AcmTestConfig | null = attempt.answerFormat === 'acm'
     ? (attempt.endedAt ? attempt.finalTestConfig : draft?.testConfig) ?? defaultAcmTestConfig(content) : null;
   const spec = resolvePracticeSpec(content, attempt.problemVersion, attempt.answerFormat, config ?? undefined);
   const digest = config ? testConfigDigest(config)! : hashCode(JSON.stringify([spec.content.cases, spec.content.acmCompare ?? 'normalized']));
-  const code = (item ? (interview!.endedAt ? item.final!.code : item.accepted.code)
+  const code = submitted?.code ?? (item ? (interview!.endedAt ? item.final!.code : item.accepted.code)
     : attempt.endedAt ? attempt.finalCode : draft?.code) ?? spec.content.starter[attempt.language] ?? '';
   const codeHash = hashCode(code), allRuns = store.listRuns(attempt.id);
   const selected = input.runId ? allRuns.find(row => row.id === input.runId) : undefined;
@@ -37,8 +44,8 @@ export function buildPracticeAiContext(store: PracticeStore, input: AiRequestInp
     && row.specVersion === attempt.specVersion && row.testConfigDigest === digest;
   const run = selected && matches(selected) ? selected : allRuns.filter(row => matches(row) && runAiEvidence(row)).at(-1);
   const historical = selected && !matches(selected) ? runAiEvidence(selected) : null;
-  const submission = attempt.answerFormat === 'function' ? store.listOfficialSubmissions(attempt.id)
-    .find(row => row.status === 'completed' && row.codeHash === codeHash && row.problemVersion === attempt.problemVersion && row.result) : undefined;
+  const submission = submitted ?? (attempt.answerFormat === 'function' ? store.listOfficialSubmissions(attempt.id)
+    .find(row => row.status === 'completed' && row.codeHash === codeHash && row.problemVersion === attempt.problemVersion && row.result) : undefined);
   const official: AiOfficialEvidence | null = submission?.result ? { id: submission.id, attemptId: attempt.id, problemVersion: attempt.problemVersion, codeHash,
     status: submission.result.status, statusMessage: submission.result.statusMessage,
     ...Object.fromEntries(['passedCases','totalCases','runtime','memory','compileError','runtimeError','input','expectedOutput','actualOutput']
@@ -55,7 +62,8 @@ export function buildPracticeAiContext(store: PracticeStore, input: AiRequestInp
   });
   return { attemptId: attempt.id, problemId: attempt.problemId, problemVersion: attempt.problemVersion, language: attempt.language,
     mode: attempt.mode, isActive: attempt.isActive, draftScopeId: attempt.draftScopeId,
-    draftRevision: item ? (interview!.endedAt ? item.final! : item.accepted).revision : attempt.endedAt ? attempt.finalDraftRevision ?? 0 : draft?.revision ?? 0,
+    draftRevision: submitted?.draftRevision ?? (item ? (interview!.endedAt ? item.final! : item.accepted).revision : attempt.endedAt ? attempt.finalDraftRevision ?? 0 : draft?.revision ?? 0),
+    ...(submitted ? { officialSubmissionId: submitted.id } : {}),
     answerFormat: attempt.answerFormat, specVersion: attempt.specVersion, testConfigDigest: digest, testConfig: config,
     expectedOutputSource: spec.expectedOutputSource, inputDescription: spec.inputDescription, outputDescription: spec.outputDescription,
     code, ...(item ? { reasoning: (interview!.endedAt ? item.final! : item.accepted).reasoning } : {}),

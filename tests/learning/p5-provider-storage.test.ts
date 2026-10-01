@@ -8,6 +8,7 @@ import { AiService } from '../../src/ai/service.ts';
 import { CredentialVault } from '../../src/ai/credential-vault.ts';
 import { canonicalJson, completionEndpoint, normalizeProviderConfig } from '../../src/ai/canonical.ts';
 import { buildRequestSnapshot, requestHash } from '../../src/ai/context.ts';
+import { planConversationMemory } from '../../src/ai/conversation-memory.ts';
 import { BackupService } from '../../src/desktop/backup-service.ts';
 import { AI_PROVIDER_SETTINGS_FILE, DEFAULT_REMINDER_SETTINGS } from '../../src/shared/maintenance.ts';
 import { AI_PROVIDER_PRESETS, createAiProviderPreset, type AiProviderConfig, type AiRequestSeed } from '../../src/shared/ai.ts';
@@ -29,14 +30,15 @@ for (const { name, provider } of providers) test(`AI ${name} completes through S
   t.after(async () => { store?.close(); restored?.close(); await rm(root, { recursive: true, force: true }); });
   const attempt = store.startAttempt({ problemId: 'p1', problemVersion: 'v1', language: 'python' });
   const source = { ...context(), attemptId: attempt.id, problemId: 'p1', problemVersion: 'v1', run: null, notes: [], conversation: [] };
-  const request = { ...input(), attemptId: attempt.id };
+  const request = { ...input(), attemptId: attempt.id, question: '请解释当前代码里的累积状态。' };
   const normalized = normalizeProviderConfig(provider);
-  const snapshot = buildRequestSnapshot(request, source, normalized);
+  const emptyMemory = planConversationMemory([]).memory;
+  const snapshot = buildRequestSnapshot(request, source, normalized, emptyMemory);
   const originalHash = requestHash(snapshot);
   if (name === 'legacy-without-compatibility') {
     assert.equal(Object.hasOwn(normalized, 'compatibility'), false);
     assert.equal(canonicalJson(normalized), canonicalJson(provider));
-    assert.equal(originalHash, requestHash(buildRequestSnapshot(request, source, provider)), 'old settings keep the exact snapshot/hash');
+    assert.equal(originalHash, requestHash(buildRequestSnapshot(request, source, provider, emptyMemory)), 'old settings keep the exact snapshot/hash with the same conversation memory');
   }
   const secret = 'synthetic-p5-storage-key';
   const vault = new CredentialVault({ directory: join(origin, 'credentials'), platform: 'darwin', safeStorage: {
@@ -66,6 +68,7 @@ for (const { name, provider } of providers) test(`AI ${name} completes through S
   assert.equal(record.status, 'completed'); assert.equal(calls, 1);
   assert.deepEqual(record.snapshot.provider, normalized);
   assert.equal(record.requestHash, originalHash);
+  assert.deepEqual(record.snapshot.conversationMemory, emptyMemory);
   assert.deepEqual(store.getAIRequest(record.id), record);
   assert.deepEqual(store.listAIRequests(attempt.id), [record]);
   assert.ok(!canonicalJson(record).includes(secret));
@@ -98,9 +101,27 @@ for (const { name, provider } of providers) test(`AI ${name} completes through S
   assert.deepEqual(restoredProvider, normalized);
   const restoredService = new AiService({ ...serviceOptions, repository: restored!, resolveProvider: () => restoredProvider });
   assert.deepEqual(await restoredService.request(request), record);
-  const cached = await restoredService.request({ ...request, requestId: `${request.requestId}-cached` });
-  assert.equal(cached.status, 'completed'); assert.equal(cached.cachedFromRequestId, record.id);
-  assert.equal(cached.requestHash, originalHash); assert.equal(calls, 1, 'restored original and cached answer keep their original hash without HTTP');
+  assert.equal(calls, 1, 'restored original request ID is reused without HTTP');
+  const secondInput = { ...request, requestId: `${request.requestId}-second` };
+  const second = await restoredService.request(secondInput);
+  assert.equal(second.status, 'completed'); assert.equal(second.cachedFromRequestId, null);
+  assert.notEqual(second.requestHash, originalHash, 'the same text with a new ID is a new round with more conversation context');
+  assert.equal(calls, 2);
+  assert.deepEqual(second.snapshot.conversationMemory!.recentRounds, [{ requestId: record.id, userRequest: request.question, assistantResponse: record.response }]);
+  const secondPayload = JSON.parse(second.snapshot.messages[1].content);
+  assert.equal(secondPayload.learningContext.conversationMemory.recentRounds[0].user.content, request.question);
+  assert.deepEqual(secondPayload.learningContext.conversationMemory.recentRounds[0].assistant.response, record.response);
+  assert.deepEqual(await restoredService.request(secondInput), second);
+  assert.equal(calls, 2, 'the new round is itself idempotent without another HTTP call');
+  restored!.close(); restored = new PracticeStore(join(destination, 'practice.sqlite'));
+  const reopenedService = new AiService({ ...serviceOptions, repository: restored!, resolveProvider: () => restoredProvider });
+  assert.deepEqual(await reopenedService.request(secondInput), second);
+  assert.equal(calls, 2, 'reopening the restored database does not replay a completed request');
+  const third = await reopenedService.request({ ...request, requestId: `${request.requestId}-third` });
+  assert.equal(third.status, 'completed'); assert.equal(third.cachedFromRequestId, null); assert.equal(calls, 3);
+  assert.notEqual(third.requestHash, second.requestHash);
+  assert.deepEqual(third.snapshot.conversationMemory!.recentRounds.map(round => round.requestId), [record.id, second.id]);
+  assert.deepEqual(restored!.listAIRequests(attempt.id).map(round => round.id), [record.id, second.id, third.id]);
   assert.equal(Object.hasOwn(restoredProvider, 'compatibility'), name !== 'legacy-without-compatibility');
   restored!.integrityCheck();
 });

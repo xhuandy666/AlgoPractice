@@ -42,7 +42,7 @@ const server = createServer(async (request, response) => {
       response.once('close', () => clearTimeout(timer)); return;
     }
     const probe = body.messages[0].content.startsWith('Connection capability check');
-    const content = probe ? '{"ok":true}' : mode === 'repair' && repairCount++ === 0 ? 'PRIVATE-AUTHORED-INVALID' : JSON.stringify(answer(activeRequest));
+    const content = probe ? '{"ok":true}' : mode === 'repair' && repairCount++ === 0 ? '{"schemaVersion":2,"explanation":"PRIVATE-AUTHORED-INVALID"' : JSON.stringify(answer(activeRequest));
     response.write(wire(profile, content));
     // Intentionally keep the socket open: a valid [DONE] must terminate client reading itself.
   } catch { response.writeHead(500); response.end('fixture failed'); }
@@ -72,12 +72,19 @@ try {
       assert.equal(result.status, 'completed'); assert.equal(result.response.schemaVersion, 2); assert.equal(result.response.level, undefined); assert.equal(result.snapshot.question, '');
       assert.ok(!JSON.stringify([result, events]).includes('PRIVATE-AUTHORED'));
     });
-    const beforeCache = requests.length, cached = await service.request({ ...activeRequest, requestId: `cache-${preset.id}` });
-    check(`${preset.id}: cache reuses a validated answer without another HTTP request`, () => {
-      assert.equal(cached.cachedFromRequestId, activeRequest.requestId); assert.equal(requests.length, beforeCache);
+    const beforeCache = requests.length, repeated = await service.request(activeRequest);
+    check(`${preset.id}: the same request ID reuses its completed answer without another HTTP request`, () => {
+      assert.equal(repeated.id, activeRequest.requestId); assert.equal(requests.length, beforeCache);
     });
+    const followUp = await service.request({ ...activeRequest, requestId: `follow-up-${preset.id}` });
+    check(`${preset.id}: a new turn includes the preceding answer instead of reusing a context-free cache`, () => {
+      assert.equal(followUp.cachedFromRequestId, null); assert.equal(requests.length, beforeCache + 1);
+      assert.equal(followUp.snapshot.conversationMemory.recentRounds.length, 1);
+      assert.equal(followUp.snapshot.conversationMemory.recentRounds[0].requestId, activeRequest.requestId);
+    });
+    const beforeStrict = requests.length;
     source.mode = 'strict'; await assert.rejects(service.request(input())); source.mode = 'practice';
-    check(`${preset.id}: Active strict mode prevent HTTP traffic`, () => assert.equal(requests.length, beforeCache));
+    check(`${preset.id}: Active strict mode prevent HTTP traffic`, () => assert.equal(requests.length, beforeStrict));
     const sent = requests.find(entry => entry.profile === preset.id).body;
     check(`${preset.id}: sends only the selected vendor's explicit options`, () => {
       if (preset.id === 'qwen-cn') { assert.equal(sent.enable_thinking, false); assert.equal(sent.thinking, undefined); }

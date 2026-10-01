@@ -314,7 +314,7 @@ try {
   await api('saveAiProvider', { id: 'workbench-synthetic', baseUrl: 'https://workbench-coach.invalid/v1', model: 'synthetic-workbench',
     temperature: 0.2, maxOutputTokens: 2048, timeoutMs: 10000, jsonMode: false, includeUsage: true }, 'authored-test-only-key');
   await page.getByRole('button', { name: 'AI 教练', exact: true }).click();
-  await page.getByRole('region', { name: 'AI 教练' }).getByRole('button', { name: '帮我看看', exact: true }).click();
+  await page.getByRole('region', { name: 'AI 教练' }).getByRole('button', { name: '检查代码', exact: true }).click();
   await until(async () => (await api('aiRequests', fixture.active.id)).some(record => record.status === 'completed'), 'synthetic coach completes');
   const answer = (await api('aiRequests', fixture.active.id)).find(record => record.status === 'completed');
   assert.equal(answer.snapshot.code, fixture.code); assert.equal(answer.snapshot.run, null); assert.equal(answer.snapshot.official ?? null, null); assert.equal(answer.snapshot.previousRun ?? null, null);
@@ -322,13 +322,13 @@ try {
   await page.getByRole('heading', { name: '合成上下文验收', exact: true }).waitFor();
   const coachLayout = await page.evaluate(() => {
     const conversation = document.querySelector('.ai-conversation'), composer = document.querySelector('.ai-composer');
-    const input = document.querySelector('textarea[aria-label="AI 提问"]'), send = [...composer.querySelectorAll('button')].find(button => button.textContent === '帮我看看');
+    const input = document.querySelector('textarea[aria-label="AI 提问"]'), send = [...composer.querySelectorAll('button')].find(button => button.textContent === '发送');
     return { conversationHeight: conversation.clientHeight, conversationScroll: conversation.scrollHeight,
       composerHeight: composer.clientHeight, inputBottom: input.getBoundingClientRect().bottom,
       sendBottom: send.getBoundingClientRect().bottom, composerBottom: composer.getBoundingClientRect().bottom, viewportHeight: innerHeight };
   });
   assert.ok(coachLayout.conversationScroll > coachLayout.conversationHeight, 'Long answers scroll inside the conversation');
-  assert.ok(coachLayout.composerHeight >= 220 && coachLayout.inputBottom <= coachLayout.composerBottom && coachLayout.sendBottom <= coachLayout.composerBottom && coachLayout.composerBottom < coachLayout.viewportHeight, JSON.stringify(coachLayout));
+  assert.ok(coachLayout.composerHeight >= 160 && coachLayout.inputBottom <= coachLayout.composerBottom && coachLayout.sendBottom <= coachLayout.composerBottom && coachLayout.composerBottom < coachLayout.viewportHeight, JSON.stringify(coachLayout));
   await shot('ai-coach-long-answer.png');
   pass('A long AI answer keeps the question and send controls visible in the desktop composer');
 

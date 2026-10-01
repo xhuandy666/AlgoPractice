@@ -64,7 +64,7 @@ test('Rejected response categories provide actionable fixed repair hints without
   const { context, input, answer } = await import('./helpers.ts');
   const baseline = buildRequestSnapshot(input(), context(), config());
   const cases: Array<{ mutate: (response: ReturnType<typeof answer>, snapshot: typeof baseline) => void; expected: RegExp }> = [
-    { mutate: response => { response.kind = 'diagnosis'; }, expected: /original requested kind/ },
+    { mutate: response => { response.kind = 'note-draft'; }, expected: /original requested kind/ },
     { mutate: response => { response.evidence = [{ runId: 'other', kind: 'test', quote: 'wrong_answer', caseIndex: 0 }]; }, expected: /supplied current-code local run/ },
     { mutate: response => { response.evidence = [{ runId: 'run-a', kind: 'test', quote: 'invented', caseIndex: 0 }]; }, expected: /exactly match supplied/ },
     { mutate: response => { response.patch = { baseCodeHash: '0'.repeat(64), edits: [{ startLine: 6, endLine: 6, replacement: '        return total' }] }; }, expected: /exact current codeHash/ },

@@ -228,7 +228,7 @@ else {
     store = new PracticeStore(join(dataDirectory, 'practice.sqlite')); const interrupted = store.recoverInterruptedRuns(); store.recoverImportJobs();
     for (const demo of demoProblems) if (!store.getProblem(demo.id)) store.upsertProblem(demoContent(demo));
     sourceSession = new SourceSession();
-    official = new OfficialService(store, sourceSession.officialJudge, { onUpdate: record => { if (win && !win.isDestroyed() && maintenance.phase === 'idle') { win.webContents.send('official:event', record); changed(); } } });
+    official = new OfficialService(store, sourceSession.officialJudge, { onUpdate: record => { if (win && !win.isDestroyed() && maintenance.phase === 'idle') { win.webContents.send('official:event', record); changed(); learning?.officialCompleted(record); } } });
     official.recover();
     importer = new ImportService(store, sourceSession.adapter, join(dataDirectory, 'media'), changed, log);
     const recovery = await recoverRuntimeInstallations(join(dataDirectory, 'runtimes'));
@@ -276,7 +276,7 @@ else {
     });
     ipcMain.on('app:close-ready', event => { trusted(event); if (!closePending) return; closePending = false; if (quitting) void stopAndQuit(); else win.hide(); });
     ipcMain.on('app:maintenance-ready', (event, requestId, error) => { trusted(event); const ack = maintenanceAck; if (!ack || ack.id !== requestId) return; if (error) ack.reject(new Error('草稿未能完整保存，恢复已取消。')); else ack.resolve(); });
-    learning = new LearningController({ dataDirectory, version: app.getVersion(), window: win, store: () => store, handle, changed, reveal, interviewContext: context => interviews?.assertAiContext(context) ?? context, isIdle: () => !quitting && maintenance.phase === 'idle', log,
+    learning = new LearningController({ dataDirectory, version: app.getVersion(), window: win, store: () => store, handle, changed, reveal, interviewContext: context => interviews?.assertAiContext(context) ?? context, isIdle: () => !quitting && maintenance.phase === 'idle', allowAutomaticAi: () => !interviews?.starting && !interviews?.active(), log,
       lifecycle: {
         hasActiveInterview: () => Boolean(interviews?.active()),
         enterMaintenance: async () => {

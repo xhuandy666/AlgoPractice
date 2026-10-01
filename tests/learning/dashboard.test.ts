@@ -132,7 +132,7 @@ test('the practice goal defaults over unchanged legacy JSON and survives update,
   const { store, path, directory } = fixture(t), old = { dailyReviewBudget: 7, timeZone: 'Asia/Shanghai', updatedAt: '2026-01-01T00:00:00.000Z' };
   const raw = new DatabaseSync(path); raw.prepare('UPDATE learning_settings SET value_json = ? WHERE id = 1').run(JSON.stringify(old));
   const before = raw.prepare('SELECT value_json FROM learning_settings').get()!.value_json;
-  assert.deepEqual(store.getLearningSettings(), { ...old, dailyPracticeGoal: 3 });
+  assert.deepEqual(store.getLearningSettings(), { ...old, dailyPracticeGoal: 3, aiAutoAnalyzeOfficial: false });
   assert.equal(raw.prepare('SELECT value_json FROM learning_settings').get()!.value_json, before, 'read must not rewrite legacy settings');
   assert.equal(store.getLearningDashboard().dailyPracticeGoal, 3);
   store.updateLearningSettings({ dailyPracticeGoal: 8 });

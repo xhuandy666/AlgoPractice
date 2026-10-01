@@ -1,11 +1,12 @@
 import { randomUUID } from 'node:crypto';
-import type { AiConnectionResult, AiEvent, AiPatchApplication, AiProviderConfig, AiProviderState, AiRepository, AiRequestInput, AiRequestRecord, AiRequestSnapshot, AiTrustedContext, AiUsage } from '../shared/ai.ts';
+import type { AiConnectionResult, AiConversationMemory, AiEvent, AiPatchApplication, AiProviderConfig, AiProviderState, AiRepository, AiRequestInput, AiRequestRecord, AiRequestSnapshot, AiTrustedContext, AiUsage } from '../shared/ai.ts';
 import { canonicalJson, identifier, normalizeProviderConfig, sha256, validateRequestInput } from './canonical.ts';
 import { assertMode, buildRequestSnapshot, requestHash } from './context.ts';
 import { CredentialVault } from './credential-vault.ts';
 import { AiServiceError, checkAbort, publicAiError, withAbort } from './errors.ts';
 import { patchCode, validateResponse, validationRepairHint } from './policy.ts';
 import { chatCompletion, combineUsage } from './provider.ts';
+import { degradedConversationMemory, planConversationMemory, summarizedConversationMemory, summaryMessages, validateConversationSummary } from './conversation-memory.ts';
 
 export interface AiServiceOptions {
   repository: AiRepository;
@@ -23,6 +24,8 @@ export class AiService {
   readonly #active = new Map<string, ActiveRequest>();
   readonly #preparing = new Map<AbortController, { requestId: string; attemptId: string }>();
   readonly #probes = new Map<string, { controller: AbortController; promise: Promise<AiConnectionResult> }>();
+  readonly #pending = new Map<string, { inputHash: string; promise: Promise<AiRequestRecord> }>();
+  readonly #attemptTails = new Map<string, Promise<void>>();
   #epoch = 0;
   constructor(options: AiServiceOptions) { this.#options = options; }
   #repository<T>(operation: (repository: AiRepository) => T): T { try { return operation(this.#options.repository); } catch (error) { if (error instanceof AiServiceError) throw error; throw new AiServiceError('STORAGE'); } }
@@ -36,7 +39,7 @@ export class AiService {
     } catch { throw new AiServiceError('STORAGE'); }
   }
   #emit(snapshot: AiRequestSnapshot, requestId: string, phase: AiEvent['phase'], receivedBytes?: number) {
-    try { this.#options.onEvent?.({ requestId, attemptId: snapshot.attemptId, problemId: snapshot.problemId, codeHash: snapshot.codeHash, phase, ...(receivedBytes !== undefined ? { receivedBytes } : {}) }); } catch { /* Observers cannot mutate request state. */ }
+    try { this.#options.onEvent?.({ requestId, attemptId: snapshot.attemptId, problemId: snapshot.problemId, codeHash: snapshot.codeHash, kind: snapshot.kind, phase, ...(receivedBytes !== undefined ? { receivedBytes } : {}) }); } catch { /* Observers cannot mutate request state. */ }
   }
   async providerState(): Promise<AiProviderState> {
     const config = await this.#provider();
@@ -49,24 +52,44 @@ export class AiService {
   recoverInterrupted(): number { if (this.#active.size || this.#preparing.size || this.#probes.size) throw new AiServiceError('INVALID_REQUEST'); return this.#repository(repository => repository.recoverInterruptedAIRequests()); }
   cancel(requestId: string): void { identifier(requestId); this.#active.get(requestId)?.controller.abort(); for (const [controller, input] of this.#preparing) if (input.requestId === requestId) controller.abort(); }
   cancelAttempt(attemptId: string): void { identifier(attemptId); for (const active of this.#active.values()) if (active.snapshot.attemptId === attemptId) active.controller.abort(); for (const [controller, input] of this.#preparing) if (input.attemptId === attemptId) controller.abort(); }
+  isAttemptBusy(attemptId: string): boolean { identifier(attemptId); return [...this.#active.values()].some(active => active.snapshot.attemptId === attemptId)
+    || [...this.#preparing.values()].some(input => input.attemptId === attemptId); }
   async stopAll(): Promise<void> {
     this.#epoch++;
     for (const controller of this.#preparing.keys()) controller.abort();
     for (const active of this.#active.values()) active.controller.abort();
     for (const probe of this.#probes.values()) probe.controller.abort();
-    const pending: Promise<unknown>[] = [...this.#active.values()].map(active => active.promise);
+    const pending: Promise<unknown>[] = [...this.#pending.values()].map(value => value.promise);
     pending.push(...[...this.#probes.values()].map(probe => probe.promise));
     await Promise.allSettled(pending);
   }
   #matchesInput(record: AiRequestRecord, input: AiRequestInput): boolean {
     const snapshot = record.snapshot;
     return record.attemptId === input.attemptId && snapshot.kind === input.kind && snapshot.level === undefined && snapshot.question === input.question
-      && (!input.runId || snapshot.runId === input.runId) && canonicalJson(snapshot.selectedNoteIds) === canonicalJson(input.noteIds ?? []) && canonicalJson(snapshot.selectedConversationIds) === canonicalJson(input.conversationIds ?? []);
+      && snapshot.officialSubmissionId === input.officialSubmissionId && (!input.runId || snapshot.runId === input.runId)
+      && canonicalJson(snapshot.selectedNoteIds) === canonicalJson(input.noteIds ?? []) && canonicalJson(snapshot.selectedConversationIds) === canonicalJson(input.conversationIds ?? []);
   }
   async request(rawInput: AiRequestInput): Promise<AiRequestRecord> {
-    const input = validateRequestInput(rawInput), epoch = this.#epoch, controller = new AbortController(); this.#preparing.set(controller, { requestId: input.requestId, attemptId: input.attemptId });
+    const input = validateRequestInput(rawInput), inputHash = sha256(canonicalJson({ ...input, noteIds: input.noteIds ?? [], conversationIds: input.conversationIds ?? [] }));
+    const pending = this.#pending.get(input.requestId);
+    if (pending) { if (pending.inputHash !== inputHash) throw new AiServiceError('REQUEST_CONFLICT'); return pending.promise; }
+    const epoch = this.#epoch, controller = new AbortController(), previous = this.#attemptTails.get(input.attemptId) ?? Promise.resolve();
+    this.#preparing.set(controller, { requestId: input.requestId, attemptId: input.attemptId });
+    // Serialize logical requests for one attempt, including the summary call and main
+    // answer. Separate attempts remain independent. Same IDs still coalesce above.
+    const promise = Promise.resolve().then(async () => {
+      await withAbort(previous, controller.signal); checkAbort(controller.signal);
+      return this.#request(input, epoch, controller);
+    }).finally(() => { this.#pending.delete(input.requestId); this.#preparing.delete(controller); });
+    this.#pending.set(input.requestId, { inputHash, promise });
+    const tail = promise.then(() => {}, () => {}); this.#attemptTails.set(input.attemptId, tail);
+    void tail.then(() => { if (this.#attemptTails.get(input.attemptId) === tail) this.#attemptTails.delete(input.attemptId); });
+    return promise;
+  }
+  async #request(input: AiRequestInput, epoch: number, controller: AbortController): Promise<AiRequestRecord> {
     try {
-      const context = await withAbort(this.#context(input), controller.signal); assertMode(context); if (context.attemptId !== input.attemptId) throw new AiServiceError('INVALID_REQUEST'); checkAbort(controller.signal);
+      const resolved = await withAbort(this.#context(input), controller.signal), context = JSON.parse(canonicalJson(resolved)) as AiTrustedContext;
+      assertMode(context); if (context.attemptId !== input.attemptId) throw new AiServiceError('INVALID_REQUEST'); checkAbort(controller.signal);
       if (epoch !== this.#epoch) throw new AiServiceError('CANCELLED');
       const existing = this.#repository(repository => repository.getAIRequest(input.requestId));
       if (existing) {
@@ -77,25 +100,55 @@ export class AiService {
       }
       const provider = await withAbort(this.#provider(), controller.signal); if (!provider) throw new AiServiceError('NOT_CONFIGURED');
       checkAbort(controller.signal); if (epoch !== this.#epoch) throw new AiServiceError('CANCELLED');
-      const snapshot = buildRequestSnapshot(input, context, provider), hash = requestHash(snapshot);
+      // Validate current evidence before spending a call on history compaction.
+      buildRequestSnapshot(input, context, provider);
+      const signal = AbortSignal.any([controller.signal, AbortSignal.timeout(provider.timeoutMs)]);
+      const prepared = await this.#memory(input.attemptId, provider, signal);
+      const snapshot = buildRequestSnapshot(input, context, provider, prepared.memory), hash = requestHash(snapshot);
       const concurrent = this.#active.get(input.requestId); if (concurrent) { if (concurrent.hash !== hash) throw new AiServiceError('REQUEST_CONFLICT'); return concurrent.promise; }
       const seed = this.#repository(repository => repository.beginAIRequest({ id: input.requestId, attemptId: input.attemptId, requestHash: hash, snapshot }));
       if (seed.requestHash !== hash) throw new AiServiceError('REQUEST_CONFLICT'); if (terminal(seed)) return this.#validatedStored(seed);
-      const promise = Promise.resolve().then(() => this.#execute(input, snapshot, controller)).finally(() => { this.#active.delete(input.requestId); });
+      const promise = Promise.resolve().then(() => this.#execute(input, snapshot, signal, prepared.usages, prepared.error)).finally(() => { this.#active.delete(input.requestId); });
       this.#active.set(input.requestId, { controller, promise, snapshot, hash }); this.#emit(snapshot, input.requestId, 'queued'); return promise;
     } finally { this.#preparing.delete(controller); }
   }
-  async #execute(input: AiRequestInput, snapshot: AiRequestSnapshot, controller: AbortController): Promise<AiRequestRecord> {
-    const signal = AbortSignal.any([controller.signal, AbortSignal.timeout(snapshot.provider.timeoutMs)]); const usages: Array<AiUsage | null> = [];
+  async #memory(attemptId: string, provider: AiProviderConfig, signal: AbortSignal): Promise<{ memory: AiConversationMemory; usages: Array<AiUsage | null>; error?: unknown }> {
+    const records = this.#repository(repository => repository.listAIRequests(attemptId)).flatMap(record => {
+      try { return record.attemptId === attemptId ? [this.#validatedStored(record)] : []; } catch { return []; }
+    });
+    const plan = planConversationMemory(records), usages: Array<AiUsage | null> = [];
+    if (!plan.summarizeRounds.length) return { memory: plan.memory, usages };
+    try {
+      const summary = await withAbort(this.#options.vault.withKey(provider, async key => {
+        checkAbort(signal);
+        const completion = await withAbort(chatCompletion({ config: { ...provider, maxOutputTokens: Math.min(provider.maxOutputTokens, 2048) }, key,
+          messages: summaryMessages(plan), signal, fetchImpl: this.#options.fetchImpl }), signal);
+        usages.push(completion.usage); checkAbort(signal);
+        if (key.length >= 6 && completion.content.includes(key)) throw new AiServiceError('POLICY_VIOLATION');
+        const summary = validateConversationSummary(completion.content);
+        if (key.length >= 6 && summary.includes(key)) throw new AiServiceError('POLICY_VIOLATION');
+        return summary;
+      }), signal);
+      return { memory: summarizedConversationMemory(plan, summary), usages };
+    } catch (error) {
+      // Failed compaction cannot move the cursor or clear older useful memory.
+      // Cancellation/timeout and secret echoes terminate this logical request; other
+      // summary failures explicitly fall back to old summary + recent five rounds.
+      return { memory: degradedConversationMemory(plan.memory), usages,
+        ...(signal.aborted || error instanceof AiServiceError && error.detail.code === 'POLICY_VIOLATION' ? { error } : {}) };
+    }
+  }
+  async #execute(input: AiRequestInput, snapshot: AiRequestSnapshot, signal: AbortSignal, usages: Array<AiUsage | null>, preparationError?: unknown): Promise<AiRequestRecord> {
     const finish = (completion: Parameters<AiRepository['finishAIRequest']>[1]) => this.#repository(repository => repository.finishAIRequest(input.requestId, completion));
     try {
       checkAbort(signal);
+      if (preparationError) throw preparationError;
       const cached = this.#repository(repository => repository.findCompletedAIRequest(requestHash(snapshot)));
       if (cached?.response && cached.id !== input.requestId && cached.status === 'completed') {
         let valid = null; try { if (cached.requestHash === requestHash(cached.snapshot) && cached.requestHash === requestHash(snapshot)) valid = validateResponse(canonicalJson(this.#validatedStored(cached).response), snapshot); } catch { /* Ignore invalid cached records; never return raw content. */ }
         if (valid) {
           assertMode(await withAbort(this.#context(input), signal)); checkAbort(signal);
-          const result = finish({ status: 'completed', response: valid, error: null, usage: null, cachedFromRequestId: cached.id });
+          const result = finish({ status: 'completed', response: valid, error: null, usage: combineUsage(usages), cachedFromRequestId: cached.id });
           this.#repository(repository => repository.markAIHelpUsed(input.attemptId, input.requestId)); this.#emit(snapshot, input.requestId, 'completed'); return structuredClone(result);
         }
       }
@@ -161,7 +214,9 @@ export class AiService {
     identifier(requestId); const record = this.#repository(repository => repository.getAIRequest(requestId));
     if (!record || record.status !== 'completed' || !record.response) throw new AiServiceError('INVALID_REQUEST');
     const snapshot = record.snapshot, response = this.#validatedStored(record).response!;
-    const current = await this.#context({ requestId, attemptId: snapshot.attemptId, kind: snapshot.kind, question: snapshot.question });
+    // Official review reads the submitted snapshot; application must instead compare
+    // it to the latest editable draft and must not resolve that old submission again.
+    const current = await this.#context({ requestId, attemptId: snapshot.attemptId, kind: 'diagnosis', question: snapshot.question });
     assertMode(current);
     if (!current.isActive || current.attemptId !== snapshot.attemptId || current.problemId !== snapshot.problemId || current.problemVersion !== snapshot.problemVersion || current.language !== snapshot.language || current.draftScopeId !== snapshot.draftScopeId || sha256(current.code) !== snapshot.codeHash
       || current.draftRevision !== snapshot.draftRevision || current.answerFormat !== snapshot.answerFormat
