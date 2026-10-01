@@ -58,7 +58,8 @@ async function launch(profileDirectory = dataDirectory) {
     const isolated = session.fromPartition('persist:leetcode-cn');
     const state = globalThis.reviewPlanSmoke = { verdict: 'wrong_answer', hold: false, sequence: 88000000, records: {}, requests: [], blocked: [],
       loseDraftAck: false, loseSubmitDraftAck: false, holdRecordAck: false, recordAckPending: false, failSnapshot: false, failNextRequest: false,
-      failDraftReadAfterAck: false, failNextDraftRead: false, failDraftTimeAfterAck: false, failNextDraftTime: false, lostDraftCommitted: null, promptChecks: [] };
+      failDraftReadAfterAck: false, failNextDraftRead: false, failDraftTimeAfterAck: false, failNextDraftTime: false, lostDraftCommitted: null, promptChecks: [],
+      snapshotReads: { started: 0, completed: 0, active: 0, lastVersion: null } };
     const json = value => new Response(JSON.stringify(value), { headers: { 'content-type': 'application/json' } });
     isolated.cookies.get = async () => [{ name: 'LEETCODE_SESSION', value: 'synthetic-never-sent', domain: '.leetcode.cn', path: '/', secure: true },
       { name: 'csrftoken', value: 'synthetic_csrf_token_for_test', domain: '.leetcode.cn', path: '/', secure: true }];
@@ -100,7 +101,13 @@ async function launch(profileDirectory = dataDirectory) {
         if (channel === 'problem-review:request' && state.failNextRequest) { state.failNextRequest = false; throw new Error('合成验收：原请求状态暂时不可读取'); }
         if (channel === 'problem-review:draft' && state.failNextDraftRead) { state.failNextDraftRead = false; throw new Error('合成验收：草稿读回暂时失败'); }
         if (channel === 'problem-review:time' && state.failNextDraftTime) { state.failNextDraftTime = false; throw new Error('合成验收：保存时钟读回暂时失败'); }
-        const result = await real(...args);
+        const reads = channel === 'problem-review:snapshot' ? state.snapshotReads : null;
+        if (reads) { reads.started++; reads.active++; }
+        let result;
+        try {
+          result = await real(...args);
+          if (reads) { reads.completed++; reads.lastVersion = result.snapshotVersion; }
+        } finally { if (reads) reads.active--; }
         if (['problem-review:submission-opportunity', 'problem-review:claim'].includes(channel)) state.promptChecks.push({
           channel, id: args[1], state: result?.state ?? null, date: result?.learningDate ?? null,
           focused: BrowserWindow.getAllWindows()[0]?.isFocused(), visible: BrowserWindow.getAllWindows()[0]?.isVisible(),
@@ -225,12 +232,38 @@ try {
   await reviews.getByRole('searchbox', { name: '搜索题目', exact: true }).fill('复习合成题 01');
   await until(async () => await reviews.locator('.review-plan-row').count() === 1, 'title filter');
   const check = reviews.getByRole('checkbox', { name: '选择 复习合成题 01', exact: true });
+  async function settledSnapshotReads() {
+    await until(async () => {
+      const state = await app.evaluate(() => globalThis.reviewPlanSmoke.snapshotReads);
+      return state.active === 0 && state.started === state.completed &&
+        await reviews.getAttribute('aria-busy') === 'false' && await check.isEnabled();
+    }, 'no earlier snapshot read can count toward the next batch');
+    return app.evaluate(() => globalThis.reviewPlanSmoke.snapshotReads.completed);
+  }
+  async function batchRefreshesComplete(baseline, description) {
+    // The explicit changed() load and the debounced library notification must both finish.
+    // An enabled checkbox between those loads is not yet a stable next-click opportunity.
+    await until(async () => {
+      const state = await app.evaluate(() => globalThis.reviewPlanSmoke.snapshotReads);
+      return state.completed >= baseline + 2 && state.active === 0 &&
+        await reviews.getAttribute('aria-busy') === 'false' &&
+        await reviews.getAttribute('data-snapshot-version') === String(state.lastVersion);
+    }, description);
+  }
+  const beforePause = await settledSnapshotReads();
   await check.check(); await reviews.getByRole('button', { name: '暂停 1 题', exact: true }).click();
   await until(async () => (await api('problemReviewDetail', fixture.ids[0])).plan.suspended, 'UI batch suspension');
+  await batchRefreshesComplete(beforePause, 'both real pause refreshes reach the visible snapshot');
   await until(async () => !(await check.isChecked()) && await check.isEnabled(), 'batch pause finishes and clears selection');
+  assert.equal(await reviews.locator('.review-batch-toolbar').count(), 0);
+  assert.equal(await reviews.locator('.review-plan-row [data-status="suspended"]').count(), 1);
+  const beforeResume = await settledSnapshotReads();
   await check.check(); await reviews.getByRole('button', { name: '恢复 1 题', exact: true }).click();
   await until(async () => !(await api('problemReviewDetail', fixture.ids[0])).plan.suspended, 'UI batch resumption');
+  await batchRefreshesComplete(beforeResume, 'both real resume refreshes reach the visible snapshot');
   await until(async () => !(await check.isChecked()) && await check.isEnabled(), 'batch resume finishes and clears selection');
+  assert.equal(await reviews.locator('.review-batch-toolbar').count(), 0);
+  assert.equal(await reviews.locator('.review-plan-row [data-status="suspended"]').count(), 0);
   await reviews.getByRole('button', { name: '复习合成题 01', exact: true }).click();
   const details = reviews.getByRole('complementary', { name: '题目复习详情' });
   await details.getByRole('button', { name: '回忆思路', exact: true }).click();

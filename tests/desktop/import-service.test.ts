@@ -179,7 +179,8 @@ test('link placeholders retain preview titles, difficulty and tags before fetchi
   assert.deepEqual(store.getProblem(id('b')), second);
 });
 
-test('pausing an in-flight fixture fetch survives database reopening and resumes only the unfinished item', { timeout: 5000 }, async t => {
+// This cancellation integration also creates and reopens real SQLite; allow loaded CI hosts without removing its bound.
+test('pausing an in-flight fixture fetch survives database reopening and resumes only the unfinished item', { timeout: 15000 }, async t => {
   const { service, store, adapter, dbPath, directory } = fixture(t);
   let entered!: () => void;
   const secondEntered = new Promise<void>(resolve => { entered = resolve; });

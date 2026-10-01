@@ -1,7 +1,7 @@
 {
   "version": 1,
   "created_at": "2026-09-16T14:59:32Z",
-  "updated_at": "2026-10-01T17:17:12Z",
+  "updated_at": "2026-10-01T17:42:18Z",
   "files": {
     ".gitattributes": {
       "role": "index",
@@ -113,9 +113,9 @@
       "normalized_sha256": "386d8c56935394c081e91133b5c67d887a01ec7596dedbb6eab37aa045d7420e"
     },
     "aoci.code.txt": {
-      "sha256": "a7a3c79b5db5c49ef195c1c99f8a39576312cf6f8826c8f3a674d479b73439e6",
-      "size": 67390,
-      "normalized_sha256": "a7a3c79b5db5c49ef195c1c99f8a39576312cf6f8826c8f3a674d479b73439e6"
+      "sha256": "823dfa2d805d3a4bd8665a91cd1dc6702c2d29d969383ed990851d23e48f1a1d",
+      "size": 67457,
+      "normalized_sha256": "823dfa2d805d3a4bd8665a91cd1dc6702c2d29d969383ed990851d23e48f1a1d"
     },
     "aoci.meta.txt": {
       "role": "index",
@@ -557,9 +557,9 @@
       "normalized_sha256": "30d984ec6e1946361853d298e339b7c5656eafa94445a1fb08e5ab67b93c33c3"
     },
     "src/renderer/ReviewPlanPage.tsx": {
-      "sha256": "e51bcdab0643e1d2b90263137564ef079be46c233f22a4fe4591d42ed235771e",
-      "size": 40509,
-      "normalized_sha256": "e51bcdab0643e1d2b90263137564ef079be46c233f22a4fe4591d42ed235771e"
+      "sha256": "d4deced16955fcb32282e468638fde729e67657e74c8d04e193c72c0c96ee833",
+      "size": 40583,
+      "normalized_sha256": "d4deced16955fcb32282e468638fde729e67657e74c8d04e193c72c0c96ee833"
     },
     "src/renderer/ReviewRating.tsx": {
       "sha256": "437cef3985ce7c3cd6f8f9ee7159365673e1e4bc6da754daf575359f0f6d3980",
@@ -1176,9 +1176,9 @@
     },
     "tests/desktop/import-service.test.ts": {
       "role": "observe",
-      "sha256": "d78347f53b28c73478dbf8b9944e33082021c5aa77d64e8543e6315297e4d5a1",
-      "size": 24008,
-      "normalized_sha256": "d78347f53b28c73478dbf8b9944e33082021c5aa77d64e8543e6315297e4d5a1"
+      "sha256": "a30eb49f276ffdaa4f770d77762f8270992b07144ced33941398aad40e9078cb",
+      "size": 24130,
+      "normalized_sha256": "a30eb49f276ffdaa4f770d77762f8270992b07144ced33941398aad40e9078cb"
     },
     "tests/desktop/logger.test.ts": {
       "role": "observe",
@@ -1518,9 +1518,9 @@
     },
     "tests/review-plan-desktop-smoke.mjs": {
       "role": "observe",
-      "sha256": "5a81f93c6e37d96d644f661f786699948cdb372dfc4ff045675ebe92b2c25f0d",
-      "size": 39502,
-      "normalized_sha256": "5a81f93c6e37d96d644f661f786699948cdb372dfc4ff045675ebe92b2c25f0d"
+      "sha256": "e17e066535647eca38ee0361f54c5de6303894d3b873e4a7595d637b397f4210",
+      "size": 41637,
+      "normalized_sha256": "e17e066535647eca38ee0361f54c5de6303894d3b873e4a7595d637b397f4210"
     },
     "tests/review-plan-fixture.ts": {
       "role": "observe",
