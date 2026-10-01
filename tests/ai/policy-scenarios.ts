@@ -18,7 +18,7 @@ scenario('Response cannot reintroduce a help level', 'reject', row => { row.resp
 scenario('Old response protocol is rejected for new requests', 'reject', row => { row.response.schemaVersion = 1; });
 scenario('Response kind must match the request', 'reject', row => { row.response.kind = 'diagnosis'; });
 scenario('Unknown fields cannot expand permissions', 'reject', row => { row.raw = canonicalJson({ ...row.response, tools: [{ name: 'execute' }] }); });
-scenario('Markdown wrappers are not a JSON response', 'reject', row => { row.raw = '```json\n' + JSON.stringify(row.response) + '\n```'; });
+scenario('A complete single JSON response can be wrapped in a Markdown fence', 'accept', row => { row.raw = '```json\n' + JSON.stringify(row.response) + '\n```'; });
 scenario('Useful algorithm advice is allowed without levels', 'accept', row => { row.response.explanation = '可以用哈希表记录已经遇到的元素，先想清楚每次查找的目标。'; });
 scenario('Code examples may be explained naturally', 'accept', row => { row.response.explanation = '这里已经累加完了，应返回累加值：\n```python\nreturn total\n```'; });
 scenario('Patch must use the frozen code hash', 'reject', row => { correction(row); row.response.patch!.baseCodeHash = '0'.repeat(64); });
@@ -38,7 +38,7 @@ scenario('All tests passed cannot be claimed without evidence', 'reject', row =>
 scenario('Correctness cannot be guaranteed', 'reject', row => { row.response.explanation = '这段代码保证正确。'; });
 scenario('Note summary stays an unapproved draft', 'accept', row => { row.request.kind = 'note-draft'; row.response = answer(row.request, row.context); });
 scenario('Note request must return a draft', 'reject', row => { row.request.kind = row.response.kind = 'note-draft'; });
-scenario('Hint response cannot silently create a note', 'reject', row => { row.response.noteDraft = { title: 'draft', markdown: 'draft', tags: [] }; });
+scenario('A coach response cannot silently create a note', 'reject', row => { row.response.noteDraft = { title: 'draft', markdown: 'draft', tags: [] }; });
 scenario('Active strict mode rejects service context', 'reject', row => { row.context.mode = 'strict'; });
 scenario('Ended strict attempt can receive retrospective help', 'accept', row => { row.context.mode = 'strict'; row.context.isActive = false; });
 scenario('Malformed JSON is never shown raw', 'reject', row => { row.raw = '{broken'; });

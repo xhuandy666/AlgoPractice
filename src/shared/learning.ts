@@ -42,8 +42,8 @@ export interface ReviewEvent {
 }
 export interface ReviewFeedbackResult { item: ReviewItem; event: ReviewEvent; }
 export interface ReviewFilter { problemId?: string; target?: ReviewTarget; language?: ReviewLanguage; }
-export interface LearningSettings { dailyReviewBudget: number | null; dailyPracticeGoal: number; timeZone: string; updatedAt: string; }
-export type LearningSettingsInput = Partial<Pick<LearningSettings, 'dailyReviewBudget' | 'dailyPracticeGoal' | 'timeZone'>>;
+export interface LearningSettings { dailyReviewBudget: number | null; dailyPracticeGoal: number; timeZone: string; updatedAt: string; /** Default off; analysis is triggered only by a newly completed official submission. */ aiAutoAnalyzeOfficial?: boolean; }
+export type LearningSettingsInput = Partial<Pick<LearningSettings, 'dailyReviewBudget' | 'dailyPracticeGoal' | 'timeZone' | 'aiAutoAnalyzeOfficial'>>;
 export interface TodayQueue {
   date: string; timeZone: string; budget: number | null; reviewedToday: number; remainingBudget: number | null;
   items: ReviewItem[]; overdueCount: number; dueCount: number; deferredCount: number; suspendedCount: number;

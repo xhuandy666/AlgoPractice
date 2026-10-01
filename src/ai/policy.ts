@@ -2,6 +2,7 @@ import { AI_POLICY_VERSION, type AiPatch, type AiRequestSnapshot, type AiRespons
 import { canonicalJson, sha256 } from './canonical.ts';
 import { AiServiceError } from './errors.ts';
 import { validateLegacyResponse } from './legacy-policy.ts';
+import { decodeResponseFormat } from './response-format.ts';
 
 const REPAIR_HINTS = Object.freeze({
   shape: 'Return one valid JSON object with exactly the required fields and bounded field types. Do not wrap JSON in Markdown or add fields.',
@@ -15,7 +16,7 @@ const REPAIR_HINTS = Object.freeze({
   patchClipped: 'The current code or its numbered reference view is incomplete. Return patch:null and give bounded prose guidance instead of guessing line ranges.',
   patchGrounding: 'A patch must include at least one nonempty edit and supporting supplied evidence or a reasoned code-based inference. If unsupported, return patch:null.',
   patchRange: 'Patch edits must use valid one-based inclusive nonoverlapping source line ranges and remain within the current source. Preserve enclosing blocks and indentation; otherwise return patch:null.',
-  patchKind: 'A note-draft request cannot include patch or completeSolution. Keep code proposals null for this action.',
+  patchKind: 'A hint or note-draft request cannot include patch or completeSolution. Keep code proposals null for this action.',
   codeConflict: 'Return at most one code proposal: patch or completeSolution, never both.',
   noteKind: 'Only kind=note-draft may return a noteDraft, and that action requires a non-null draft. Keep noteDraft:null for all other actions.',
   guarantee: 'Remove absolute guarantees of correctness or passing. Explain supported observations or reasoned uncertainty without promising a result.',
@@ -93,10 +94,15 @@ export function validateResponse(raw: string, snapshot: AiRequestSnapshot): AiRe
   // Preserve the old immutable response/hash contract for records already saved on disk.
   if (snapshot.policyVersion === 'algopractice-ai-policy-v1') return validateLegacyResponse(raw, snapshot);
   if (snapshot.policyVersion !== AI_POLICY_VERSION || snapshot.level !== undefined || snapshot.unlockCompleteSolution !== undefined) return policy('schemaKind');
-  let decoded: unknown; try { decoded = JSON.parse(raw); } catch { return shape(); }
+  let decoded: unknown; try { decoded = decodeResponseFormat(raw, snapshot.kind); } catch { return shape(); }
   const value = object(decoded, ['schemaVersion', 'kind', 'title', 'explanation', 'nextSteps', 'evidence', 'inferences', 'patch', 'completeSolution', 'noteDraft']);
   if (value.schemaVersion !== 2 || value.kind !== snapshot.kind) return policy('schemaKind');
   if (snapshot.mode === 'strict' && snapshot.isActive) throw new AiServiceError('STRICT_MODE');
+  // The old adaptive coach used hint as its general action. Keep saved v2.3 answers readable;
+  // the new chat coach gives explicit hint requests a narrower, no-code-proposal contract.
+  const chatPrompt = /^tilian-chat-coach-v(\d+)\.(\d+)$/.exec(snapshot.promptVersion);
+  const hintOnly = snapshot.kind === 'hint' && !!chatPrompt && (Number(chatPrompt[1]) > 2 || (Number(chatPrompt[1]) === 2 && Number(chatPrompt[2]) >= 4));
+  if (hintOnly && (value.patch !== null || value.completeSolution !== null)) return policy('patchKind');
   const title = text(value.title, 120), explanation = text(value.explanation, 8000);
   const nextSteps = array(value.nextSteps, 8).map(item => text(item, 2000));
   const inferences = array(value.inferences, 8).map(item => { const inference = object(item, ['text', 'reason']); return { text: text(inference.text, 2000), reason: text(inference.reason, 2000) }; });

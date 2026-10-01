@@ -205,7 +205,7 @@ try {
   const coach = page.getByRole('region', { name: 'AI 教练', exact: true });
   assert.equal(await coach.getByRole('combobox', { name: /帮助等级/ }).count(), 0);
   await coach.getByRole('textbox', { name: 'AI 提问', exact: true }).fill('');
-  await coach.getByRole('button', { name: '帮我看看', exact: true }).click();
+  await coach.getByRole('button', { name: '检查代码', exact: true }).click();
   await until(async () => (await api('aiRequests', attemptId)).some(row => row.status === 'completed'), 'empty question accepted by synthetic coach');
   const firstAi = (await api('aiRequests', attemptId)).find(row => row.status === 'completed');
   assert.equal(firstAi.snapshot.question, ''); assert.equal(Object.hasOwn(firstAi.snapshot, 'level'), false);
@@ -215,7 +215,7 @@ try {
   pass('Coach requires no help-level or user text; exact matching official failure is included in trusted AI context');
   const question = '只解释为什么我的返回下标不对，请不要给完整代码。';
   await coach.getByRole('textbox', { name: 'AI 提问', exact: true }).fill(question);
-  await coach.getByRole('button', { name: '帮我看看', exact: true }).click();
+  await coach.getByRole('button', { name: '发送', exact: true }).click();
   await until(async () => (await api('aiRequests', attemptId)).some(row => row.snapshot.question === question && row.status === 'completed'), 'explicit user request preserved');
   const requested = (await api('aiRequests', attemptId)).find(row => row.snapshot.question === question);
   assert.equal(JSON.parse(requested.snapshot.messages.find(message => message.role === 'user').content).userRequest, question);
@@ -227,6 +227,39 @@ try {
   const changed = await api('askAi', { requestId: 'synthetic-stale-result-check', attemptId, kind: 'hint', question: '' });
   assert.equal(changed.status, 'completed'); assert.equal(changed.snapshot.official, null);
   pass('Editing code prevents stale official verdict from becoming evidence for the new code');
+  await pasteCode(fixture.code);
+
+  const auto = coach.getByRole('checkbox', { name: '提交后自动分析', exact: true });
+  assert.equal(await auto.isChecked(), false); await auto.check();
+  await until(async () => (await api('aiProvider')).autoAnalyzeOfficial === true, 'automatic official analysis opt-in saved');
+  const providerCount = () => app.evaluate(() => globalThis.officialJudgeSmoke.providerRequests.length);
+  const beforeLocal = await providerCount();
+  await page.getByRole('button', { name: '运行', exact: true }).click();
+  await until(async () => (await api('history', fixture.problem.id, 'python')).filter(row => row.attemptId === attemptId).length >= 2, 'second local execution completes');
+  assert.equal(await providerCount(), beforeLocal);
+  pass('Checking automatic analysis persists the setting but a local run triggers zero model calls');
+
+  await state({ nextVerdict: 'accepted' }); await submit.click();
+  await until(async () => (await api('aiRequests', attemptId)).some(row => row.snapshot.kind === 'official-review' && row.snapshot.official?.status === 'accepted' && row.status === 'completed'), 'accepted official submission automatically reviewed');
+  assert.equal(await providerCount(), beforeLocal + 1);
+  const optimized = (await api('aiRequests', attemptId)).find(row => row.snapshot.kind === 'official-review' && row.snapshot.official?.status === 'accepted');
+  assert.equal(optimized.snapshot.code, fixture.code);
+  assert.match(optimized.snapshot.messages[0].content, /optimization|complexity|optimi/i);
+  await coach.waitFor();
+  pass('A newly accepted official result automatically opens the chat and requests a bounded optimization review');
+
+  await state({ nextVerdict: 'wrong_answer', hold: true }); await submit.click();
+  await until(async () => (await submissions()).some(row => row.status === 'judging'), 'official submission waits before late editor changes');
+  const submittedBeforeEdit = (await submissions()).find(row => row.status === 'judging');
+  await pasteCode(`${fixture.code}\n# later edit not submitted\n`); await state({ hold: false });
+  await until(async () => (await api('aiRequests', attemptId)).some(row => row.snapshot.officialSubmissionId === submittedBeforeEdit.id && row.status === 'completed'), 'wrong official snapshot automatically reviewed after an editor change');
+  const analysis = (await api('aiRequests', attemptId)).find(row => row.snapshot.officialSubmissionId === submittedBeforeEdit.id);
+  assert.equal(analysis.snapshot.code, submittedBeforeEdit.code); assert.equal(analysis.snapshot.codeHash, submittedBeforeEdit.codeHash);
+  assert.equal(analysis.snapshot.official.status, 'wrong_answer'); assert.equal(analysis.snapshot.official.id, submittedBeforeEdit.id);
+  assert.equal(await providerCount(), beforeLocal + 2);
+  assert.equal((await api('loadDraft', fixture.problem.id, 'python')).code, `${fixture.code}\n# later edit not submitted\n`);
+  pass('Automatic failure analysis binds the exact submitted revision and cannot overwrite a later editor draft');
+  await auto.uncheck(); await until(async () => (await api('aiProvider')).autoAnalyzeOfficial === false, 'automatic analysis disabled again');
   await pasteCode(fixture.code);
 
   await state({ nextVerdict: 'accepted', failNextCheck: true }); await submit.click();

@@ -21,12 +21,13 @@ async function atomicJson(file: string, value: unknown) {
 }
 function learningSettings(value: unknown): LearningSettings {
   const v = value as LearningSettings;
-  if (!v || typeof v !== 'object' || Object.keys(v).some(key => !['dailyReviewBudget', 'dailyPracticeGoal', 'timeZone', 'updatedAt'].includes(key))
+  if (!v || typeof v !== 'object' || Object.keys(v).some(key => !['dailyReviewBudget', 'dailyPracticeGoal', 'timeZone', 'updatedAt', 'aiAutoAnalyzeOfficial'].includes(key))
     || (v.dailyReviewBudget !== null && (!Number.isInteger(v.dailyReviewBudget) || v.dailyReviewBudget < 0 || v.dailyReviewBudget > 1000))
     || (v.dailyPracticeGoal !== undefined && (!Number.isInteger(v.dailyPracticeGoal) || v.dailyPracticeGoal < 1 || v.dailyPracticeGoal > 1000))
+    || (v.aiAutoAnalyzeOfficial !== undefined && typeof v.aiAutoAnalyzeOfficial !== 'boolean')
     || typeof v.timeZone !== 'string' || v.timeZone.length > 128 || typeof v.updatedAt !== 'string' || !Number.isFinite(Date.parse(v.updatedAt))) throw new Error('备份学习设置无效。');
   localClock(new Date(), v.timeZone);
-  return { dailyReviewBudget: v.dailyReviewBudget, dailyPracticeGoal: v.dailyPracticeGoal ?? 3, timeZone: v.timeZone, updatedAt: v.updatedAt };
+  return { dailyReviewBudget: v.dailyReviewBudget, dailyPracticeGoal: v.dailyPracticeGoal ?? 3, timeZone: v.timeZone, updatedAt: v.updatedAt, aiAutoAnalyzeOfficial: v.aiAutoAnalyzeOfficial ?? false };
 }
 function safeSettings(value: unknown): BackupSettings {
   const v = value as BackupSettings;

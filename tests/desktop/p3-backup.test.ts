@@ -7,8 +7,10 @@ import { tmpdir } from 'node:os';
 import { DatabaseSync, backup as sqliteBackup } from 'node:sqlite';
 import { AttachmentService, contentHash } from '../../src/desktop/attachment-service';
 import { BackupService, recoverInterruptedRestore } from '../../src/desktop/backup-service';
+import { OfficialAiCoach } from '../../src/desktop/official-ai-coach';
 import { DEFAULT_REMINDER_SETTINGS, REMINDER_SETTINGS_FILE, type BackupManifest, type BackupSnapshot, type BackupServiceOptions } from '../../src/shared/maintenance';
 import type { Attachment } from '../../src/shared/learning';
+import { config } from '../ai/helpers';
 const learning = { dailyReviewBudget: 3, timeZone: 'Asia/Shanghai', updatedAt: '2026-09-08T00:00:00.000Z' };
 function inspectSnapshot(path: string): BackupSnapshot {
   const db = new DatabaseSync(path, { readOnly: true });
@@ -162,7 +164,7 @@ test('if even the rolled-back database cannot reopen, restore stays in maintenan
   await assert.rejects(f.service.restore(backup.path), /保持维护态/); assert.equal(f.maintenance(), true); assert.ok(!f.events.includes('leave:false'));
   f.options.lifecycle.openDatabase = reopen; await reopen(); assert.equal(f.db().prepare('SELECT value FROM items').get()!.value, 'must survive'); await f.options.lifecycle.leaveMaintenance(false);
 });
-test('real PracticeStore schema 3 notes, historical attachments and learning settings survive a full service restore', async t => {
+test('real PracticeStore notes, historical attachments and AI opt-in survive full restore without replaying old results', async t => {
   const { PracticeStore } = await import('../../src/storage/practice-store');
   const directory = await mkdtemp(join(tmpdir(), 'p3-real-store-')); let store = new PracticeStore(join(directory, 'practice.sqlite'));
   t.after(async () => { store.close(); await rm(directory, { recursive: true, force: true }); });
@@ -170,13 +172,33 @@ test('real PracticeStore schema 3 notes, historical attachments and learning set
   const input = join(directory, 'invariant.md'); await writeFile(input, '# 保存不变量\n所有历史附件都应可恢复。'); const attachment = await attachmentService.addFile(input);
   const first = store.saveNote({ requestId: randomUUID(), kind: 'topic', subjectId: 'binary-search', title: '边界', markdown: '旧版本有附件', attachmentHashes: [attachment.hash] });
   store.saveNote({ requestId: randomUUID(), noteId: first.id, kind: 'topic', subjectId: 'binary-search', title: '边界', markdown: '新版本正文', attachmentHashes: [], expectedVersion: first.latestVersion });
-  store.updateLearningSettings({ dailyReviewBudget: 7, dailyPracticeGoal: 9, timeZone: 'Asia/Shanghai' });
+  store.updateLearningSettings({ dailyReviewBudget: 7, dailyPracticeGoal: 9, timeZone: 'Asia/Shanghai', aiAutoAnalyzeOfficial: true });
+  const problem = store.upsertProblem({ id: 'leetcode-cn:problem:portable-ai-test', source: 'leetcode-cn', sourceId: '1', sourceUrl: 'https://leetcode.cn/problems/two-sum/',
+    title: '原创备份协议测试', difficulty: '简单', tags: [], description: '返回输入值。', descriptionFormat: 'plain', constraints: [], mode: 'function',
+    starter: { python: 'class Solution:\n    def solve(self, n):\n        return n\n' }, adapter: { method: 'solve', params: ['int'], returns: 'int' }, cases: [{ args: [1], expected: 1 }] });
+  const attempt = store.startAttempt({ problemId: problem.id, problemVersion: problem.version, language: 'python', answerFormat: 'function' });
+  const draft = store.saveDraft({ problemId: problem.id, language: 'python', code: problem.content.starter.python!, answerFormat: 'function' });
+  const officialId = randomUUID();
+  store.beginOfficialSubmission({ requestId: officialId, attemptId: attempt.id, code: draft.code, expectedDraftRevision: draft.revision, slug: 'two-sum', sourceId: '1' });
+  store.updateOfficialSubmission(officialId, { status: 'judging', submissionId: '100' });
+  store.updateOfficialSubmission(officialId, { status: 'completed', result: { status: 'accepted', statusMessage: 'Accepted' } });
+  let providerReads = 0, requests = 0;
+  const makeCoach = () => new OfficialAiCoach({ store: () => store, allowed: () => true,
+    provider: async () => { providerReads++; return { config: config(), hasKey: true, secureStorageAvailable: null }; },
+    request: async () => { requests++; throw new Error('A restored result must not start a model call'); } });
+  let coach = makeCoach();
+  t.after(async () => { coach.pause(); await coach.idle(); });
   const service = new BackupService({ dataDirectory: directory, appVersion: '0.3.0', snapshotDatabase: path => store.backupTo(path), inspectSnapshot: path => PracticeStore.inspectBackupSnapshot(path), getReminderSettings: () => ({ ...DEFAULT_REMINDER_SETTINGS }),
-    lifecycle: { hasActiveInterview: () => false, enterMaintenance: async () => {}, closeDatabase: () => store.close(), openDatabase: () => { store = new PracticeStore(join(directory, 'practice.sqlite')); }, clearCredentials: async () => {}, leaveMaintenance: () => {} } });
+    lifecycle: { hasActiveInterview: () => false, enterMaintenance: async () => { coach.pause(); await coach.idle(); }, closeDatabase: () => store.close(),
+      openDatabase: () => { store = new PracticeStore(join(directory, 'practice.sqlite')); coach = makeCoach(); }, clearCredentials: async () => {}, leaveMaintenance: () => { coach.resume(); } } });
   const backup = await service.create(); assert.ok(backup.manifest.files.some(file => file.path === `attachments/${attachment.hash}`));
-  const before = store.listNoteVersions(first.id); store.deleteNote(first.id, 2); store.updateLearningSettings({ dailyReviewBudget: 1, dailyPracticeGoal: 2 });
+  const portableSettings = JSON.parse(unpack(await readFile(backup.path)).find(entry => entry.name === 'settings.json')!.bytes.toString());
+  assert.equal(portableSettings.learning.aiAutoAnalyzeOfficial, true);
+  const before = store.listNoteVersions(first.id); store.deleteNote(first.id, 2); store.updateLearningSettings({ dailyReviewBudget: 1, dailyPracticeGoal: 2, aiAutoAnalyzeOfficial: false });
   await service.restore(backup.path, backup.manifest);
   assert.deepEqual(store.listNoteVersions(first.id), before); assert.equal(store.getLearningSettings().dailyReviewBudget, 7); assert.equal(store.getLearningSettings().dailyPracticeGoal, 9);
+  assert.equal(store.getLearningSettings().aiAutoAnalyzeOfficial, true); assert.equal(store.getOfficialSubmission(officialId)?.status, 'completed');
+  coach.wake(); await coach.idle(); assert.equal(providerReads, 0); assert.equal(requests, 0); assert.deepEqual(store.listAIRequests(attempt.id), []);
   assert.equal((await attachmentService.read(attachment.hash)).bytes.toString(), '# 保存不变量\n所有历史附件都应可恢复。'); store.integrityCheck();
 });
 test('non-secret AI provider preferences restore atomically while key fields and credential-bearing URLs are refused', async t => {
@@ -200,12 +222,28 @@ test('an intentionally zero daily review budget remains a valid portable setting
 });
 
 
-test('legacy portable backups without a practice goal still verify and restore with original learning settings', async t => {
+test('legacy portable backups without a practice goal or AI opt-in still verify and preserve their original JSON', async t => {
   const f = await fixture(t), backup = await f.service.create();
   const oldFile = await transformed(f, backup.path, entries => {
     const entry = entries.find(value => value.name === 'settings.json')!, settings = JSON.parse(entry.bytes.toString());
-    delete settings.learning.dailyPracticeGoal; entry.bytes = Buffer.from(JSON.stringify(settings));
+    delete settings.learning.dailyPracticeGoal; delete settings.learning.aiAutoAnalyzeOfficial; entry.bytes = Buffer.from(JSON.stringify(settings));
   }, true);
   await f.service.restore(oldFile);
   assert.deepEqual(JSON.parse(String(f.db().prepare("SELECT value FROM settings WHERE key='learning'").get()!.value)), learning);
+});
+
+test('backup creation and restore reject non-boolean AI opt-in values before maintenance', async t => {
+  const f = await fixture(t), backup = await f.service.create();
+  const settings = JSON.parse(unpack(await readFile(backup.path)).find(entry => entry.name === 'settings.json')!.bytes.toString());
+  assert.equal(settings.learning.aiAutoAnalyzeOfficial, false, 'legacy JSON defaults to a disabled opt-in');
+  for (const invalid of ['true', 1, null, [], {}]) {
+    const file = await transformed(f, backup.path, entries => {
+      const entry = entries.find(value => value.name === 'settings.json')!, value = JSON.parse(entry.bytes.toString());
+      value.learning.aiAutoAnalyzeOfficial = invalid; entry.bytes = Buffer.from(JSON.stringify(value));
+    }, true);
+    await assert.rejects(f.service.restore(file), /备份学习设置无效/);
+    f.db().prepare("UPDATE settings SET value=? WHERE key='learning'").run(JSON.stringify({ ...learning, aiAutoAnalyzeOfficial: invalid }));
+    await assert.rejects(f.service.create(), /备份学习设置无效/);
+  }
+  assert.deepEqual(f.events, []); assert.equal(f.db().prepare('SELECT value FROM items').get()!.value, 'original');
 });

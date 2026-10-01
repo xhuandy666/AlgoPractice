@@ -43,10 +43,11 @@ export function completionEndpoint(config: AiProviderConfig): string {
   return aiCompletionEndpoint(base);
 }
 export function validateRequestInput(value: unknown): AiRequestInput {
-  if (!object(value) || Object.keys(value).some(key => !['requestId', 'attemptId', 'kind', 'question', 'runId', 'noteIds', 'conversationIds'].includes(key))) throw new AiServiceError('INVALID_REQUEST');
+  if (!object(value) || Object.keys(value).some(key => !['requestId', 'attemptId', 'kind', 'question', 'runId', 'noteIds', 'conversationIds', 'officialSubmissionId'].includes(key))) throw new AiServiceError('INVALID_REQUEST');
   const requestId = identifier(value.requestId), attemptId = identifier(value.attemptId);
-  if (!['hint', 'diagnosis', 'note-draft'].includes(String(value.kind)) || typeof value.question !== 'string' || value.question.length > 4000 || /[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/.test(value.question)) throw new AiServiceError('INVALID_REQUEST');
+  if (!['chat', 'hint', 'diagnosis', 'official-review', 'note-draft'].includes(String(value.kind)) || typeof value.question !== 'string' || value.question.length > 4000 || /[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/.test(value.question)) throw new AiServiceError('INVALID_REQUEST');
+  if (value.kind === 'official-review' ? value.officialSubmissionId === undefined : value.officialSubmissionId !== undefined) throw new AiServiceError('INVALID_REQUEST');
   const ids = (input: unknown, maximum: number) => { if (input === undefined) return undefined; if (!Array.isArray(input) || input.length > maximum) throw new AiServiceError('INVALID_REQUEST'); const result = input.map(identifier); if (new Set(result).size !== result.length) throw new AiServiceError('INVALID_REQUEST'); return result; };
   const noteIds = ids(value.noteIds, 3), conversationIds = ids(value.conversationIds, 6);
-  return { requestId, attemptId, kind: value.kind as AiRequestInput['kind'], question: value.question.trim(), ...(value.runId !== undefined ? { runId: identifier(value.runId) } : {}), ...(noteIds ? { noteIds } : {}), ...(conversationIds ? { conversationIds } : {}) };
+  return { requestId, attemptId, kind: value.kind as AiRequestInput['kind'], question: value.question.trim(), ...(value.runId !== undefined ? { runId: identifier(value.runId) } : {}), ...(value.officialSubmissionId !== undefined ? { officialSubmissionId: identifier(value.officialSubmissionId) } : {}), ...(noteIds ? { noteIds } : {}), ...(conversationIds ? { conversationIds } : {}) };
 }

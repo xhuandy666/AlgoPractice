@@ -61,12 +61,12 @@ test('Optional user request has explicit priority; comments, statement, notes an
 test('Blank, template and variable-only work reaches adaptive guidance without a guessed error diagnosis', () => {
   for (const code of ['', 'class Solution:\n    def solve(self, nums):\n        pass\n', 'class Solution:\n    def solve(self, nums):\n        total = 0\n        left = 0\n']) {
     const snapshot = buildRequestSnapshot(input(), { ...context(), code, run: null }, config()); const payload = JSON.parse(snapshot.messages[1].content);
-    assert.equal(payload.learningContext.code, code); assert.equal(payload.learningContext.run, null); assert.match(snapshot.messages[0].content, /a few variable definitions without meaningful progress/); assert.match(snapshot.messages[0].content, /Do not invent a bug/);
+    assert.equal(payload.learningContext.code, code); assert.equal(payload.learningContext.run, null); assert.match(snapshot.messages[0].content, /a few variable definitions without meaningful progress/); assert.match(snapshot.messages[0].content, /do not invent a bug/i);
   }
 });
 test('Substantive implementation and matching failure preserve the user approach; no-run reviews must distinguish inference', () => {
   const snapshot = buildRequestSnapshot(input(), context(), config()), payload = JSON.parse(snapshot.messages[1].content);
-  assert.equal(payload.learningContext.run.status, 'wrong_answer'); assert.match(snapshot.messages[0].content, /first understand and briefly describe the user's algorithm/); assert.match(snapshot.messages[0].content, /Preserve the user's approach and make a minimal correction/); assert.match(snapshot.messages[0].content, /Distinguish a code-based hypothesis from an observed failure/);
+  assert.equal(payload.learningContext.run.status, 'wrong_answer'); assert.match(snapshot.messages[0].content, /first understand and briefly describe the user's algorithm/); assert.match(snapshot.messages[0].content, /smallest actionable correction that preserves the current algorithm/); assert.match(snapshot.messages[0].content, /distinguish a code-based hypothesis from an observed failure/);
 });
 test('Selected historical Run keeps current code primary and is explicitly separated from current evidence', () => {
   const source = context(), oldCode = source.code, oldRun = source.run!; source.code = oldCode.replace('return 0', 'return total'); source.run = null; source.previousRun = { code: oldCode, run: oldRun };
@@ -112,29 +112,27 @@ test('Oversized numbered code stops at complete source lines and explicitly disa
   assert.ok(numbered.text.length <= 16000); assert.ok(numbered.text.split('\n').every((row: string, index: number) => row === `${index + 1} | `));
   assert.match(snapshot.messages[0].content, /Do not patch clipped code or an incomplete numbered-code view/);
 });
-test('An explicit single-hint request constrains every response field ahead of default failure diagnosis', () => {
-  const request = { ...input(), question: '请只给我一个提示，不要给代码、修改补丁或完整解法。' };
-  const snapshot = buildRequestSnapshot(request, context(), config()), system = snapshot.messages[0].content, payload = JSON.parse(snapshot.messages[1].content);
-  assert.equal(payload.userRequest, request.question); assert.equal(payload.learningContext.run.status, 'wrong_answer');
-  assert.match(system, /ENTIRE answer, including title, explanation, nextSteps, evidence, inferences and code proposals/);
+test('The distinct hint action is restrained across every field without needing a run', () => {
+  const request = { ...input(), kind: 'hint' as const, question: '' };
+  const snapshot = buildRequestSnapshot(request, { ...context(), run: null }, config()), system = snapshot.messages[0].content, payload = JSON.parse(snapshot.messages[1].content);
+  assert.equal(payload.kind, 'hint'); assert.equal(payload.learningContext.run, null);
   assert.match(system, /ONE small conceptual nudge in 1–2 short sentences/);
   assert.match(system, /nextSteps:\[\], evidence:\[\], inferences:\[\], patch:null, completeSolution:null, noteDraft:null/);
-  assert.ok(system.indexOf('First obey any explicit limit') < system.indexOf('Choose the teaching approach'));
-  assert.match(system, /without saying which line to move/);
+  assert.match(system, /even if userRequest is empty or asks for the answer/);
+  assert.match(system, /No prior run or official submission is required/);
 });
 
-test('Empty adaptive-coach requests with actual failure omit the explicit-one-hint restriction and require an actionable diagnosis', () => {
+test('Empty chat with matching failure allows a concrete diagnosis and does not become the hint button', () => {
   const source = context();
   for (const question of ['', ' \n ']) {
     const snapshot = buildRequestSnapshot({ ...input(), question }, source, config());
     const system = snapshot.messages[0].content, payload = JSON.parse(snapshot.messages[1].content);
-    assert.equal(payload.userRequest, ''); assert.equal(payload.kind, 'hint'); assert.equal(payload.learningContext.run.status, 'wrong_answer');
-    assert.match(system, /kind=hint is a legacy internal route name.*NOT a user instruction to give only a hint/);
+    assert.equal(payload.userRequest, ''); assert.equal(payload.kind, 'chat'); assert.equal(payload.learningContext.run.status, 'wrong_answer');
     assert.match(system, /give a brief concrete diagnosis/); assert.match(system, /smallest actionable correction that preserves the current algorithm/);
     assert.match(system, /Do not stop at a leading question/);
     assert.ok(!system.includes('ONE small conceptual nudge')); assert.ok(!system.includes('1–2 short sentences'));
     assert.ok(!system.includes('Keep nextSteps:[], evidence:[], inferences:[]'));
-    assert.equal(snapshot.promptVersion, 'tilian-adaptive-coach-v2.3');
+    assert.equal(snapshot.promptVersion, 'tilian-chat-coach-v2.4');
   }
 });
 test('An empty request does not create a program-selected help tier; template and implemented code retain the same adaptive policy', () => {
@@ -142,8 +140,8 @@ test('An empty request does not create a program-selected help tier; template an
   const blank = buildRequestSnapshot(input(), { ...source, code: 'class Solution:\n    def solve(self, nums):\n        pass\n', run: null }, config());
   const implemented = buildRequestSnapshot(input(), source, config());
   assert.equal(blank.messages[0].content, implemented.messages[0].content);
-  assert.match(blank.messages[0].content, /For empty\/template-only work, use the starting guidance below instead/);
-  assert.match(blank.messages[0].content, /Never invent a failure when none is supported/);
+  assert.match(blank.messages[0].content, /one core concept, one small example and one next step/);
+  assert.match(blank.messages[0].content, /do not invent a bug/);
   assert.equal(JSON.parse(blank.messages[1].content).learningContext.run, null);
   assert.equal(JSON.parse(implemented.messages[1].content).learningContext.run.status, 'wrong_answer');
 });
@@ -155,9 +153,9 @@ test('An empty note-draft request preserves the note-writing action instead of a
     assert.equal(payload.learningContext.run.status, 'wrong_answer');
     assert.match(system, /The user chose 总结为笔记草稿/); assert.match(system, /Produce a concise reusable noteDraft/);
     assert.match(system, /following any explicit userRequest about its focus or length/);
-    assert.match(system, /For kind=note-draft, use the note-writing action above/);
+    assert.match(system, /This is a note-writing action, not a new diagnosis/);
     assert.match(system, /Only kind=note-draft may return a non-null noteDraft, and then it is required/);
-    assert.ok(!system.includes('The user clicked 帮我看看'));
+    assert.ok(!system.includes('The user clicked 给我提示'));
     assert.ok(!system.includes('give a brief concrete diagnosis'));
     assert.ok(!system.includes('ONE small conceptual nudge'));
   }
@@ -167,12 +165,9 @@ test('Default starting guidance is bounded across all fields and cannot split a 
     const snapshot = buildRequestSnapshot(input(), { ...context(), code, run: null }, config());
     const system = snapshot.messages[0].content, payload = JSON.parse(snapshot.messages[1].content);
     assert.equal(payload.learningContext.code, code); assert.equal(payload.learningContext.run, null);
-    assert.match(system, /ENTIRE response to at most one core concept, one small illustrative example and one actionable next step/);
-    assert.match(system, /at most one nextSteps item/); assert.match(system, /Keep patch:null and completeSolution:null by default/);
-    assert.match(system, /Do not reconstruct the whole function, the complete algorithm or complete pseudocode/);
-    assert.match(system, /fragments that together reveal the entire solution/);
-    assert.match(system, /Do not claim an approach will pass, meets a time limit or has a guaranteed execution time without supplied evidence/);
-    assert.match(system, /an input-size estimate alone cannot establish that it will pass/);
+    assert.match(system, /one core concept, one small example and one next step instead of revealing the whole solution/);
+    assert.match(system, /do not invent a bug/);
+    assert.match(system, /never label complexity reasoning as measured performance/);
   }
 });
 test('Starting-guide limits remain subordinate to explicit full-answer requests and do not restrict substantive-code diagnosis', () => {
@@ -180,9 +175,34 @@ test('Starting-guide limits remain subordinate to explicit full-answer requests 
   const snapshot = buildRequestSnapshot(request, { ...context(), code: '', run: null }, config());
   assert.equal(JSON.parse(snapshot.messages[1].content).userRequest, request.question);
   assert.match(snapshot.messages[0].content, /An explicit request for a full solution or code takes priority over this starting-guide limit/);
-  assert.match(snapshot.messages[0].content, /This default applies only to work that has not meaningfully started, not to diagnosis of a substantive implementation/);
+  assert.match(snapshot.messages[0].content, /With a substantive implementation, first understand/);
   const diagnosis = buildRequestSnapshot(input(), context(), config());
   assert.equal(JSON.parse(diagnosis.messages[1].content).learningContext.run.status, 'wrong_answer');
   assert.match(diagnosis.messages[0].content, /give a brief concrete diagnosis/);
   assert.match(diagnosis.messages[0].content, /smallest actionable correction that preserves the current algorithm/);
+});
+
+test('Diagnosis directly reviews current code and separates inference from execution evidence', () => {
+  const snapshot = buildRequestSnapshot({ ...input(), kind: 'diagnosis' }, { ...context(), run: null }, config());
+  assert.equal(JSON.parse(snapshot.messages[1].content).learningContext.run, null);
+  assert.match(snapshot.messages[0].content, /a run or official submission is NOT a prerequisite/);
+  assert.match(snapshot.messages[0].content, /Preserve the user's approach and make a minimal correction/);
+  assert.match(snapshot.messages[0].content, /never claim you executed anything/);
+});
+
+test('Official review binds an explicit trusted submission and puts minimal correction before optimal approach', () => {
+  const source = context(); source.official = { id: 'official-selected', attemptId: source.attemptId, problemVersion: source.problemVersion,
+    codeHash: sha256(source.code), status: 'wrong_answer', statusMessage: 'Wrong Answer' }; source.officialSubmissionId = source.official.id;
+  const request = { ...input(), kind: 'official-review' as const, officialSubmissionId: source.official.id };
+  const snapshot = buildRequestSnapshot(request, source, config());
+  assert.equal(snapshot.officialSubmissionId, source.official.id);
+  assert.equal(JSON.parse(snapshot.messages[1].content).learningContext.officialSubmissionId, source.official.id);
+  assert.match(snapshot.messages[0].content, /smallest viable correction.*THEN explain a reasoned optimal approach/);
+  assert.match(snapshot.messages[0].content, /For an accepted result.*do not invent a failure/i);
+  assert.match(snapshot.messages[0].content, /full usable code in completeSolution/);
+  assert.match(snapshot.messages[0].content, /first minimal correction can be precise prose/);
+  assert.throws(() => buildRequestSnapshot({ ...request, officialSubmissionId: 'another' }, source, config()));
+  assert.throws(() => buildRequestSnapshot(request, { ...source, official: null }, config()));
+  assert.throws(() => validateRequestInput({ ...input(), kind: 'official-review' }));
+  assert.throws(() => validateRequestInput({ ...input(), officialSubmissionId: 'official-selected' }));
 });

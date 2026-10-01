@@ -52,6 +52,7 @@ const bridge: DesktopBridge = {
   previewRestore: (...args) => ipcRenderer.invoke('backup:preview', ...args),
   restoreBackup: (...args) => ipcRenderer.invoke('backup:restore', ...args),
   aiProvider: (...args) => ipcRenderer.invoke('ai:provider', ...args),
+  saveAiAutoAnalysis: enabled => ipcRenderer.invoke('ai:save-auto-analysis', enabled),
   saveAiProvider: (...args) => ipcRenderer.invoke('ai:save-provider', ...args),
   clearAiKey: (...args) => ipcRenderer.invoke('ai:clear-key', ...args),
   testAiProvider: (...args) => ipcRenderer.invoke('ai:test', ...args),

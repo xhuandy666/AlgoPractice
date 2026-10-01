@@ -95,3 +95,33 @@ test('beginRun rejects a stale test snapshot atomically and cannot overwrite ano
   assert.equal(store.getDraft(problem.id, 'python', 'practice', 'function')!.code, '# function');
   assert.equal(store.getRun('stale'), undefined);
 });
+
+test('hint and code check read the current editor draft without any local run or official submission', t => {
+  const { store, problem, attempt } = fixture(t), fn = attempt('function');
+  for (const kind of ['hint', 'diagnosis'] as const) {
+    const input: AiRequestInput = { requestId: `no-run-${kind}`, attemptId: fn.id, kind, question: '' };
+    const context = buildPracticeAiContext(store, input);
+    assert.equal(context.code, '# function'); assert.equal(context.run, null); assert.equal(context.official, null);
+    assert.equal(context.problem.description, problem.content.description);
+    assert.doesNotThrow(() => buildRequestSnapshot(input, context, config()));
+  }
+});
+
+test('official analysis requires an actual completed submission of this attempt and freezes its code revision', t => {
+  const { store, problem, attempt } = fixture(t), fn = attempt('function');
+  const draft = store.getDraft(problem.id, 'python', 'practice', 'function')!;
+  const row = store.beginOfficialSubmission({ requestId: 'official-ai-source', attemptId: fn.id, code: draft.code,
+    expectedDraftRevision: draft.revision, slug: 'two-sum', sourceId: '1' });
+  const input: AiRequestInput = { requestId: 'official-ai', attemptId: fn.id, kind: 'official-review', question: '', officialSubmissionId: row.id };
+  assert.throws(() => buildPracticeAiContext(store, input), /有效的判题/);
+  store.updateOfficialSubmission(row.id, { status: 'judging', submissionId: '101' });
+  store.updateOfficialSubmission(row.id, { status: 'completed', result: { status: 'wrong_answer', statusMessage: 'Wrong Answer', input: '1', actualOutput: '0', expectedOutput: '1' } });
+  store.saveDraft({ problemId: problem.id, language: 'python', answerFormat: 'function', code: '# newer unsent implementation' });
+  const context = buildPracticeAiContext(store, input);
+  assert.equal(context.code, row.code); assert.equal(context.draftRevision, row.draftRevision);
+  assert.equal(context.official?.id, row.id); assert.equal(context.official?.codeHash, row.codeHash);
+  assert.equal(context.official?.status, 'wrong_answer'); assert.doesNotThrow(() => buildRequestSnapshot(input, context, config()));
+  assert.throws(() => buildPracticeAiContext(store, { ...input, kind: 'diagnosis' }), /只有官方分析/);
+  assert.throws(() => buildPracticeAiContext(store, { ...input, officialSubmissionId: 'missing' }), /有效的判题/);
+  const acm = attempt('acm'); assert.throws(() => buildPracticeAiContext(store, { ...input, attemptId: acm.id }), /有效的判题/);
+});

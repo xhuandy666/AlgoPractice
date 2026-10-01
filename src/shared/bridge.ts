@@ -93,6 +93,7 @@ export interface DesktopBridge {
   previewRestore(): Promise<PreparedRestore | null>;
   restoreBackup(previewId: string): Promise<RestoreResult>;
   aiProvider(): Promise<AiProviderState>;
+  saveAiAutoAnalysis(enabled: boolean): Promise<AiProviderState>;
   saveAiProvider(config: AiProviderConfig, key?: string): Promise<AiProviderState>;
   clearAiKey(): Promise<AiProviderState>;
   testAiProvider(): Promise<AiConnectionResult>;

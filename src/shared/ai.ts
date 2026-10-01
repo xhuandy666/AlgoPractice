@@ -1,11 +1,11 @@
 import type { AnswerFormat, AcmTestConfig } from './answer-format';
 /** Renderer-visible AI data. Credentials never appear in these structures. */
 export const AI_POLICY_VERSION = 'tilian-ai-policy-v2';
-export const AI_PROMPT_VERSION = 'tilian-adaptive-coach-v2.3';
+export const AI_PROMPT_VERSION = 'tilian-chat-coach-v2.4';
 /** Historical record compatibility only. New coach requests have no help levels. */
 export const AI_LEVELS = ['L0', 'L1', 'L2', 'L3', 'L4'] as const;
 export type AiLevel = typeof AI_LEVELS[number];
-export type AiKind = 'hint' | 'diagnosis' | 'note-draft';
+export type AiKind = 'chat' | 'hint' | 'diagnosis' | 'official-review' | 'note-draft';
 export type AiMode = 'practice' | 'strict' | 'coached';
 export type AiJson = null | boolean | number | string | AiJson[] | { [key: string]: AiJson };
 export type AiProviderCompatibility = 'openai-compatible' | 'deepseek' | 'glm' | 'qwen';
@@ -53,7 +53,7 @@ export function createAiProviderPreset(presetId: string, configId: string): AiPr
   if (!preset || typeof configId !== 'string' || !configId.trim() || configId.length > 256 || /[\u0000-\u001f\u007f]/.test(configId)) throw new Error('AI 预设或配置标识无效。');
   return { id: configId, ...preset.config };
 }
-export interface AiProviderState { config: AiProviderConfig | null; hasKey: boolean; /** null means OS encryption has not been probed; credential operations check it when needed. */ secureStorageAvailable: boolean | null; }
+export interface AiProviderState { config: AiProviderConfig | null; hasKey: boolean; /** Explicit opt-in; only newly completed official submissions trigger analysis. */ autoAnalyzeOfficial?: boolean; /** null means OS encryption has not been probed; credential operations check it when needed. */ secureStorageAvailable: boolean | null; }
 export interface AiRequestInput {
   requestId: string;
   attemptId: string;
@@ -63,6 +63,8 @@ export interface AiRequestInput {
   runId?: string;
   noteIds?: string[];
   conversationIds?: string[];
+  /** Only official-review may select a persisted completed official code/result snapshot. */
+  officialSubmissionId?: string;
 }
 export interface AiDiagnostic { message: string; source: 'user' | 'runner'; line?: number; column?: number; }
 export interface AiCaseEvidence { index: number; status: string; actual?: AiJson; expected?: AiJson; }
@@ -91,17 +93,34 @@ export interface AiTrustedContext {
   problem: { title: string; description: string; constraints: string[] };
   run: AiRunEvidence | null;
   official?: AiOfficialEvidence | null;
+  /** Selected official submission identity; never provided as raw renderer evidence. */
+  officialSubmissionId?: string;
   /** Explicitly selected historical evidence; never evidence for the current code. */
   previousRun?: { code: string; run: AiRunEvidence } | null;
   conversation: Array<{ id: string; role: 'user' | 'assistant'; content: string }>;
   notes: Array<{ id: string; version: string; title: string; markdown: string }>;
 }
 export interface AiMessage { role: 'system' | 'user' | 'assistant'; content: string; }
+/** A complete persisted user/assistant round, with no nested snapshots or memory. */
+export interface AiConversationRound { requestId: string; userRequest: string; assistantResponse: AiResponse; }
+/** Stored with each immutable request before its main model call; no separate mutable memory file. */
+export interface AiConversationMemory {
+  version: 1;
+  summary: string;
+  /** Last completed round actually incorporated into summary; degradation never advances it. */
+  summarizedThroughRequestId: string | null;
+  recentRounds: AiConversationRound[];
+  status: 'normal' | 'updated' | 'degraded';
+  /** Explicit limits, not silently pretending omitted material was sent or summarized. */
+  omittedRoundIds?: string[];
+}
 export interface AiRequestSnapshot {
   policyVersion: string; promptVersion: string;
   attemptId: string; problemId: string; problemVersion: string; language: 'python' | 'java';
   mode: AiMode; isActive: boolean; draftScopeId: string; draftRevision: number;
   codeHash: string; code: string; kind: AiKind; question: string;
+  officialSubmissionId?: string;
+  conversationMemory?: AiConversationMemory;
   answerFormat?: AnswerFormat; specVersion?: string; testConfigDigest?: string;
   /** Read-only fields on snapshots saved by the old coach. Never emitted for new requests. */
   level?: AiLevel; unlockCompleteSolution?: boolean;
@@ -178,6 +197,7 @@ export interface AiRepository {
 }
 export interface AiEvent {
   requestId: string; attemptId: string; problemId: string; codeHash: string;
+  kind?: AiKind;
   phase: 'queued' | 'connecting' | 'receiving' | 'validating' | 'repairing' | 'completed' | 'failed' | 'cancelled' | 'interrupted';
   /** Progress only; raw/unvalidated model content must never be published in an event. */
   receivedBytes?: number;

@@ -10,7 +10,7 @@ export function context(): AiTrustedContext {
     run: { id: 'run-a', attemptId: 'attempt-a', problemVersion: 'version-a', codeHash: sha256(code), status: 'wrong_answer', trustworthyExpected: true, diagnostics: [], caseResults: [{ index: 0, status: 'wrong_answer', actual: 0, expected: 6 }], stdout: '', stderr: '' },
     conversation: [{ id: 'message-a', role: 'user', content: '我不理解这个循环不变式。' }], notes: [{ id: 'note-a', version: 'note-version-a', title: '自己写的提示', markdown: '关注累积状态。' }] };
 }
-export const input = (): AiRequestInput => ({ requestId: randomUUID(), attemptId: 'attempt-a', kind: 'hint', question: '' });
+export const input = (): AiRequestInput => ({ requestId: randomUUID(), attemptId: 'attempt-a', kind: 'chat', question: '' });
 export function answer(request = input(), source = context()): AiResponse {
   const response: AiResponse = { schemaVersion: 2, kind: request.kind, title: '检查当前思路', explanation: '检查已处理元素与累积值之间的关系。', nextSteps: ['用一个短数组手动观察状态变化。'], evidence: [], inferences: [], patch: null, completeSolution: null, noteDraft: null };
   if (request.kind === 'diagnosis') { response.evidence = source.run ? [{ runId: source.run.id, kind: 'test', quote: canonicalJson(source.run.caseResults[0]), caseIndex: 0 }] : []; response.inferences = [{ text: '返回位置可能没有使用累积值。', reason: '这是基于当前代码的判断，需运行本地用例确认。' }]; }

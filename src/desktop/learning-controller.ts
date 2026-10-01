@@ -6,7 +6,8 @@ import { randomUUID } from 'node:crypto';
 import { performance } from 'node:perf_hooks';
 import { PracticeStore } from '../storage/practice-store';
 import { AiService, CredentialVault, normalizeProviderConfig, helpCardDecision } from '../ai/index';
-import type { AiProviderConfig, AiRequestInput, AiTrustedContext, AiHelpRun } from '../shared/ai';
+import type { AiProviderConfig, AiProviderState, AiRequestInput, AiTrustedContext, AiHelpRun } from '../shared/ai';
+import type { OfficialSubmission } from '../shared/official';
 import type { AddReviewItemInput, ConfirmNoteInput, CorrectReviewInput, LearningSettingsInput, NoteFilter, ReviewFeedbackInput, ReviewFilter, SaveNoteInput } from '../shared/learning';
 import type { BackupSummary, RestoreLifecycle } from '../shared/maintenance';
 import type { Page } from '../shared/bridge';
@@ -15,14 +16,16 @@ import { BackupService } from './backup-service';
 import { ReminderService } from './reminder-service';
 import { writeCodeToClipboard } from './code-clipboard';
 import { applyPracticeAiPatch, buildPracticeAiContext, runAiEvidence } from './learning-context';
+import { OfficialAiCoach } from './official-ai-coach';
 const id = (value: unknown) => { if (typeof value !== 'string' || !value.trim() || value.length > 512) throw new Error('标识无效。'); return value; };
 const integer = (value: unknown) => { if (typeof value !== 'number' || !Number.isSafeInteger(value) || value < 1) throw new Error('版本无效。'); return value; };
-interface Options { dataDirectory: string; version: string; window: BrowserWindow; store(): PracticeStore; handle(channel: string, handler: (...args: unknown[]) => unknown): void; changed(): void; reveal(page: Page): void; lifecycle: RestoreLifecycle; isIdle(): boolean; interviewContext?(context: AiTrustedContext): AiTrustedContext; log(event: string, data: Record<string, string | number | boolean | null>): void; }
+interface Options { dataDirectory: string; version: string; window: BrowserWindow; store(): PracticeStore; handle(channel: string, handler: (...args: unknown[]) => unknown): void; changed(): void; reveal(page: Page): void; lifecycle: RestoreLifecycle; isIdle(): boolean; allowAutomaticAi?(): boolean; interviewContext?(context: AiTrustedContext): AiTrustedContext; log(event: string, data: Record<string, string | number | boolean | null>): void; }
 export class LearningController {
   readonly vault: CredentialVault; readonly attachments: AttachmentService; readonly backups: BackupService; readonly reminders: ReminderService;
   ai!: AiService; #provider: AiProviderConfig | null = null; #automatic: ReturnType<typeof setInterval> | null = null; #autoTask: Promise<unknown> | null = null;
   #attachmentQueue: Promise<void> = Promise.resolve(); #gcTask: Promise<void> | null = null;
   #pulse: { attemptId: string; at: number } | null = null; #previews = new Map<string, BackupSummary>(); readonly #providerPath: string;
+  #officialCoach!: OfficialAiCoach;
   constructor(private readonly options: Options) {
     this.#providerPath = join(options.dataDirectory, 'ai-provider.json');
     this.vault = new CredentialVault({ directory: join(options.dataDirectory, 'credentials'), safeStorage });
@@ -37,9 +40,13 @@ export class LearningController {
   rebind() {
     const savedProvider = existsSync(this.#providerPath) ? JSON.parse(readFileSync(this.#providerPath, 'utf8')) : null;
     this.#provider = savedProvider === null ? null : normalizeProviderConfig(savedProvider);
-    this.ai = new AiService({ repository: this.options.store(), vault: this.vault, resolveProvider: () => this.#provider, resolveContext: input => this.#context(input), onEvent: event => { if (!this.options.window.isDestroyed()) this.options.window.webContents.send('ai:event', event); if (['completed','failed','cancelled','interrupted'].includes(event.phase)) this.options.changed(); } });
+    this.ai = new AiService({ repository: this.options.store(), vault: this.vault, resolveProvider: () => this.#provider, resolveContext: input => this.#context(input), onEvent: event => { if (!this.options.window.isDestroyed()) this.options.window.webContents.send('ai:event', event); if (['completed','failed','cancelled','interrupted'].includes(event.phase)) { this.options.changed(); this.#officialCoach?.wake(); } } });
+    this.#officialCoach = new OfficialAiCoach({ store: this.options.store, allowed: () => this.options.isIdle() && (this.options.allowAutomaticAi?.() ?? true),
+      provider: () => this.#providerState(), request: input => this.ai.request(input), busy: attemptId => this.ai.isAttemptBusy(attemptId), onError: () => this.options.log('ai.official-analysis-deferred', { operation: 'automatic' }) });
     this.ai.recoverInterrupted(); this.#pulse = null;
   }
+  async #providerState(): Promise<AiProviderState> { return { ...await this.ai.providerState(), autoAnalyzeOfficial: this.options.store().getLearningSettings().aiAutoAnalyzeOfficial === true }; }
+  officialCompleted(record: OfficialSubmission): void { this.#officialCoach.completed(record); }
   #context(input: AiRequestInput): AiTrustedContext {
     const context = buildPracticeAiContext(this.options.store(), input);
     return this.options.interviewContext?.(context) ?? context;
@@ -72,8 +79,8 @@ export class LearningController {
     if (!this.options.isIdle() || this.#autoTask || this.backups.status().busy) return;
     this.#autoTask = this.#collectDeletedAttachments().catch(() => this.options.log('attachment.cleanup-deferred', { operation: 'automatic' })).then(() => this.options.isIdle() ? this.#withAttachmentLock(() => this.backups.autoBackup(this.options.store().getLearningSettings().timeZone)) : null).then(result => { if (result) this.options.changed(); }).catch(() => this.options.log('backup.failed', { operation: 'automatic' })).finally(() => { this.#autoTask = null; });
   }
-  async pause() { if (this.#automatic) clearInterval(this.#automatic); this.#automatic = null; this.reminders.stop(); this.resetActivity(); await Promise.allSettled([this.#autoTask, this.#gcTask, this.#attachmentQueue]); await this.ai.stopAll(); }
-  async resume() { await this.reminders.reloadSettings(); await this.start(); }
+  async pause() { this.#officialCoach.pause(); if (this.#automatic) clearInterval(this.#automatic); this.#automatic = null; this.reminders.stop(); this.resetActivity(); await Promise.allSettled([this.#autoTask, this.#gcTask, this.#attachmentQueue]); await this.ai.stopAll(); await this.#officialCoach.idle(); }
+  async resume() { this.#officialCoach.resume(); await this.reminders.reloadSettings(); await this.start(); }
   async stop() { await this.pause(); }
   async #exportAttachment(hash: string) { const attachment = this.options.store().getAttachment(hash); if (!attachment) throw new Error('附件不存在。'); const selected = await dialog.showSaveDialog(this.options.window, { title: '导出附件', defaultPath: attachment.name }); if (selected.canceled || !selected.filePath) return false; await this.attachments.exportFile(hash, selected.filePath); return true; }
   #register() {
@@ -106,10 +113,11 @@ export class LearningController {
       if (note.attachmentHashes.length) { const assetDirectory = join(dirname(selected.filePath), assetName); await mkdir(assetDirectory); for (const hash of note.attachmentHashes) { const attachment = get().getAttachment(hash); if (!attachment) throw new Error('笔记附件缺失。'); const name = hash.slice(0, 12) + '-' + attachment.name.replace(/[\\/:*?"<>|\[\]]/g, '_'); await this.attachments.exportFile(hash, join(assetDirectory, name)); markdown = markdown.split(`algopractice://app/attachment/${hash}`).join(`${assetName}/${name}`); } }
       await writeFile(selected.filePath, markdown, { mode: 0o600 }); return true;
     });
-    handle('ai:provider', () => this.ai.providerState());
-    handle('ai:save-provider', async (input, key) => { const config = normalizeProviderConfig(input as AiProviderConfig); await this.ai.stopAll(); if (key !== undefined) { if (typeof key !== 'string') throw new Error('Key 格式无效。'); await this.vault.setKey(config, key); } const temporary = this.#providerPath + '.' + randomUUID() + '.partial'; try { await writeFile(temporary, JSON.stringify(config, null, 2), { mode: 0o600 }); await rename(temporary, this.#providerPath); this.#provider = config; } finally { await unlink(temporary).catch(() => {}); } return this.ai.providerState(); });
-    handle('ai:clear-key', async () => { await this.ai.clearKey(); return this.ai.providerState(); }); handle('ai:test', () => this.ai.testConnection());
-    handle('ai:requests', key => get().listAIRequests(id(key))); handle('ai:ask', input => this.ai.request(input as AiRequestInput)); handle('ai:cancel', key => this.ai.cancel(id(key)));
+    handle('ai:provider', () => this.#providerState());
+    handle('ai:save-auto-analysis', async enabled => { if (typeof enabled !== 'boolean') throw new Error('自动分析设置无效。'); mutate(() => get().updateLearningSettings({ aiAutoAnalyzeOfficial: enabled })); if (!enabled) { this.#officialCoach.pause(); this.#officialCoach.resume(); } return this.#providerState(); });
+    handle('ai:save-provider', async (input, key) => { const config = normalizeProviderConfig(input as AiProviderConfig); await this.ai.stopAll(); if (key !== undefined) { if (typeof key !== 'string') throw new Error('Key 格式无效。'); await this.vault.setKey(config, key); } const temporary = this.#providerPath + '.' + randomUUID() + '.partial'; try { await writeFile(temporary, JSON.stringify(config, null, 2), { mode: 0o600 }); await rename(temporary, this.#providerPath); this.#provider = config; } finally { await unlink(temporary).catch(() => {}); } return this.#providerState(); });
+    handle('ai:clear-key', async () => { await this.ai.clearKey(); return this.#providerState(); }); handle('ai:test', () => this.ai.testConnection());
+    handle('ai:requests', key => get().listAIRequests(id(key))); handle('ai:ask', input => this.ai.request(input as AiRequestInput).finally(() => this.#officialCoach.wake())); handle('ai:cancel', key => this.ai.cancel(id(key)));
     handle('ai:preview-patch', key => this.ai.preparePatch(id(key)));
     handle('ai:apply-patch', async key => { const patch = await this.ai.preparePatch(id(key)); return mutate(() => applyPracticeAiPatch(get(), patch)); });
     handle('ai:save-note', key => { const record = get().getAIRequest(id(key)); if (!record?.response?.noteDraft || record.status !== 'completed') throw new Error('没有可保存的笔记草稿。'); const proposal = record.response.noteDraft; return mutate(() => get().saveNote({ requestId: `ai-note-${record.id}`, kind: 'problem', subjectId: record.snapshot.problemId, title: proposal.title, markdown: proposal.markdown, tags: proposal.tags, origin: 'ai', state: 'draft', aiRequestId: record.id })); });

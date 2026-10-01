@@ -63,7 +63,7 @@ export function backfillNoteAttachmentReferences(db: DatabaseSync): void {
   db.exec('DELETE FROM attachment_deletion_candidates WHERE EXISTS(SELECT 1 FROM note_attachment_refs r WHERE r.hash = attachment_deletion_candidates.hash)');
 }
 export function defaultLearningSettings(): LearningSettings {
-  return { dailyReviewBudget: 3, dailyPracticeGoal: 3, timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC', updatedAt: '1970-01-01T00:00:00.000Z' };
+  return { dailyReviewBudget: 3, dailyPracticeGoal: 3, timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC', updatedAt: '1970-01-01T00:00:00.000Z', aiAutoAnalyzeOfficial: false };
 }
 
 /** Shares the PracticeStore connection and transaction boundary; never opens another live writer. */
@@ -285,10 +285,11 @@ export class LearningRepository {
     return row ? { ...defaultLearningSettings(), ...JSON.parse(row.value_json as string) } : defaultLearningSettings();
   }
   updateLearningSettings(input: LearningSettingsInput): LearningSettings {
-    if (Object.keys(input).some(key => !['dailyReviewBudget', 'dailyPracticeGoal', 'timeZone'].includes(key))) throw new Error('Unknown learning setting');
+    if (Object.keys(input).some(key => !['dailyReviewBudget', 'dailyPracticeGoal', 'timeZone', 'aiAutoAnalyzeOfficial'].includes(key))) throw new Error('Unknown learning setting');
     if (input.dailyReviewBudget !== undefined && input.dailyReviewBudget !== null) integer(input.dailyReviewBudget, 'daily review budget', 0, 1000);
     if (input.dailyPracticeGoal !== undefined) integer(input.dailyPracticeGoal, 'daily practice goal', 1, 1000);
     if (input.timeZone !== undefined) zone(input.timeZone);
+    if (input.aiAutoAnalyzeOfficial !== undefined && typeof input.aiAutoAnalyzeOfficial !== 'boolean') throw new Error('Invalid AI automatic analysis setting');
     return this.transaction(() => {
       const settings = { ...this.getLearningSettings(), ...input, updatedAt: now() };
       this.db.prepare('INSERT INTO learning_settings VALUES (1, ?) ON CONFLICT(id) DO UPDATE SET value_json = excluded.value_json').run(canonical(settings));
