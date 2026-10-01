@@ -91,6 +91,8 @@ export interface DesktopBridge {
   reviewOpportunityForSubmission(submissionRecordId: string): Promise<ReviewOpportunity | null>;
   claimReviewOpportunity(id: string): Promise<ReviewOpportunity | null>;
   skipReviewOpportunity(id: string): Promise<ReviewOpportunity>;
+  /** Main-process wall clock, shared with server-authored assessment timestamps. */
+  reviewAssessmentTime(): Promise<number>;
   saveReviewAssessmentDraft(input: ReviewAssessmentDraftInput): Promise<ReviewAssessmentDraft>;
   reviewAssessmentDraft(key: string): Promise<ReviewAssessmentDraft | null>;
   deleteReviewAssessmentDraft(key: string, expectedRevision?: number): Promise<boolean>;

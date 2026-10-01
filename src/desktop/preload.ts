@@ -44,6 +44,7 @@ const bridge: DesktopBridge = {
   reviewOpportunityForSubmission: id => ipcRenderer.invoke('problem-review:submission-opportunity', id),
   claimReviewOpportunity: id => ipcRenderer.invoke('problem-review:claim', id),
   skipReviewOpportunity: id => ipcRenderer.invoke('problem-review:skip', id),
+  reviewAssessmentTime: () => ipcRenderer.invoke('problem-review:time'),
   saveReviewAssessmentDraft: input => ipcRenderer.invoke('problem-review:save-draft', input),
   reviewAssessmentDraft: key => ipcRenderer.invoke('problem-review:draft', key),
   deleteReviewAssessmentDraft: (...args) => ipcRenderer.invoke('problem-review:delete-draft', ...args),

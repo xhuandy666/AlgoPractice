@@ -4,7 +4,7 @@ import type { ReviewRating } from '../shared/learning';
 import type { ProblemReviewEvent, ProblemReviewPreview, ProblemReviewResult, ReviewAssessmentDraft, ReviewAssessmentDraftInput, ReviewOpportunity } from '../shared/review-plan';
 import { errorText } from './ui';
 import { registerPendingSave, useEditsFrozen } from './pending-saves';
-import { canDiscardConflictedReviewDraft, equivalentCommittedReviewDraft, matchesReviewDraftIdentity } from './review-draft-recovery';
+import { canDiscardConflictedReviewDraft, equivalentCommittedReviewDraft, matchesReviewDraftIdentity, type ReviewDraftRecoveryExpectation } from './review-draft-recovery';
 import './review-rating.css';
 
 export const problemRatings = [
@@ -28,6 +28,7 @@ export function ProblemReviewRating({ api, problem, mode, onSaved, onDismiss, on
   const dialog = useRef<HTMLDialogElement>(null), errorRegion = useRef<HTMLParagraphElement>(null);
   const mounted = useRef(true), operation = useRef(false), timer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const draft = useRef<ReviewAssessmentDraft | null>(null), selected = useRef<ReviewRating | null>(null);
+  const pendingReadback = useRef<{ expectation: ReviewDraftRecoveryExpectation; version: number; error: string; needsUpperBound: boolean } | null>(null);
   const requestId = useRef<string>(crypto.randomUUID()), serial = useRef<Promise<void>>(Promise.resolve());
   const inFlight = useRef<Promise<void> | null>(null);
   const editVersion = useRef(0), savedVersion = useRef(0), sent = useRef(false), resolved = useRef(false);
@@ -45,6 +46,20 @@ export function ProblemReviewRating({ api, problem, mode, onSaved, onDismiss, on
     if (timer.current) clearTimeout(timer.current); timer.current = null;
     const next = serial.current.catch(() => undefined).then(async () => {
       if (!api || resolved.current || (!selected.current && !draft.current)) return;
+      // A failed readback must keep the original write window; a new CAS retry cannot prove the old ACK.
+      if (pendingReadback.current) {
+        const pending = pendingReadback.current;
+        if (pending.needsUpperBound) { pending.expectation.finishedAt = await api.reviewAssessmentTime(); pending.needsUpperBound = false; }
+        const committed = await api.reviewAssessmentDraft(key);
+        if (!equivalentCommittedReviewDraft(committed, pending.expectation)) {
+          pendingReadback.current = null;
+          throw new Error(`草稿保存未确认：${pending.error}。原输入已保留，请恢复最新版本后重试。`);
+        }
+        draft.current = committed; savedVersion.current = pending.version; sent.current = Boolean(committed!.submittedAt);
+        pendingReadback.current = null;
+        if (mounted.current) { setContext(committed); setLocked(sent.current); }
+        if (committed!.resolvedEventId) return;
+      }
       while (savedVersion.current !== editVersion.current || (submit && !sent.current)) {
         const version = editVersion.current, previous = draft.current;
         const input: ReviewAssessmentDraftInput = { key, problemId: problem.id, source: mode.kind,
@@ -55,14 +70,22 @@ export function ProblemReviewRating({ api, problem, mode, onSaved, onDismiss, on
         const observation = previous?.submittedAt ? previous : mode.kind === 'official'
           ? { learningDate: mode.opportunity.learningDate, timeZone: mode.opportunity.timeZone, observedAt: mode.opportunity.acceptedAt }
           : mode.kind === 'correction' ? mode.event : undefined;
-        const startedAt = Date.now(); let result: ReviewAssessmentDraft;
+        // Bound the write with its own process clock: renderer/main wall-clock readings may differ.
+        const startedAt = await api.reviewAssessmentTime();
+        if (!Number.isSafeInteger(startedAt) || startedAt < 0) throw new Error('无法确认草稿保存时间，请重试；原输入已保留。');
+        let result: ReviewAssessmentDraft;
         try { result = await api.saveReviewAssessmentDraft(input); }
         catch (error) {
-          const finishedAt = Date.now();
+          const expectation = { input, startedAt, finishedAt: NaN, observation, priorSubmittedAt: previous?.submittedAt };
+          const pending = { expectation, version, error: errorText(error), needsUpperBound: true };
+          pendingReadback.current = pending;
+          expectation.finishedAt = await api.reviewAssessmentTime(); pending.needsUpperBound = false;
           const committed = await api.reviewAssessmentDraft(key);
-          if (!equivalentCommittedReviewDraft(committed, { input, startedAt, finishedAt, observation, priorSubmittedAt: previous?.submittedAt })) {
+          if (!equivalentCommittedReviewDraft(committed, expectation)) {
+            pendingReadback.current = null;
             throw new Error(`草稿保存未确认：${errorText(error)}。本机草稿与本次输入、来源或观察身份不一致，未覆盖任何内容；原输入已保留。`);
           }
+          pendingReadback.current = null;
           result = committed!;
         }
         draft.current = result; savedVersion.current = version; sent.current = Boolean(result.submittedAt);

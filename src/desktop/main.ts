@@ -190,7 +190,7 @@ function trusted(event: Electron.IpcMainInvokeEvent | Electron.IpcMainEvent) {
   if (event.sender !== win.webContents || event.senderFrame !== win.webContents.mainFrame || event.senderFrame?.url !== 'algopractice://app/index.html') throw new Error('IPC 来源无效。');
 }
 function handle(channel: string, handler: (...args: unknown[]) => unknown) { ipcMain.handle(channel, async (event, ...args) => {
-  trusted(event); if (quitting && !['draft:save', 'note:save', 'interview:save', 'submission:save-remark', 'problem-review:save-draft', 'problem-review:draft', 'problem-review:request'].includes(channel)) throw new Error('应用正在退出。');
+  trusted(event); if (quitting && !['draft:save', 'note:save', 'interview:save', 'submission:save-remark', 'problem-review:save-draft', 'problem-review:draft', 'problem-review:request', 'problem-review:time'].includes(channel)) throw new Error('应用正在退出。');
   try { interviews?.assertChannel(channel, args); const epoch = interviews?.epoch ?? 0; const result = await maintenance.run(channel, () => handler(...args)); interviews?.assertResponse(channel, args, epoch); if (/^(note:|archive:|submission:|app:open|source:open)/.test(channel)) interviews?.recordHelp(channel, typeof args[0] === 'string' ? args[0].slice(0,512) : null); return result; } catch (error) { log('ipc.failed', { operation: channel, category: error instanceof SourceError ? error.code : error instanceof Error ? error.name : 'Error' }); throw error; }
 }); }
 async function stopAndQuit() {

@@ -66,6 +66,26 @@ test('official and correction lost ACKs require the exact bound source observati
   }
 });
 
+test('invalid or reversed main-clock bounds reject recovery even with a frozen exact observation', () => {
+  const frozen = draft({ submittedAt: observedAt });
+  const expected = expectation({ input: input({ submitted: true }), observation: frozen, priorSubmittedAt: observedAt });
+  for (const patch of [{ startedAt: NaN }, { finishedAt: Infinity }, { startedAt: -1 }, { startedAt: 1.5 },
+    { finishedAt: Number.MAX_SAFE_INTEGER + 1 }, { finishedAt: expected.startedAt - 1 }]) {
+    assert.equal(equivalentCommittedReviewDraft(frozen, { ...expected, ...patch }), false);
+  }
+});
+
+test('freezing an official or correction draft requires submittedAt in the main call, not its historical source time', () => {
+  for (const source of ['official', 'correction'] as const) {
+    const sourceInput = input({ source, submitted: true, ...(source === 'official' ? { opportunityId: 'ac-one' } : { eventId: 'event-one' }) });
+    const historical = draft({ ...sourceInput, opportunityId: sourceInput.opportunityId ?? null, eventId: sourceInput.eventId ?? null,
+      observedAt: '2026-09-30T09:00:00.100Z', learningDate: '2026-09-30', submittedAt: observedAt });
+    const expected = expectation({ input: sourceInput, observation: historical });
+    assert.equal(equivalentCommittedReviewDraft(historical, expected), true);
+    assert.equal(equivalentCommittedReviewDraft({ ...historical, submittedAt: historical.observedAt }, expected), false);
+  }
+});
+
 test('explicit close may discard only the same frozen, unresolved, permanently occupied date slot', () => {
   const original = draft({ submittedAt: observedAt, revision: 8 });
   const collision = { ...original, conflictEventId: 'other-observation' };

@@ -118,6 +118,7 @@ export class LearningController {
       return mutate(() => get().claimReviewOpportunity(id(key)) ?? null);
     });
     handle('problem-review:skip', key => mutate(() => get().skipReviewOpportunity(id(key))));
+    handle('problem-review:time', () => Date.now());
     handle('problem-review:save-draft', input => mutate(() => get().saveReviewAssessmentDraft(input as ReviewAssessmentDraftInput)));
     handle('problem-review:draft', key => get().getReviewAssessmentDraft(id(key)) ?? null);
     handle('problem-review:delete-draft', (key, revision) => mutate(() => get().deleteReviewAssessmentDraft(id(key), revision === undefined ? undefined : integer(revision))));

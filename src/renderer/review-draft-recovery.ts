@@ -4,6 +4,7 @@ import { dateKey } from './learning-calendar.ts';
 type ObservationIdentity = Pick<ReviewAssessmentDraft, 'learningDate' | 'timeZone' | 'observedAt'>;
 export interface ReviewDraftRecoveryExpectation {
   input: ReviewAssessmentDraftInput;
+  /** Both bounds must come from the main-process clock that stamps the draft. */
   startedAt: number;
   finishedAt: number;
   /** Frozen manual drafts and official/correction sources have an exact observation identity. */
@@ -19,6 +20,8 @@ export function matchesReviewDraftIdentity(draft: ReviewAssessmentDraft, input: 
 
 /** Reconcile a lost ACK, not a new request: no writes and no replacement of another draft. */
 export function equivalentCommittedReviewDraft(draft: ReviewAssessmentDraft | null, expectation: ReviewDraftRecoveryExpectation): boolean {
+  if (!Number.isSafeInteger(expectation.startedAt) || !Number.isSafeInteger(expectation.finishedAt)
+    || expectation.startedAt < 0 || expectation.finishedAt < expectation.startedAt) return false;
   if (!draft || !matchesReviewDraftIdentity(draft, expectation.input) || draft.rating !== expectation.input.rating) return false;
   const priorSubmittedAt = expectation.priorSubmittedAt ?? null;
   const submitted = Boolean(expectation.input.submitted || priorSubmittedAt);

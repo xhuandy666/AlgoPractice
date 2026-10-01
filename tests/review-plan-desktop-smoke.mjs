@@ -37,7 +37,11 @@ async function until(check, description, timeout = 25000) {
   while (Date.now() < deadline) { if (await bounded(check(), description, Math.max(1, deadline - Date.now()))) return; await delay(100); }
   throw new Error(`Timed out: ${description}`);
 }
-async function focus() { await app.evaluate(({ app, BrowserWindow }) => { app.focus({ steal: true }); BrowserWindow.getAllWindows()[0].show(); BrowserWindow.getAllWindows()[0].focus(); }); }
+async function focus() {
+  await app.evaluate(({ app, BrowserWindow }) => { app.focus({ steal: true }); BrowserWindow.getAllWindows()[0].show(); BrowserWindow.getAllWindows()[0].focus(); });
+  await until(() => app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0]?.isFocused()), 'isolated native window has foreground focus');
+  await until(() => page.evaluate(() => document.visibilityState === 'visible' && document.hasFocus()), 'isolated renderer has foreground focus');
+}
 async function resize(width, height) {
   await cdp.send('Emulation.setDeviceMetricsOverride', { width, height, deviceScaleFactor: 1, mobile: false });
   await page.evaluate(() => new Promise(done => requestAnimationFrame(() => requestAnimationFrame(done))));
@@ -53,7 +57,8 @@ async function launch(profileDirectory = dataDirectory) {
   await app.evaluate(({ session }) => {
     const isolated = session.fromPartition('persist:leetcode-cn');
     const state = globalThis.reviewPlanSmoke = { verdict: 'wrong_answer', hold: false, sequence: 88000000, records: {}, requests: [], blocked: [],
-      loseDraftAck: false, loseSubmitDraftAck: false, holdRecordAck: false, recordAckPending: false, failSnapshot: false, failNextRequest: false };
+      loseDraftAck: false, loseSubmitDraftAck: false, holdRecordAck: false, recordAckPending: false, failSnapshot: false, failNextRequest: false,
+      failDraftReadAfterAck: false, failNextDraftRead: false, failDraftTimeAfterAck: false, failNextDraftTime: false, lostDraftCommitted: null, promptChecks: [] };
     const json = value => new Response(JSON.stringify(value), { headers: { 'content-type': 'application/json' } });
     isolated.cookies.get = async () => [{ name: 'LEETCODE_SESSION', value: 'synthetic-never-sent', domain: '.leetcode.cn', path: '/', secure: true },
       { name: 'csrftoken', value: 'synthetic_csrf_token_for_test', domain: '.leetcode.cn', path: '/', secure: true }];
@@ -75,10 +80,17 @@ async function launch(profileDirectory = dataDirectory) {
       return original(input, init); };
   });
   page = await app.firstWindow(); await page.getByRole('navigation', { name: '主导航' }).waitFor();
-  await app.evaluate(({ ipcMain }) => {
+  await page.evaluate(() => {
+    globalThis.reviewPlanOfficialScenes = [];
+    window.algo.onOfficialEvent(record => { if (record.status === 'completed') globalThis.reviewPlanOfficialScenes.push({
+      id: record.id, verdict: record.result?.status, focused: document.hasFocus(), visibility: document.visibilityState,
+      modal: Boolean(document.querySelector('dialog[open], [aria-modal="true"]')),
+    }); });
+  });
+  await app.evaluate(({ ipcMain, BrowserWindow }) => {
     // Pinned Electron harness: call each real handler before losing only its reply.
     // The renderer still uses the real preload, IPC and persisted SQLite result.
-    for (const channel of ['problem-review:save-draft', 'problem-review:record', 'problem-review:snapshot', 'problem-review:request']) {
+    for (const channel of ['problem-review:save-draft', 'problem-review:time', 'problem-review:draft', 'problem-review:record', 'problem-review:snapshot', 'problem-review:request', 'problem-review:submission-opportunity', 'problem-review:claim']) {
       const real = ipcMain._invokeHandlers.get(channel);
       if (typeof real !== 'function') throw new Error(`Missing isolated IPC handler: ${channel}`);
       ipcMain.removeHandler(channel);
@@ -86,9 +98,18 @@ async function launch(profileDirectory = dataDirectory) {
         const state = globalThis.reviewPlanSmoke;
         if (channel === 'problem-review:snapshot' && state.failSnapshot) throw new Error('合成验收：复习读取暂时失败');
         if (channel === 'problem-review:request' && state.failNextRequest) { state.failNextRequest = false; throw new Error('合成验收：原请求状态暂时不可读取'); }
+        if (channel === 'problem-review:draft' && state.failNextDraftRead) { state.failNextDraftRead = false; throw new Error('合成验收：草稿读回暂时失败'); }
+        if (channel === 'problem-review:time' && state.failNextDraftTime) { state.failNextDraftTime = false; throw new Error('合成验收：保存时钟读回暂时失败'); }
         const result = await real(...args);
+        if (['problem-review:submission-opportunity', 'problem-review:claim'].includes(channel)) state.promptChecks.push({
+          channel, id: args[1], state: result?.state ?? null, date: result?.learningDate ?? null,
+          focused: BrowserWindow.getAllWindows()[0]?.isFocused(), visible: BrowserWindow.getAllWindows()[0]?.isVisible(),
+        });
         if (channel === 'problem-review:save-draft' && (state.loseDraftAck || (state.loseSubmitDraftAck && args[1]?.submitted))) {
           state.loseDraftAck = false; state.loseSubmitDraftAck = false;
+          state.lostDraftCommitted = result;
+          if (state.failDraftReadAfterAck) { state.failDraftReadAfterAck = false; state.failNextDraftRead = true; }
+          if (state.failDraftTimeAfterAck) { state.failDraftTimeAfterAck = false; state.failNextDraftTime = true; }
           throw new Error('合成验收：草稿已落盘，回复丢失');
         }
         if (channel === 'problem-review:record' && state.holdRecordAck) {
@@ -294,6 +315,7 @@ try {
   assert.equal((await api('reviewOpportunities', { problemId: fixture.official.id })).total, 0);
   assert.equal(await page.getByRole('dialog').count(), 0); pass('Official failures create neither a daily opportunity nor an automatic rating');
   await app.evaluate(() => { globalThis.reviewPlanSmoke.verdict = 'accepted'; });
+  await focus();
   await submit.click();
   const dialog = page.getByRole('dialog'); await dialog.waitFor({ timeout: 20000 });
   assert.equal(await dialog.getByRole('radio', { checked: true }).count(), 0, 'no default rating');
@@ -339,18 +361,39 @@ try {
   await faultDetail.getByRole('button', { name: '记录今天的复习', exact: true }).click();
   let faultDialog = page.getByRole('dialog'); await faultDialog.waitFor();
   await until(async () => await faultDialog.getByRole('radio').first().isEnabled(), 'fault draft loads');
-  await app.evaluate(() => { globalThis.reviewPlanSmoke.loseDraftAck = true; });
+  await app.evaluate(() => {
+    globalThis.reviewPlanSmoke.loseDraftAck = true;
+    globalThis.reviewPlanSmoke.failDraftTimeAfterAck = true; globalThis.reviewPlanSmoke.failDraftReadAfterAck = true;
+  });
+  // Deliberately skew only the isolated renderer clock. The real main process still stamps SQLite.
+  await page.evaluate(() => {
+    globalThis.reviewPlanRendererClock = Date.now;
+    Date.now = () => globalThis.reviewPlanRendererClock() + 300000;
+  });
   await faultDialog.getByRole('radio', { name: /困难/ }).check();
   const faultKey = `problem-review:manual:${fixture.ids[1]}`;
-  await until(async () => (await api('reviewAssessmentDraft', faultKey))?.rating === 2, 'real draft commits despite lost reply');
-  const originalDraft = await api('reviewAssessmentDraft', faultKey);
+  // Do not let polling consume the one failed readback intended for the real renderer save path.
+  await until(async () => await app.evaluate(() => globalThis.reviewPlanSmoke.lostDraftCommitted?.rating === 2), 'real draft commits despite lost reply');
+  const originalDraft = await app.evaluate(() => globalThis.reviewPlanSmoke.lostDraftCommitted);
+  assert.equal(originalDraft.key, faultKey);
+  await faultDialog.getByRole('alert').filter({ hasText: '草稿尚未保存' }).waitFor();
+  assert.ok(await page.evaluate(at => Math.abs(Date.now() - Date.parse(at)) > 290000, originalDraft.observedAt), 'renderer clock differs from the persisted observation');
   console.log('CHECK Lost draft acknowledgement: explicit close flushes the committed input');
+  await faultDialog.getByRole('button', { name: '关闭自评', exact: true }).click();
+  await faultDialog.getByRole('alert').filter({ hasText: '未能关闭' }).waitFor();
+  assert.equal(await faultDialog.isVisible(), true, 'failed readback keeps the original selection visible');
   await faultDialog.getByRole('button', { name: '关闭自评', exact: true }).click(); await faultDialog.waitFor({ state: 'hidden' });
+  assert.equal((await api('reviewAssessmentDraft', faultKey)).revision, originalDraft.revision, 'closing reconciles the original failed readback without another CAS write');
+  await page.evaluate(() => { Date.now = globalThis.reviewPlanRendererClock; delete globalThis.reviewPlanRendererClock; });
   await faultDetail.getByRole('button', { name: '记录今天的复习', exact: true }).click();
   faultDialog = page.getByRole('dialog'); await faultDialog.waitFor();
   await until(async () => await faultDialog.getByRole('radio', { name: /困难/ }).isChecked(), 'lost draft reply preserves original selection');
   assert.equal((await api('reviewAssessmentDraft', faultKey)).requestId, originalDraft.requestId);
   await app.evaluate(() => { globalThis.reviewPlanSmoke.loseSubmitDraftAck = true; globalThis.reviewPlanSmoke.holdRecordAck = true; });
+  await page.evaluate(() => {
+    globalThis.reviewPlanRendererClock = Date.now;
+    Date.now = () => globalThis.reviewPlanRendererClock() - 300000;
+  });
   await faultDialog.getByRole('button', { name: '记录自评并安排复习', exact: true }).click();
   await until(async () => await app.evaluate(() => globalThis.reviewPlanSmoke.recordAckPending), 'real observation commits before delayed lost reply');
   assert.equal(await faultDialog.getByRole('button', { name: '关闭自评', exact: true }).isDisabled(), true);
@@ -359,6 +402,7 @@ try {
   assert.equal((await api('problemReviewDetail', fixture.ids[1])).events.total, 3);
   await app.evaluate(() => globalThis.reviewPlanSmoke.releaseRecordAck());
   await faultDialog.getByRole('button', { name: '核对并重试原请求', exact: true }).waitFor();
+  await page.evaluate(() => { Date.now = globalThis.reviewPlanRendererClock; delete globalThis.reviewPlanRendererClock; });
   assert.equal((await api('reviewAssessmentDraft', faultKey)).resolvedEventId, committed.event.id);
   await close(); await launch(); await nav('复习计划');
   restoredReviews = page.getByRole('region', { name: '复习计划', exact: true });
@@ -373,7 +417,7 @@ try {
   assert.equal((await api('problemReviewRequest', originalDraft.requestId)).event.id, committed.event.id);
   await until(async () => await api('reviewAssessmentDraft', faultKey) === null, 'restarted original request cleans only its confirmed draft');
   await faultDialog.getByRole('button', { name: '关闭自评', exact: true }).click();
-  pass('Lost draft/freeze/assessment replies, Escape during save and full restart recover the original request without duplicate observations');
+  pass('Skewed renderer clocks, lost draft/freeze/assessment replies, failed clock/draft readbacks and full restart recover the original request without duplicate observations');
   await close(); await launch(join(directory, 'empty-data')); await nav('复习计划');
   const emptyReviews = page.getByRole('region', { name: '复习计划', exact: true });
   await emptyReviews.getByRole('heading', { name: '还没有复习题目', exact: true }).waitFor();
@@ -390,9 +434,15 @@ try {
     report.failureState = await bounded(page.evaluate(() => ({ activeTag: document.activeElement?.tagName,
       activeLabel: document.activeElement?.getAttribute('aria-label'), visibility: document.visibilityState, focused: document.hasFocus(),
       alerts: Array.from(document.querySelectorAll('.problem-rating-dialog [role=alert]'), element => element.textContent) })), 'read isolated failure state', 5000).catch(() => null);
+    report.officialScenes = await bounded(page.evaluate(() => globalThis.reviewPlanOfficialScenes), 'read isolated official foreground diagnostics', 5000).catch(() => null);
+    report.promptChecks = await bounded(app.evaluate(() => globalThis.reviewPlanSmoke.promptChecks), 'read isolated official claim diagnostics', 5000).catch(() => null);
     console.error('Isolated failure dialog:', report.visibleFailure);
     console.error('Isolated failure state:', JSON.stringify(report.failureState));
   }
   console.error(report.error); process.exitCode = 1; }
-finally { await close().catch(error => { report.cleanupError = String(error); process.exitCode = 1; });
+finally {
+  if (page && !page.isClosed()) await bounded(page.evaluate(() => {
+    if (globalThis.reviewPlanRendererClock) { Date.now = globalThis.reviewPlanRendererClock; delete globalThis.reviewPlanRendererClock; }
+  }), 'restore isolated renderer clock', 5000).catch(error => { report.clockCleanupError = String(error); process.exitCode = 1; });
+  await close().catch(error => { report.cleanupError = String(error); process.exitCode = 1; });
   await writeFile(join(directory, 'report.json'), JSON.stringify(report, null, 2)); console.log('Report:', join(directory, 'report.json')); }

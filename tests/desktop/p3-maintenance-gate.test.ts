@@ -15,6 +15,7 @@ test('restore preparation permits pending drafts, blocks new work and waits for 
   await gate.run('problem-review:save-draft', () => {});
   await gate.run('problem-review:draft', () => {});
   await gate.run('problem-review:request', () => {});
+  await gate.run('problem-review:time', () => {});
   await assert.rejects(gate.run('problem-review:record', () => {}), /正在恢复/);
   await assert.rejects(gate.run('problem-review:claim', () => {}), /正在恢复/);
   await assert.rejects(gate.run('submission:history', () => {}), /正在恢复/);
@@ -27,6 +28,7 @@ test('restore preparation permits pending drafts, blocks new work and waits for 
   await assert.rejects(gate.run('problem-review:save-draft', () => {}), /正在恢复/);
   await assert.rejects(gate.run('problem-review:draft', () => {}), /正在恢复/);
   await assert.rejects(gate.run('problem-review:request', () => {}), /正在恢复/);
+  await assert.rejects(gate.run('problem-review:time', () => {}), /正在恢复/);
   complete(); await previous; await drain; assert.equal(committed, true); assert.equal(drained, true);
   gate.release(); assert.equal(await gate.run('runner:run', () => 1), 1);
 });
