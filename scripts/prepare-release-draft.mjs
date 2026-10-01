@@ -255,19 +255,35 @@ export function releaseCreateArguments(configuration, files, notesPath) {
   return ['release', 'create', configuration.tag, '--repo', configuration.repo, '--draft', '--target', configuration.sha, '--title', `题炼 ${configuration.tag}`, '--notes-file', notesPath, ...files];
 }
 
+export function releaseForTag(pages, tag) {
+  assert.ok(Array.isArray(pages) && pages.length > 0, 'Release listing is incomplete');
+  assert.ok(pages.every(page => Array.isArray(page)), 'Release listing has an unexpected shape');
+  const releases = pages.flat();
+  assert.ok(releases.every(release => Number.isSafeInteger(release.id) && release.id > 0 && typeof release.tag_name === 'string'), 'Release identity is invalid');
+  const matching = releases.filter(release => release.tag_name === tag);
+  assert.ok(matching.length <= 1, 'Multiple releases use the requested tag');
+  return matching[0] ?? null;
+}
+
 export async function prepareReleaseDraft(argv = process.argv.slice(2), env = process.env, root = process.cwd()) {
   const pkg = JSON.parse(await readFile(join(root, 'package.json'), 'utf8'));
   const configuration = releaseConfiguration(argv, env, pkg);
   assert.equal(process.platform, 'darwin', 'Draft preparation requires a macOS runner');
   assert.equal((await command('git', ['rev-parse', 'HEAD'], { cwd: root })).trim(), configuration.sha);
   const { tag, repo, sha, runId, version } = configuration;
-  const api = async path => JSON.parse(await command('gh', ['api', path], { env }));
+  const api = async (path, ...options) => JSON.parse(await command('gh', ['api', path, ...options], { env }));
+  // The tag-name REST endpoint only returns published releases. An authenticated
+  // paginated listing also includes drafts, which may not have a Git tag yet.
+  const findRelease = async () => releaseForTag(await api(`repos/${repo}/releases?per_page=100`, '--paginate', '--slurp'), tag);
+  async function ensureReleaseAbsent() {
+    assert.equal(await findRelease(), null, 'Release or draft already exists; refusing to overwrite it');
+  }
   async function ensureAbsent(path) {
     try { await execute('gh', ['api', path], { env, timeout: 30_000 }); }
     catch (error) { if (String(error.stderr).includes('HTTP 404')) return; throw new Error('Cannot verify that the release/tag is absent'); }
     throw new Error('Release or tag already exists; refusing to overwrite it');
   }
-  await ensureAbsent(`repos/${repo}/releases/tags/${tag}`); await ensureAbsent(`repos/${repo}/git/ref/tags/${tag}`);
+  await ensureReleaseAbsent(); await ensureAbsent(`repos/${repo}/git/ref/tags/${tag}`);
   const run = await api(`repos/${repo}/actions/runs/${runId}`);
   const jobs = await api(`repos/${repo}/actions/runs/${runId}/attempts/${run.run_attempt}/jobs?per_page=100`);
   const artifactList = await api(`repos/${repo}/actions/runs/${runId}/artifacts?per_page=100`);
@@ -319,9 +335,10 @@ export async function prepareReleaseDraft(argv = process.argv.slice(2), env = pr
   const notesPath = join(temporary, 'release-notes.md');
   await writeFile(notesPath, `题炼 ${tag} 草稿。\n\n构建提交：${sha}\n三平台验证：[Desktop checks](https://github.com/${repo}/actions/runs/${runId})\n\n包含 macOS Apple Silicon、macOS Intel 与 Windows x64 的安装器和便携包，以及独立的 Python 3.14 与 Java 25 离线运行时；应用不内置语言运行环境。\n\nmacOS 使用临时签名，未进行开发者签名或公证；Windows 安装器未签名。升级前请先导出本机学习备份。AI 使用自带 Key，费用由所选服务商决定。\n\n本工具仅创建草稿，不发布、不覆盖已有版本。\n`);
   // Recheck immediately before the only release mutation.
-  await ensureAbsent(`repos/${repo}/releases/tags/${tag}`); await ensureAbsent(`repos/${repo}/git/ref/tags/${tag}`);
+  await ensureReleaseAbsent(); await ensureAbsent(`repos/${repo}/git/ref/tags/${tag}`);
   await command('gh', releaseCreateArguments(configuration, names.map(name => join(assetsDirectory, name)), notesPath), { env, timeout: 600_000 });
-  const release = await api(`repos/${repo}/releases/tags/${tag}`);
+  const created = await findRelease(); assert.ok(created, 'Created release is missing from the authenticated listing');
+  const release = await api(`repos/${repo}/releases/${created.id}`);
   assert.equal(release.draft, true); assert.equal(release.target_commitish, sha); assert.equal(release.tag_name, tag);
   assert.deepEqual(release.assets.map(asset => asset.name).sort(), [...names].sort());
   for (const asset of release.assets) {

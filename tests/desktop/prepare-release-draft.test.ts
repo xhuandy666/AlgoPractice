@@ -6,7 +6,7 @@ import { test } from 'node:test';
 import { fileURLToPath } from 'node:url';
 // The release entry point is intentionally plain Node.js for the manual workflow.
 // @ts-expect-error The standalone .mjs tool has no TypeScript declaration.
-import { assertSafePaths, collectSourceInputs, expectedReleaseAssets, releaseConfiguration, releaseCreateArguments, runtimeAssets, validateBuildInfo, validateCiEvidence } from '../../scripts/prepare-release-draft.mjs';
+import { assertSafePaths, collectSourceInputs, expectedReleaseAssets, releaseConfiguration, releaseCreateArguments, releaseForTag, runtimeAssets, validateBuildInfo, validateCiEvidence } from '../../scripts/prepare-release-draft.mjs';
 
 const sha = 'a'.repeat(40);
 const configuration = { runId: '123456', tag: 'v0.90.0', sha, repo: 'xhuandy666/AlgoPractice', version: '0.90.0' };
@@ -100,4 +100,16 @@ test('release command enumerates exactly 14 known assets and can only create a d
   for (const flag of ['--latest', '--clobber', '--generate-notes', '--prerelease']) assert.ok(!args.includes(flag));
   assert.throws(() => releaseCreateArguments(configuration, files.slice(1), '/notes'));
   assert.throws(() => releaseCreateArguments(configuration, [...files.slice(1), files[1]], '/notes'));
+});
+
+test('release lookup includes untagged drafts across pages and rejects incomplete or duplicate identities', () => {
+  const published = { id: 10, tag_name: 'v0.85.0', draft: false };
+  const draft = { id: 20, tag_name: configuration.tag, draft: true };
+  assert.equal(releaseForTag([[published], [draft]], configuration.tag), draft);
+  assert.equal(releaseForTag([[published]], configuration.tag), null);
+  assert.equal(releaseForTag([[]], configuration.tag), null);
+  assert.throws(() => releaseForTag([], configuration.tag));
+  assert.throws(() => releaseForTag([published], configuration.tag));
+  assert.throws(() => releaseForTag([[draft], [{ ...draft, id: 21 }]], configuration.tag));
+  assert.throws(() => releaseForTag([[{ ...draft, id: '20' }]], configuration.tag));
 });

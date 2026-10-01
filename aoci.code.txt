@@ -34,7 +34,7 @@ prepare-windows-helper.mjs[OV7T]: F:在Windows x64编译原生进程树辅助程
 runtime-install.ts[EV6T]: F:提供Python与Java受管运行时安装、离线导入及恢复命令入口 | R:code:src/runner/managed-runtime.ts | A:支持root、archive、language与recover参数 | S:离线包必须选择单一语言；SIGINT传递取消并清理监听
 windows-diagnostics.mjs[XQ6T]: F:比较Node直启与生产Windows启动器的参数、标准输入和输出保真度及耗时 | R:code:src/runner/process.ts,code:src/runner/windows-job.ts | A:断言空参数、Unicode及引号往返和零退出码 | S:诊断不输出父进程环境或用户数据
 check-package-boundary.mjs[OV7T]: F:验证发行载荷白名单及运行时清单溯源，阻止私人资产和语言环境误入包 | R:code:package.json,code:scripts/build.mjs | A:checkPackageBoundary返回文件数和runtimesBundled状态 | S:拒绝dist链接、数据库、归档及认知开发资产；额外资源只允许既有Windows进程辅助程序
-prepare-release-draft.mjs[OV8M]: F:绑定当前main提交与成功三平台CI，核验实际归档并上传十四项发行草稿资产 | R:code:package.json,code:runtime-manifest.json,code:scripts/build.mjs,code:scripts/check-package-boundary.mjs | A:校验CI来源、逐文件构建摘要、ASAR边界许可图标、DMG签名及NSIS与ZIP载荷一致性；独立运行时验大小摘要并生成校验单 | S:既有标签或发行拒绝覆盖；依赖macOS和7zz，安装器不执行；语言下载不带GitHub授权；草稿上传后逐项复核远端摘要大小，失败不自动发布
+prepare-release-draft.mjs[OV8M]: F:绑定当前main提交与成功三平台CI，核验实际归档并上传十四项发行草稿资产 | R:code:package.json,code:runtime-manifest.json,code:scripts/build.mjs,code:scripts/check-package-boundary.mjs | A:校验CI来源、逐文件构建摘要、ASAR边界许可图标、DMG签名及NSIS与ZIP载荷一致性；独立运行时验大小摘要并生成校验单 | S:认证分页发行列表同时排除草稿，上传后按ID复核；既有标签拒绝覆盖；依赖macOS和7zz但不执行安装器；语言下载不带GitHub授权；远端摘要大小全部吻合才成功，失败不自动发布
 
 ===/Users/xhuandy/Documents/Codex/projects/algopractice/src/ai/===
 canonical.ts[LS7T]: F:校验AI配置与动作请求并用稳定JSON和SHA256冻结身份 | R:code:src/shared/ai-endpoint.ts,code:src/ai/errors.ts | A:接受chat、hint、diagnosis、official-review、note-draft，限制显式上下文标识和问题长度 | S:仅官方复盘允许且必须提交编号；GLM温度限0至1两位小数；拒绝未知字段、重复ID、非有限数和过深结构
