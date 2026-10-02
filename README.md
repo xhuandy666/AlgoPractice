@@ -24,7 +24,7 @@
 | **从函数题练到笔试输入输出** | 普通练习可自由切换函数式 / ACM，用完整 stdin / stdout 程序练习；Python、Java 及两种格式分别保存草稿。 |
 | **把复盘留在同一个地方** | 代码、运行与官方提交记录、题目笔记和复习历史放在同一个工作台。本机保存、完整备份，无需注册题炼账号。 |
 
-力扣也提供 AI 与面试工具。官方说明将高级模型额度、企业模拟面试列为 Plus 权益；具体范围以[产品日志](https://leetcode.cn/discuss/post/3144606/chan-pin-geng-xin-ri-zhi-by-leetcode-5nx9/)和[会员说明](https://leetcode.cn/premium-payment/)为准，不代表所有力扣 AI 都收费。
+
 
 ![题炼学习中心：每日目标、学习热力图与复习日历](.github/assets/screenshots/learning-center.png)
 
