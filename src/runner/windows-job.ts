@@ -77,7 +77,11 @@ public static class APJobLauncher {
    owner=OpenProcess(0x00100000,false,ownerPid);Check(owner!=IntPtr.Zero);
    if(pipeName!=null){
     if(!pipeName.StartsWith("algopractice-job-",StringComparison.Ordinal) || pipeName.Length>160)throw new ArgumentException("Invalid private control pipe");
-    control=new NamedPipeClientStream(".",pipeName,PipeDirection.InOut);control.Connect(1000);
+    // Duplex control must use an overlapped handle: the watcher keeps a read pending
+    // while normal completion writes the final ACK. A synchronous handle serializes
+    // that write behind the blocked read, making successful commands wait for timeout.
+    // .NET's ReadByte/WriteByte wrappers use separate overlapped operations on this handle.
+    control=new NamedPipeClientStream(".",pipeName,PipeDirection.InOut,PipeOptions.Asynchronous);control.Connect(1000);
     Thread watcher=new Thread(delegate(){try{control.ReadByte();}catch{}finally{try{stop.Set();}catch(ObjectDisposedException){}}});watcher.IsBackground=true;watcher.Start();
    }
    job=CreateJobObject(IntPtr.Zero,null);Check(job!=IntPtr.Zero);

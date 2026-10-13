@@ -39,6 +39,21 @@ test('Windows native Job launcher executes argv, unicode, stdin, and both output
  const args=['','two words','a"b','C:\\中文 path\\','🌳'];const source="let input='';process.stdin.setEncoding('utf8');process.stdin.on('data',c=>input+=c);process.stdin.on('end',()=>{console.log(JSON.stringify({args:process.argv.slice(1),input}));console.error('stderr ✓')})";
  const r=await runProcess(process.execPath,['-e',source,...args],{cwd:os.tmpdir(),stdin:'输入\n',timeoutMs:20000,outputLimitBytes:16384});assert.equal(r.reason,undefined,JSON.stringify(r));assert.equal(r.code,0);assert.deepEqual(JSON.parse(r.stdout),{args,input:'输入\n'});assert.match(r.stderr,/stderr ✓/);
 });
+test('Windows real helper completes a short normal exit while its control read remains pending',windows,async()=>{
+ const result=await runProcess(process.execPath,['-e',"process.stdout.write('normal completion')"],{cwd:os.tmpdir(),timeoutMs:3000,outputLimitBytes:4096});
+ assert.equal(result.code,0,JSON.stringify(result));assert.equal(result.reason,undefined,JSON.stringify(result));assert.equal(result.terminationError,undefined);
+ assert.equal(result.stdout,'normal completion');assert.equal(result.stderr,'');
+});
+test('Windows real helper preserves continuous large stdout and stderr then completes without a stop request',windows,async()=>{
+ const out='stdout 🌳\n',err='stderr 🌳\n',repetitions=512,iterations=64;
+ // The real helper's watcher is blocked on its control read throughout these
+ // writes; normal completion must write its ACK without a host stop/EOF first.
+ const source=`const write=(stream,text)=>new Promise((resolve,reject)=>stream.write(text,error=>error?reject(error):resolve()));(async()=>{for(let i=0;i<${iterations};i++){await write(process.stdout,${JSON.stringify(out)}.repeat(${repetitions}));await write(process.stderr,${JSON.stringify(err)}.repeat(${repetitions}));}})().catch(error=>{console.error(error);process.exitCode=1;});`;
+ const result=await runProcess(process.execPath,['-e',source],{cwd:os.tmpdir(),timeoutMs:10000,outputLimitBytes:1048576});
+ assert.equal(result.code,0,JSON.stringify({code:result.code,reason:result.reason,terminationError:result.terminationError}));assert.equal(result.reason,undefined);assert.equal(result.terminationError,undefined);
+ assert.equal(result.stdout,out.repeat(repetitions*iterations));assert.equal(result.stderr,err.repeat(repetitions*iterations));
+ assert.equal(Buffer.byteLength(result.stdout)+Buffer.byteLength(result.stderr),786432);
+});
 test('Windows Job termination acknowledgement is independent of user diagnostic-looking stderr',windows,async()=>{
  const result=await runProcess(process.execPath,['-e',"console.error('ALGOPRACTICE_TERMINATION_ERROR: synthetic user text');process.exit(125)"],{cwd:os.tmpdir(),timeoutMs:20000,outputLimitBytes:4096});
  assert.equal(result.code,125);assert.equal(result.reason,undefined,JSON.stringify(result));assert.equal(result.terminationError,undefined);

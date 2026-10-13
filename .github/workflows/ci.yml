@@ -45,6 +45,9 @@ jobs:
           cache: npm
       - name: Install dependencies and Electron
         run: npm ci
+      - name: Verify Windows Job helper before managed environment installation
+        if: runner.os == 'Windows'
+        run: node --test tests/runner/windows-job.test.ts
       - name: Install and prewarm all four managed language environments
         run: npm run runtime:install
       - name: Check types
