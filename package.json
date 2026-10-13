@@ -1,7 +1,7 @@
 {
   "name": "algopractice",
   "productName": "题炼",
-  "version": "0.90.0",
+  "version": "0.91.0",
   "private": true,
   "description": "题炼：算法练习、力扣官方提交、AI 教练与间隔复习",
   "author": "xhuandy666",

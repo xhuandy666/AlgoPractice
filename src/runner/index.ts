@@ -62,6 +62,17 @@ function validate(request: RunRequest): void {
   }
 }
 const normalizeOutput = (s: string) => s.replace(/\r\n/g,'\n').replace(/[ \t]+$/gm,'').replace(/\n+$/,'');
+/** Exact run-owned directory only; Windows may briefly retain an image/AV handle after Job exit. */
+export async function cleanupRunDirectory(directory: string, platform: NodeJS.Platform = process.platform,
+  remove: () => Promise<void> = () => rm(directory, { recursive: true, force: true })): Promise<void> {
+  for (let attempt = 0; ; attempt++) {
+    try { await remove(); return; }
+    catch (error) {
+      if (platform !== 'win32' || attempt >= 4 || !['EPERM', 'EBUSY', 'EACCES', 'ENOTEMPTY'].includes((error as NodeJS.ErrnoException).code ?? '')) throw error;
+      await new Promise(resolve => setTimeout(resolve, 40 * (attempt + 1)));
+    }
+  }
+}
 export async function runCode(request: RunRequest, options: RunOptions = {}): Promise<RunResult> {
   const started = performance.now();
   const runId = options.runId ?? randomUUID(); let sequence = 0;
@@ -113,6 +124,9 @@ export async function runCode(request: RunRequest, options: RunOptions = {}): Pr
       native ? [...profile!.argsPrefix, ...native.compileArgs] : request.language==='python'?['-I','-X','utf8','compile-check.py',request.mode==='acm'?'main.py':'solution.py',compileDiagnostic]:['-XDrawDiagnostics','-encoding','UTF-8','-proc:none',...(request.mode==='acm'?['Main.java']:['Main.java','Solution.java','Nodes.java'])],
       {...processOptions,...(profile?{env:profile.env}:{}),timeoutMs:request.compileTimeoutMs ?? 30000});
     result.stdout=compilation.stdout;result.stderr=compilation.stderr;
+    if(compilation.terminationError) {
+      result.status='internal_error';result.diagnostics.push({phase:'compile',source:'runner',code:'termination_failed',message:compilation.terminationError});return result;
+    }
     if(compilation.reason || compilation.code!==0) {
       result.status=compilation.reason==='spawn_error'?'environment_error':compilation.reason ?? 'compile_error';
       result.diagnostics.push(...await diagnosticsFrom(compileDiagnostic,compilation.stderr,'compile'));
@@ -134,9 +148,9 @@ export async function runCode(request: RunRequest, options: RunOptions = {}): Pr
       emit('run',{caseIndex:index});
       const run=await runProcess(native?.binary ?? executable,args,{...processOptions,signal:executionSignal,stdin:tests[index].stdin ?? request.stdin,outputLimitBytes:remaining});
       result.stdout+=run.stdout;result.stderr+=run.stderr;
-      let status:RunStatus=run.reason==='spawn_error'?'environment_error':run.reason ?? (run.code===0?'completed':'runtime_error');
+      let status:RunStatus=run.terminationError?'internal_error':run.reason==='spawn_error'?'environment_error':run.reason ?? (run.code===0?'completed':'runtime_error');
       if(status==='cancelled' && executionDeadline.signal.aborted && !options.signal?.aborted) status='timeout';
-      let diagnostics:Diagnostic[]=[];
+      let diagnostics:Diagnostic[]=run.terminationError?[{phase:'run',source:'runner',code:'termination_failed',message:run.terminationError}]:[];
       if(status==='runtime_error'){
         diagnostics=await diagnosticsFrom(diagnosticFile,run.stderr,'run');
         if(diagnostics.some(d=>d.code==='output_limit'))status='output_limit';
@@ -171,7 +185,7 @@ export async function runCode(request: RunRequest, options: RunOptions = {}): Pr
   } catch(error) {result.status='internal_error';result.diagnostics.push({phase:'run',source:'runner',message:String(error)});return result;}
   finally {
     if(executionTimer)clearTimeout(executionTimer);
-    if(directory)try{await rm(directory,{recursive:true,force:true});}catch(error){result.status='internal_error';result.diagnostics.push({phase:'run',source:'runner',code:'cleanup_failed',message:String(error)});}
+    if(directory)try{await cleanupRunDirectory(directory);}catch(error){result.status='internal_error';result.diagnostics.push({phase:'run',source:'runner',code:'cleanup_failed',message:String(error)});}
     result.durationMs=performance.now()-started;
     emit('finished',{status:result.status});
   }

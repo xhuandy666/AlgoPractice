@@ -8,7 +8,7 @@ on:
         type: string
         required: true
       release_tag:
-        description: Release tag matching package.json, for example v0.90.0
+        description: Release tag matching package.json, for example v0.91.0
         type: string
         required: true
 
@@ -23,7 +23,7 @@ jobs:
     name: Validate archives and upload draft only
     if: github.ref == 'refs/heads/main'
     runs-on: macos-15
-    timeout-minutes: 20
+    timeout-minutes: 30
     permissions:
       actions: read
       contents: write
@@ -46,5 +46,5 @@ jobs:
         env:
           HOMEBREW_NO_AUTO_UPDATE: '1'
         run: brew install sevenzip
-      - name: Verify exact-commit packages and upload fourteen explicit draft assets
+      - name: Verify exact-commit packages and upload explicit manifest-derived draft assets
         run: node scripts/prepare-release-draft.mjs --ci-run-id "$ALGOPRACTICE_RELEASE_RUN_ID" --release-tag "$ALGOPRACTICE_RELEASE_TAG"
