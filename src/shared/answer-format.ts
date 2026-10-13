@@ -27,6 +27,8 @@ export const NATIVE_SPEC_VERSION = 'native-v1';
 export const ACM_STARTERS: Record<Language, string> = {
   python: 'import sys\n\ndef main():\n    data = sys.stdin.read()\n    # 在这里解析输入、实现算法，并使用 print 输出结果。\n    pass\n\nif __name__ == "__main__":\n    main()\n',
   java: 'import java.io.*;\nimport java.nio.charset.StandardCharsets;\n\npublic class Main {\n    public static void main(String[] args) throws Exception {\n        String input = new String(System.in.readAllBytes(), StandardCharsets.UTF_8);\n        // 在这里解析输入、实现算法，并使用 System.out 输出结果。\n    }\n}\n',
+  go: 'package main\n\nimport (\n    "bufio"\n    "fmt"\n    "os"\n)\n\nfunc main() {\n    input := bufio.NewReader(os.Stdin)\n    output := bufio.NewWriter(os.Stdout)\n    defer output.Flush()\n    // 使用 fmt.Fscan(input, ...) 解析输入，fmt.Fprintln(output, ...) 输出结果。\n    _ = input\n    fmt.Fprintln(output, 0)\n}\n',
+  cpp: '#include <iostream>\n\nint main() {\n    std::ios::sync_with_stdio(false);\n    std::cin.tie(nullptr);\n    // 使用 std::cin 解析输入，std::cout 输出结果。\n    std::cout << 0 << "\\n";\n    return 0;\n}\n',
 };
 export function assertAnswerFormat(value: unknown): asserts value is AnswerFormat {
   if (value !== 'function' && value !== 'acm') throw new Error('答题格式无效。');

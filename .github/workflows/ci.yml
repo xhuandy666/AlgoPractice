@@ -34,6 +34,7 @@ jobs:
             target: Windows x64
     env:
       ALGOPRACTICE_RUNTIME_DIR: ${{ github.workspace }}/.runtime
+      ALGOPRACTICE_NATIVE_TEST_ROOT: ${{ github.workspace }}/.runtime
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
@@ -44,7 +45,7 @@ jobs:
           cache: npm
       - name: Install dependencies and Electron
         run: npm ci
-      - name: Install managed Python and Java
+      - name: Install and prewarm all four managed language environments
         run: npm run runtime:install
       - name: Check types
         run: npm run typecheck
@@ -52,7 +53,7 @@ jobs:
         run: npm test
       - name: Build application
         run: npm run build
-      - name: Launch desktop and run both languages
+      - name: Launch desktop and check baseline workflows
         run: npm run test:desktop
       - name: Check learning dashboard and review calendar
         run: npm run test:learning-center
@@ -68,7 +69,7 @@ jobs:
         run: npm run test:workbench-navigation
       - name: Check missing-runtime preparation and ACM editing
         run: npm run test:onboarding
-      - name: Run Python and Java in function and ACM formats
+      - name: Run Python, Java, Go and C++ in function and ACM formats
         run: npm run test:acm
       - name: Check Hot100 import and restart with isolated synthetic content
         run: npm run test:hot100

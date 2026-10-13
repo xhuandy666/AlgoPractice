@@ -1,5 +1,6 @@
-export type Language = 'python' | 'java';
-export type ValueType = 'int' | 'int64' | 'bigint' | 'float' | 'boolean' | 'string' | 'listnode' | 'treenode' | { array: ValueType } | { list: ValueType };
+import type { Language } from '../shared/languages.ts';
+export type { Language } from '../shared/languages.ts';
+export type ValueType = 'int' | 'int64' | 'bigint' | 'float' | 'boolean' | 'string' | 'char' | 'listnode' | 'treenode' | { array: ValueType } | { list: ValueType };
 // int64/bigint use decimal strings on the JS/IPC boundary. Never Number.
 export type WireValue = null | boolean | number | string | WireValue[];
 export interface Adapter {
@@ -48,6 +49,8 @@ export interface RunEvent {
   status?: RunStatus;
 }
 export interface RunOptions {
+  /** Host-owned installation/cache root. Never accepted from the renderer's RunRequest. */
+  runtimeRoot?: string;
   signal?: AbortSignal;
   onEvent?: (event: RunEvent) => void;
   /** Optional archive identifier; otherwise the runner creates a UUID. */

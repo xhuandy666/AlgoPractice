@@ -214,7 +214,7 @@ test('backup snapshot lists historical attachment and media references with its 
   const target = join(directory, 'snapshot.sqlite'); await store.backupTo(target);
   store.deleteNote(note.id, 2); store.updateLearningSettings({ dailyReviewBudget: 1 });
   const inspected = PracticeStore.inspectBackupSnapshot(target);
-  assert.equal(inspected.schemaVersion, 9); assert.deepEqual(inspected.mediaHashes, [mediaHash]);
+  assert.equal(inspected.schemaVersion, 10); assert.deepEqual(inspected.mediaHashes, [mediaHash]);
   assert.deepEqual(inspected.attachments.map(file => file.hash).sort(), [firstFile.hash, secondFile.hash].sort());
   assert.deepEqual(inspected.learningSettings, settings);
   const restored = join(directory, 'restored.sqlite'); PracticeStore.restoreBackup(target, restored);
@@ -232,8 +232,8 @@ test('schema 2 migration backs up committed WAL data and preserves every P2 row 
   const before = legacy.prepare('SELECT * FROM drafts').all();
   const upgraded = new PracticeStore(dbPath);
   try {
-    assert.ok(upgraded.migrationBackupPath?.includes('.before-v9-'));
-    assert.deepEqual(legacy.prepare('SELECT problem_id, language, scope_id, code, code_hash, revision, saved_at FROM drafts').all(), before); assert.equal(legacy.prepare('PRAGMA user_version').get()?.user_version, 9);
+    assert.ok(upgraded.migrationBackupPath?.includes('.before-v10-'));
+    assert.deepEqual(legacy.prepare('SELECT problem_id, language, scope_id, code, code_hash, revision, saved_at FROM drafts').all(), before); assert.equal(legacy.prepare('PRAGMA user_version').get()?.user_version, 10);
     const backup = new DatabaseSync(upgraded.migrationBackupPath!, { readOnly: true });
     try { assert.equal(backup.prepare('PRAGMA user_version').get()?.user_version, 2); assert.deepEqual(backup.prepare('SELECT * FROM drafts').all(), before); } finally { backup.close(); }
     assert.equal(upgraded.getDraft('p2', 'python')?.revision, 9); assert.deepEqual(upgraded.listNotes(), []); upgraded.integrityCheck();
@@ -242,17 +242,17 @@ test('schema 2 migration backs up committed WAL data and preserves every P2 row 
   } finally { upgraded.close(); legacy.close(); }
 });
 
-test('failed schema 2 to 9 migration rolls back and retains an untouched usable source backup', t => {
+test('failed schema 2 to 10 migration rolls back and retains an untouched usable source backup', t => {
   const directory = mkdtempSync(join(tmpdir(), 'algopractice-v3-fail ')); t.after(() => rmSync(directory, { recursive: true, force: true }));
   const dbPath = join(directory, 'practice.sqlite'), legacy = new DatabaseSync(dbPath);
   legacy.exec(readFileSync(new URL('../storage/fixtures/p2-schema.sql', import.meta.url), 'utf8'));
   legacy.exec('CREATE TABLE review_items (conflicting_fixture TEXT) STRICT');
-  assert.throws(() => new PracticeStore(dbPath), /Schema v9 migration failed/);
+  assert.throws(() => new PracticeStore(dbPath), /Schema v10 migration failed/);
   try {
     assert.equal(legacy.prepare('PRAGMA user_version').get()?.user_version, 2);
     assert.equal(legacy.prepare("SELECT name FROM sqlite_schema WHERE name = 'notes'").get(), undefined);
     assert.equal(legacy.prepare('PRAGMA integrity_check').get()?.integrity_check, 'ok');
-    const backup = readdirSync(directory).find(name => name.includes('.before-v9-') && name.endsWith('.sqlite'));
+    const backup = readdirSync(directory).find(name => name.includes('.before-v10-') && name.endsWith('.sqlite'));
     assert.ok(backup); const archived = new DatabaseSync(join(directory, backup), { readOnly: true });
     try { assert.equal(archived.prepare('PRAGMA user_version').get()?.user_version, 2); } finally { archived.close(); }
   } finally { legacy.close(); }

@@ -11,7 +11,7 @@ import { createHash, randomUUID } from 'node:crypto';
 import { pathToFileURL } from 'node:url';
 import { DatabaseSync } from 'node:sqlite';
 import { deflateSync } from 'node:zlib';
-import { runCode } from '../runner/index';
+import { runCode, runnerDriverVersion } from '../runner/index';
 import { inspectRuntime, recoverRuntimeInstallations } from '../runner/managed-runtime';
 import { RuntimeManager } from '../runner/runtime-manager';
 import { RunPreparations } from './run-preparation';
@@ -35,6 +35,7 @@ import type { EnvironmentInfo, RunArchive, RuntimeProgress, WorkspaceData } from
 import type { LibraryProblem, ImportJob } from '../shared/library';
 import type { ImportInput } from '../source/index';
 import type { Language, RunResult } from '../runner/types';
+import { LANGUAGES, LANGUAGE_DETAILS, isLanguage, languageLabel } from '../shared/languages';
 
 // Keep the existing learning-data directory when the display name changes.
 app.setPath('userData', process.env.ALGOPRACTICE_DATA_DIR ? resolve(process.env.ALGOPRACTICE_DATA_DIR) : join(app.getPath('appData'), 'AlgoPractice'));
@@ -72,7 +73,7 @@ let config: { runtimes: Partial<Record<Language, string>>; reminder: { dueAt: st
 let configPath: string;
 const jsonValue = (value: unknown): JsonValue => JSON.parse(JSON.stringify(value)) as JsonValue;
 function saveConfig(next = config) { const temporary = configPath + '.partial'; writeFileSync(temporary, JSON.stringify(next, null, 2), { mode: 0o600 }); renameSync(temporary, configPath); config = next; }
-function languageValue(value: unknown): Language { if (value !== 'python' && value !== 'java') throw new Error('仅支持 Python 或 Java。'); return value; }
+function languageValue(value: unknown): Language { if (!isLanguage(value)) throw new Error('仅支持 Python、Java、Go 或 C++。'); return value; }
 function idValue(value: unknown): string { if (typeof value !== 'string' || !value.trim() || value.length > 512 || value.includes('\0')) throw new Error('标识无效。'); return value; }
 function scopeValue(value: unknown): string { return value === undefined ? 'practice' : idValue(value); }
 function problemValue(value: unknown) { const p = store.getProblem(idValue(value)); if (!p) throw new Error('题目尚未导入。'); return p; }
@@ -95,7 +96,7 @@ async function runtimeState(language: Language, force = false): Promise<RuntimeS
     const state: RuntimeState = { status: inspection.status === 'cancelled' ? 'error' : inspection.status,
       source: inspection.source === 'explicit' ? 'selected' : inspection.source === 'managed' ? 'managed' : inspection.source === 'none' ? null : 'discovered',
       path: inspection.source === 'none' ? null : inspection.executable, version: inspection.version ?? null,
-      message: inspection.status === 'ready' ? '环境已就绪，可离线运行。' : inspection.blockedByExplicit ? '已选择的环境失效或不兼容，请重新选择，或明确改用托管环境。' : inspection.status === 'incompatible' ? '发现的环境版本不兼容，需要 CPython 3.14.x 或完整 OpenJDK 25。' : inspection.status === 'missing' ? '尚未找到兼容环境。首次运行需要安装或选择已有环境。' : '环境检测未完成，请重新检测或选择有效路径。',
+      message: inspection.status === 'ready' ? '环境已就绪，可离线运行。' : inspection.blockedByExplicit ? '已选择的环境失效或不兼容，请重新选择，或明确改用托管环境。' : inspection.status === 'incompatible' ? `发现的环境不兼容，需要 ${LANGUAGE_DETAILS[language].environmentLabel}。` : inspection.status === 'missing' ? '尚未找到兼容环境。首次运行需要安装或选择已有环境。' : '环境检测未完成，请重新检测或选择有效路径。',
       managedInstalled: details.managed.owned, installedBytes: details.managed.diskBytes,
       artifact: details.artifact.supported && details.artifact.source && details.artifact.downloadBytes !== null ? { version: details.artifact.version, source: details.artifact.source, downloadBytes: details.artifact.downloadBytes, expandedBytes: details.artifact.expandedBytes, peakBytes: details.artifact.peakBytes } : null };
     // A selection/install may change while the probe is awaiting I/O. Never cache or return that old path's state.
@@ -237,7 +238,7 @@ else {
       if (!state.progress || !['download', 'copy'].includes(state.phase)) invalidateRuntimeState(state.language);
       if (win && !win.isDestroyed() && state.progress) win.webContents.send('runtime:progress', { language: state.language, ...state.progress });
     } });
-    runtimeNotices = recovery.filter(item => item.status === 'needs_attention' || item.status === 'active').map(item => `${item.language === 'python' ? 'Python' : 'Java'}：${item.status === 'active' ? '检测到另一个安装任务，请等待后重启应用。' : '中断的安装需要检查；原有目录已保留，请保留数据目录后处理。'}${item.message ? ` ${item.message}` : ''}`);
+    runtimeNotices = recovery.filter(item => item.status === 'needs_attention' || item.status === 'active').map(item => `${languageLabel(item.language)}：${item.status === 'active' ? '检测到另一个安装任务，请等待后重启应用。' : '中断的安装需要检查；原有目录已保留，请保留数据目录后处理。'}${item.message ? ` ${item.message}` : ''}`);
     log('app.started', { version: app.getVersion(), platform: process.platform, arch: process.arch, interrupted });
     const rendererRoot = resolve(__dirname, 'renderer');
     protocol.handle('algopractice', async request => {
@@ -348,9 +349,9 @@ else {
         const runtime = await inspectSelectedRuntime(language, controller.signal);
         if (controller.signal.aborted || runtime.status !== 'ready') throw new Error('面试运行环境未就绪；答案已保留，请检查运行环境。');
         interviews.runTarget(sessionId, problemKey, supplement);
-        const stored=store.saveRun({id:runId,attemptId:item.attemptId,code,testSuiteVersion:createHash('sha256').update(JSON.stringify([problem.cases,problem.acmCompare??'normalized'])).digest('hex'),testSnapshot:jsonValue({cases:problem.cases,acmCompare:problem.acmCompare??'normalized',interviewSupplement:supplement}),adapterVersion:createHash('sha256').update(JSON.stringify(problem.adapter??{mode:'acm'})).digest('hex'),runtimeVersion:runtime.runtimeVersion});
+        const stored=store.saveRun({id:runId,attemptId:item.attemptId,code,testSuiteVersion:createHash('sha256').update(JSON.stringify([problem.cases,problem.acmCompare??'normalized'])).digest('hex'),testSnapshot:jsonValue({cases:problem.cases,acmCompare:problem.acmCompare??'normalized',interviewSupplement:supplement}),adapterVersion:createHash('sha256').update(JSON.stringify([language,runnerDriverVersion(language),problem.adapter??{mode:'acm'}])).digest('hex'),runtimeVersion:runtime.runtimeVersion});
         let result:RunResult;
-        try { result=await runCode({language,code,mode:problem.mode,adapter:problem.adapter,cases:problem.cases,acmCompare:problem.acmCompare,runtimePath:runtime.executable,timeoutMs:10000,outputLimitBytes:1048576},{signal:controller.signal,runId,onEvent:event=>{if(!win.isDestroyed())win.webContents.send('runner:event',event);}}); }
+        try { result=await runCode({language,code,mode:problem.mode,adapter:problem.adapter,cases:problem.cases,acmCompare:problem.acmCompare,runtimePath:runtime.executable,timeoutMs:10000,outputLimitBytes:1048576},{signal:controller.signal,runId,runtimeRoot:runtimes.root,onEvent:event=>{if(!win.isDestroyed())win.webContents.send('runner:event',event);}}); }
         catch { result={status:'internal_error',diagnostics:[{phase:'run',source:'runner',message:'运行未完成，快照已经保存。'}],stdout:'',stderr:'',caseResults:[],durationMs:0,runtimeVersion:'unknown',hostPlatform:`${process.platform}-${process.arch}`,executionScope:'local-user-code-not-sandboxed'}; }
         const row=store.finishRun(stored.id,{status:result.status,result:jsonValue(result),runtimeVersion:result.runtimeVersion});interviews.tick();changed();return toArchive(row);
       })().finally(()=>{release();if(activeRun?.id===runId)activeRun=null;});
@@ -367,12 +368,14 @@ else {
     ]));
     handle('app:environment', async () => {
       const db = new DatabaseSync(':memory:'); const sqlite = String(db.prepare('SELECT sqlite_version() AS version').get()!.version); db.close();
-      const [python, java] = await Promise.all([runtimeState('python'), runtimeState('java')]);
+      const states = await Promise.all(LANGUAGES.map(language => runtimeState(language)));
+      const byLanguage = Object.fromEntries(LANGUAGES.map((language, index) => [language, states[index]])) as Record<Language, RuntimeState>;
+      const { python, java, go, cpp } = byLanguage;
       const tasks = runtimes.states().filter(state => state.busy);
       const installations = Object.fromEntries(tasks.map(state => [state.language, { progress: state.progress ? { language: state.language, ...state.progress } : null }]));
-      return { platform: process.platform, arch: process.arch, electron: process.versions.electron, node: process.versions.node, sqlite, python: python.status === 'ready' ? python.path : null, java: java.status === 'ready' ? java.path : null, dataDirectory, notificationSupported: Notification.isSupported(), reminder: config.reminder, runtimeNotices,
+      return { platform: process.platform, arch: process.arch, electron: process.versions.electron, node: process.versions.node, sqlite, python: python.status === 'ready' ? python.path : null, java: java.status === 'ready' ? java.path : null, go: go.status === 'ready' ? go.path : null, cpp: cpp.status === 'ready' ? cpp.path : null, dataDirectory, notificationSupported: Notification.isSupported(), reminder: config.reminder, runtimeNotices,
         installation: tasks[0] ? { language: tasks[0].language, progress: installations[tasks[0].language].progress } : null,
-        installations, runtimeStates: { python, java }, autoInstallRuntimes: config.autoInstallRuntimes === true } satisfies EnvironmentInfo;
+        installations, runtimeStates: byLanguage, autoInstallRuntimes: config.autoInstallRuntimes === true } satisfies EnvironmentInfo;
     });
     handle('library:index', () => { const page = store.listProblemPage({ limit: 4 }); return { problems: page.items, totalProblems: page.total, lists: store.listLists(), jobs: store.listImportJobs().map(publicJob) }; });
     handle('library:page', filter => store.listProblemPage(filter as ProblemPageFilter));
@@ -494,7 +497,7 @@ else {
         const executable = inspection.executable;
         const testsDigest = format === 'acm' ? testConfigDigest(state.draft?.testConfig ?? defaultAcmTestConfig(state.problem.content)) : null;
         const snapshot = { id: runId, attemptId: attempt.id, code, testSuiteVersion: createHash('sha256').update(JSON.stringify([problem.cases, problem.acmCompare ?? 'normalized'])).digest('hex'),
-          testSnapshot: jsonValue({ cases: problem.cases, acmCompare: problem.acmCompare ?? 'normalized', answerFormat: format, specVersion: state.spec!.specVersion, testConfigDigest: testsDigest, expectedOutputSource: state.spec!.expectedOutputSource }), adapterVersion: createHash('sha256').update(JSON.stringify(problem.adapter ?? { mode: 'acm' })).digest('hex'), runtimeVersion: inspection.runtimeVersion, answerFormat: format, specVersion: state.spec!.specVersion, testConfigDigest: testsDigest ?? undefined };
+          testSnapshot: jsonValue({ cases: problem.cases, acmCompare: problem.acmCompare ?? 'normalized', answerFormat: format, specVersion: state.spec!.specVersion, testConfigDigest: testsDigest, expectedOutputSource: state.spec!.expectedOutputSource }), adapterVersion: createHash('sha256').update(JSON.stringify([language, runnerDriverVersion(language), problem.adapter ?? { mode: 'acm' }])).digest('hex'), runtimeVersion: inspection.runtimeVersion, answerFormat: format, specVersion: state.spec!.specVersion, testConfigDigest: testsDigest ?? undefined };
         const currentDraft = store.getDraft(problemId, language, scopeId, format);
         // A delayed run request must never replace a newer autosaved draft.
         const stored = !currentDraft || currentDraft.code === code ? store.beginRun({ ...snapshot, scopeId }) : store.saveRun(snapshot);
@@ -502,7 +505,7 @@ else {
         let result: RunResult;
         try {
           result = await runCode({ language, code, mode: problem.mode, adapter: problem.adapter, cases: problem.cases, acmCompare: problem.acmCompare, runtimePath: executable, timeoutMs: 10000, outputLimitBytes: 1048576 },
-            { signal: controller.signal, runId, onEvent: event => { if (!win.isDestroyed()) win.webContents.send('runner:event', event); } });
+            { signal: controller.signal, runId, runtimeRoot: runtimes.root, onEvent: event => { if (!win.isDestroyed()) win.webContents.send('runner:event', event); } });
         } catch {
           result = { status: 'internal_error', diagnostics: [{ phase: 'run', source: 'runner', message: '运行器未正常返回结果；代码快照已保存。' }], stdout: '', stderr: '', caseResults: [], durationMs: 0,
             runtimeVersion: versionText, hostPlatform: `${process.platform}-${process.arch}`, executionScope: 'local-user-code-not-sandboxed' };
@@ -525,7 +528,7 @@ else {
       const language = languageValue(value), details = await runtimes.details(language);
       guardEnvironmentMutation(language);
       if (!details.managed.canUninstall) throw new Error('此托管环境正在使用或需要恢复，暂不能卸载。');
-      const result = await dialog.showMessageBox(win, { type: 'warning', title: '卸载托管环境', message: `仅卸载题炼管理的 ${language === 'python' ? 'Python' : 'Java'} 环境？`, detail: '代码、题目、学习记录和你自行安装的环境不会删除。以后可以重新下载安装。', buttons: ['取消', '卸载'], defaultId: 0, cancelId: 0 });
+      const result = await dialog.showMessageBox(win, { type: 'warning', title: '卸载托管环境', message: `仅卸载题炼管理的 ${languageLabel(language)} 环境？`, detail: '代码、题目、学习记录和你自行安装的环境不会删除。以后可以重新下载安装。', buttons: ['取消', '卸载'], defaultId: 0, cancelId: 0 });
       if (result.response !== 1) return;
       guardEnvironmentMutation(language);
       await runtimes.uninstall(language);
@@ -536,11 +539,11 @@ else {
     });
     handle('runtime:select', async value => {
       const language = languageValue(value); guardEnvironmentMutation(language);
-      const result = await dialog.showOpenDialog(win, { title: language === 'python' ? '选择 Python 3.14 可执行文件' : '选择 JDK 25 的 java 可执行文件', properties: ['openFile'] });
+      const result = await dialog.showOpenDialog(win, { title: language === 'cpp' ? '选择 C++17 工具链可执行文件（Zig、clang++ 或 g++）' : `选择 ${LANGUAGE_DETAILS[language].environmentLabel} 的 ${language} 可执行文件`, properties: ['openFile'] });
       if (result.canceled) return false;
       guardEnvironmentMutation(language);
       const executable = result.filePaths[0];
-      const inspection = await inspectRuntime(language, { runtimePath: executable });
+      const inspection = await inspectRuntime(language, { root: runtimes.root, runtimePath: executable });
       if (inspection.status !== 'ready') throw new Error(inspection.diagnostics.map(diagnostic => diagnostic.message).join('\n') || '运行时不可用。');
       guardEnvironmentMutation(language);
       saveConfig({ ...config, runtimes: { ...config.runtimes, [language]: executable } });

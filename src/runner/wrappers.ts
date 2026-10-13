@@ -78,7 +78,7 @@ pathlib.Path(sys.argv[2]).write_text(encoded, encoding='utf-8')
 
 function javaType(type: ValueType, boxed = false): string {
   if (typeof type !== 'string') return 'array' in type ? `${javaType(type.array)}[]` : `java.util.List<${javaType(type.list, true)}>`;
-  const types = { int: boxed ? 'Integer' : 'int', int64: boxed ? 'Long' : 'long', bigint: 'java.math.BigInteger', float: boxed ? 'Double' : 'double', boolean: boxed ? 'Boolean' : 'boolean', string: 'String', listnode: 'ListNode', treenode: 'TreeNode' };
+  const types = { int: boxed ? 'Integer' : 'int', int64: boxed ? 'Long' : 'long', bigint: 'java.math.BigInteger', float: boxed ? 'Double' : 'double', boolean: boxed ? 'Boolean' : 'boolean', string: 'String', char: boxed ? 'Character' : 'char', listnode: 'ListNode', treenode: 'TreeNode' };
   return types[type];
 }
 function javaString(value: string): string { return `new String(java.util.Base64.getDecoder().decode("${Buffer.from(value).toString('base64')}"), java.nio.charset.StandardCharsets.UTF_8)`; }
@@ -90,6 +90,7 @@ function literal(value: WireValue, type: ValueType): string {
     return 'array' in type ? `new ${javaErasedType(type)}{${values}}` : `new java.util.ArrayList<${javaType(inner, true)}>(java.util.Arrays.<${javaType(inner,true)}>asList(${values}))`;
   }
   if (type === 'string') return javaString(value as string);
+  if (type === 'char') return `(char)${(value as string).charCodeAt(0)}`;
   if (type === 'int64') return `Long.parseLong("${value}")`;
   if (type === 'bigint') return `new java.math.BigInteger("${value}")`;
   if (type === 'float') return `Double.parseDouble("${value}")`;

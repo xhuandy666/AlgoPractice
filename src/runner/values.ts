@@ -1,4 +1,13 @@
-import type { Adapter, ValueType, WireValue } from './types.ts';
+import type { Adapter, Language, ValueType, WireValue } from './types.ts';
+
+/** Capabilities describe the portable local function protocol, not official judge support. */
+export function supportsValueType(language: Language, type: ValueType): boolean {
+  if (typeof type !== 'string') return supportsValueType(language, 'array' in type ? type.array : type.list);
+  return !(language === 'cpp' && type === 'bigint');
+}
+export function supportsAdapter(language: Language, adapter: Adapter): boolean {
+  return adapter.params.every(type => supportsValueType(language, type)) && (adapter.returns === 'void' || supportsValueType(language, adapter.returns));
+}
 
 export function observedType(adapter:Adapter):ValueType {
   if(adapter.inPlaceArg!==undefined){
@@ -12,7 +21,7 @@ export function observedType(adapter:Adapter):ValueType {
 
 export function validateType(type: ValueType, depth = 0): void {
   if (depth > 8) throw new Error('Type nesting exceeds 8');
-  if (typeof type === 'string') { if (!['int','int64','bigint','float','boolean','string','listnode','treenode'].includes(type)) throw new Error('Unsupported value type'); return; }
+  if (typeof type === 'string') { if (!['int','int64','bigint','float','boolean','string','char','listnode','treenode'].includes(type)) throw new Error('Unsupported value type'); return; }
   if (!type || typeof type !== 'object' || Object.keys(type).length !== 1) throw new Error('Invalid value type');
   if ('array' in type) validateType(type.array, depth + 1); else if ('list' in type) validateType(type.list, depth + 1); else throw new Error('Unsupported collection type');
 }
@@ -36,6 +45,7 @@ export function validateValue(value: WireValue, type: ValueType): void {
   if (type === 'float' && !(typeof value === 'number' && Number.isFinite(value))) throw new Error('Expected finite float');
   if (type === 'boolean' && typeof value !== 'boolean') throw new Error('Expected boolean');
   if (type === 'string' && typeof value !== 'string') throw new Error('Expected string');
+  if (type === 'char' && !(typeof value === 'string' && value.length === 1 && value.charCodeAt(0) <= 127)) throw new Error('Expected one ASCII character');
 }
 export function normalizeTyped(value: WireValue, type: ValueType): WireValue {
   if(typeof type !== 'string')return (value as WireValue[]).map(v=>normalizeTyped(v,'array' in type?type.array:type.list));

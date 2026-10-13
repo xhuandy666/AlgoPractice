@@ -345,7 +345,12 @@ export class LearningRepository {
       WHERE NOT EXISTS(SELECT 1 FROM attempts a WHERE a.problem_id=h.problem_id)
       AND NOT EXISTS(SELECT 1 FROM problem_review_plans r WHERE r.problem_id=h.problem_id)
       AND (length(trim(COALESCE(json_extract(v.snapshot_json, '$.starter.python'), ''), ${SQL_TRIM_WHITESPACE})) > 0
-        OR length(trim(COALESCE(json_extract(v.snapshot_json, '$.starter.java'), ''), ${SQL_TRIM_WHITESPACE})) > 0)
+        OR length(trim(COALESCE(json_extract(v.snapshot_json, '$.starter.java'), ''), ${SQL_TRIM_WHITESPACE})) > 0
+        OR length(trim(COALESCE(json_extract(v.snapshot_json, '$.starter.go'), ''), ${SQL_TRIM_WHITESPACE})) > 0
+        OR (length(trim(COALESCE(json_extract(v.snapshot_json, '$.starter.cpp'), ''), ${SQL_TRIM_WHITESPACE})) > 0
+          AND (json_extract(v.snapshot_json, '$.mode') = 'acm' OR (json_type(v.snapshot_json, '$.adapter') = 'object'
+            AND NOT EXISTS(SELECT 1 FROM json_tree(v.snapshot_json, '$.adapter.params') t WHERE t.type = 'text' AND t.value = 'bigint')
+            AND NOT EXISTS(SELECT 1 FROM json_tree(v.snapshot_json, '$.adapter.returns') t WHERE t.type = 'text' AND t.value = 'bigint')))))
       AND (json_extract(v.snapshot_json, '$.mode')='acm' OR json_type(v.snapshot_json, '$.adapter')='object')
       AND json_array_length(v.snapshot_json, '$.cases') > 0 ORDER BY h.created_at,h.problem_id LIMIT 3`).all() as Row[]).map(row => String(row.problem_id));
     return { date: day, timeZone: settings.timeZone, budget: settings.dailyReviewBudget, reviewedToday: snapshot.summary.reviewedToday,

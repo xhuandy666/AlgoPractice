@@ -9,6 +9,8 @@ import { PracticeStore } from '../../src/storage/practice-store.ts';
 import { LeetCodeCnSourceAdapter, parseSource, SourceError } from '../../src/source/index.ts';
 import type { FetchOptions, ImportInput, Observation, SourcePlan, SourceProblemContent, SourceReference } from '../../src/source/types.ts';
 import type { ImportJob, ProblemContent } from '../../src/shared/library.ts';
+import { demoProblems } from '../../src/shared/demo-problems.ts';
+import { demoContent } from '../../src/shared/presentation.ts';
 
 const url = (slug: string) => `https://leetcode.cn/problems/${slug}/`;
 const id = (slug: string) => `leetcode-cn:problem:${slug}`;
@@ -95,6 +97,54 @@ function archive(store: PracticeStore, problemId: string) {
   const draft = store.saveDraft({ problemId, language: 'python', code: 'newer unsent fixture edits' });
   return { problem, attempt: store.getAttempt(attempt.id)!, run: store.getRun(run.id)!, draft };
 }
+
+test('new templates require explicit source refresh and never replace old drafts, attempts or runs', async t => {
+  const { service, store, adapter } = fixture(t);
+  store.upsertProblem(content('a')); const saved = archive(store, id('a'));
+  const preview = await service.prepare({ kind: 'links', text: url('a') });
+  await settled(service, service.start(preview.id, 'reuse-old-templates').id);
+  assert.deepEqual(adapter.calls, [], 'Reimporting a cached problem does not silently fetch templates');
+  const beforeRefresh = store.getProblem(id('a'))!;
+  adapter.contentHandler = async slug => ({ ...content(slug), starter: {
+    go: 'func sum(nums []int) int { return 0 }', cpp: 'class Solution {public: int sum(vector<int>& nums){return 0;}}',
+  } });
+  const refreshed = await service.prepareProblem(id('a'));
+  assert.deepEqual(store.getProblem(id('a')), beforeRefresh, 'Source preview has no business write');
+  assert.equal(refreshed.after.starter.python, saved.problem.content.starter.python, 'A temporarily absent old template is retained for an unchanged adapter');
+  const latest = service.applyProblem(refreshed.id);
+  assert.notEqual(latest.version, saved.problem.version); assert.ok(latest.content.starter.go); assert.ok(latest.content.starter.cpp);
+  assert.deepEqual(store.getDraft(id('a'), 'python'), saved.draft);
+  assert.deepEqual(store.getAttempt(saved.attempt.id), saved.attempt);
+  assert.deepEqual(store.getRun(saved.run.id), saved.run);
+  assert.deepEqual(store.getProblem(id('a'), saved.problem.version)!.content, saved.problem.content);
+  for (const language of ['go', 'cpp'] as const) {
+    const attempt = store.startAttempt({ problemId: id('a'), language, problemVersion: latest.version });
+    assert.equal(attempt.problemVersion, latest.version); assert.equal(attempt.language, language);
+  }
+});
+
+test('template completion rejects source regression instead of silently deleting cached cases or adapters', async t => {
+  const { service, store, adapter } = fixture(t); const original = store.upsertProblem(content('a'));
+  for (const patch of [{ cases: [] }, { adapter: undefined }, { adapter: { method: 'changed', params: ['int'] as const, returns: 'int' as const }, starter: { go: 'func changed(x int) int {return x}' } }]) {
+    adapter.contentHandler = async slug => ({ ...content(slug), ...patch } as ProblemContent);
+    await assert.rejects(service.prepareProblem(id('a')), /已有缓存已保留/);
+    assert.deepEqual(store.getProblem(id('a')), original);
+  }
+});
+
+test('older authored demo templates can be completed explicitly without any source request', async t => {
+  const { service, store, adapter } = fixture(t);
+  const current = demoContent(demoProblems[0]);
+  const old = store.upsertProblem({ ...current, starter: { python: current.starter.python, java: current.starter.java } });
+  const draft = store.saveDraft({ problemId: old.id, language: 'python', code: 'personal demo edits' });
+  const attempt = store.startAttempt({ problemId: old.id, language: 'python', problemVersion: old.version });
+  const refresh = await service.prepareProblem(old.id);
+  assert.equal(refresh.changed, true); assert.deepEqual(adapter.calls, []); assert.equal(store.getProblem(old.id)!.version, old.version);
+  const latest = service.applyProblem(refresh.id);
+  assert.ok(latest.content.starter.go); assert.ok(latest.content.starter.cpp);
+  assert.deepEqual(store.getDraft(old.id, 'python'), draft); assert.deepEqual(store.getAttempt(attempt.id), attempt);
+  assert.equal(store.getProblem(old.id, old.version)!.content.starter.go, undefined);
+});
 
 test('reading a real JSON import preview leaves the library, lists, jobs and drafts untouched', async t => {
   const { service, store, adapter } = fixture(t);

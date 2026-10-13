@@ -6,6 +6,7 @@ import { getPerformanceState, performanceReport, startPerformanceRecording, stop
 import { RuntimeArtifactDetails, RuntimeInstallProgress } from './RuntimePreparation';
 import { runtimeBytes, runtimeSourceLabels } from './runtime-presentation';
 import { HelpHint } from './HelpHint';
+import { LANGUAGES, LANGUAGE_DETAILS, languageLabel } from '../shared/languages';
 
 type Installations = Partial<Record<Language, { progress: RuntimeProgress | null }>>;
 type LanguageMessages = Partial<Record<Language, string>>;
@@ -38,11 +39,11 @@ export function EnvironmentPage({ api, onChanged, onError }: {
     const snapshot = await api.environment();
     if (!mounted.current || generation !== snapshotGeneration.current) return;
     const next = snapshot.installations ?? (snapshot.installation ? { [snapshot.installation.language]: { progress: snapshot.installation.progress } } : {});
-    const finished = (['python', 'java'] as const).some(language => currentInstallations.current[language] && !next[language]);
+    const finished = LANGUAGES.some(language => currentInstallations.current[language] && !next[language]);
     currentInstallations.current = next;
     setEnvironment(snapshot);
     setInstallations(next);
-    setCancelling(previous => ({ python: Boolean(next.python && previous.python), java: Boolean(next.java && previous.java) }));
+    setCancelling(previous => Object.fromEntries(LANGUAGES.map(language => [language, Boolean(next[language] && previous[language])])));
     if (notifyChanged || finished) callbacks.current.onChanged();
   }, [api]);
 
@@ -133,8 +134,8 @@ export function EnvironmentPage({ api, onChanged, onError }: {
       </label><HelpHint label="自动安装说明">默认关闭。开启后，仅在主动运行且当前语言环境缺失时下载；打开应用、题目或切换语言不会下载。</HelpHint></div>
       {preferenceError && <p className="runtime-inline-error" role="alert">{preferenceError}</p>}
     </div>
-    <div className="runtime-settings-grid">{(['python', 'java'] as const).map(language => {
-      const label = language === 'python' ? 'Python' : 'Java';
+    <div className="runtime-settings-grid">{LANGUAGES.map(language => {
+      const label = languageLabel(language);
       const state = environment?.runtimeStates?.[language];
       const installation = installations[language] ?? (starting[language] ? { progress: null } : null);
       const busy = Boolean(actions[language] || installation);
@@ -143,10 +144,11 @@ export function EnvironmentPage({ api, onChanged, onError }: {
       }[state.status]);
       return <section className="runtime-environment-card" key={language} aria-labelledby={`runtime-heading-${language}`}>
         <div className="runtime-environment-heading">
-          <h3 id={`runtime-heading-${language}`}>{label}{state?.version ? ` ${state.version}` : language === 'python' ? ' · CPython 3.14.x' : ' · OpenJDK 25'}</h3>
+          <h3 id={`runtime-heading-${language}`}>{language === 'cpp' ? `C++17${state?.version ? ` · 编译器 ${state.version}` : ''}` : `${label}${state?.version ? ` ${state.version}` : ` · ${LANGUAGE_DETAILS[language].environmentLabel}`}`}</h3>
           <span className="runtime-state-label" data-state={state?.status} role="status" aria-live="polite">{label} · {status}</span>
         </div>
         <p className="runtime-environment-message">{state?.message || environment?.[language] || '正在检查本机环境…'}</p>
+        {(language === 'go' || language === 'cpp') && <p className="field-help">{language === 'go' ? '仅支持标准库，不自动下载外部模块或新工具链。' : '托管环境通过独立 Zig 后端提供 C++17，无需另外安装 Xcode 或 MSVC。'}首次准备会编译并缓存标准库，可能需要几分钟；完成后可离线使用。</p>}
         {state?.path && <code className="runtime-environment-path">{state.path}</code>}
         <div className="runtime-environment-meta">
           {state?.source && <span>当前来源：{runtimeSourceLabels[state.source]}</span>}

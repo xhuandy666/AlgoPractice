@@ -14,7 +14,7 @@ export const demoProblems: DemoProblem[] = [
     mode: 'function', adapter: { method: 'arrayTotal', params: [{ array: 'int' }], returns: 'int' },
     cases: [{ args: [[2, 4, 6]], expected: 12 }, { args: [[]], expected: 0 }, { args: [[-3, 3, 5]], expected: 5 }],
     exampleInput: 'nums = [2, 4, 6]', exampleOutput: '12',
-    starter: { python: 'class Solution:\n    def arrayTotal(self, nums: list[int]) -> int:\n        # 在这里写下你的解法\n        return 0\n', java: 'class Solution {\n    public int arrayTotal(int[] nums) {\n        // 在这里写下你的解法\n        return 0;\n    }\n}\n' },
+    starter: { python: 'class Solution:\n    def arrayTotal(self, nums: list[int]) -> int:\n        # 在这里写下你的解法\n        return 0\n', java: 'class Solution {\n    public int arrayTotal(int[] nums) {\n        // 在这里写下你的解法\n        return 0;\n    }\n}\n', go: 'func arrayTotal(nums []int) int {\n    // 在这里写下你的解法\n    return 0\n}\n', cpp: 'class Solution {\npublic:\n    int arrayTotal(vector<int>& nums) {\n        // 在这里写下你的解法\n        return 0;\n    }\n};\n' },
   },
   {
     id: 'mirror-text', title: '反转字符串', topic: '字符串', difficulty: '基础',
@@ -23,7 +23,7 @@ export const demoProblems: DemoProblem[] = [
     mode: 'function', adapter: { method: 'mirrorText', params: ['string'], returns: 'string' },
     cases: [{ args: ['algorithm'], expected: 'mhtirogla' }, { args: [''], expected: '' }, { args: ['算法练习'], expected: '习练法算' }],
     exampleInput: 'text = "algorithm"', exampleOutput: '"mhtirogla"',
-    starter: { python: 'class Solution:\n    def mirrorText(self, text: str) -> str:\n        return text\n', java: 'class Solution {\n    public String mirrorText(String text) {\n        return text;\n    }\n}\n' },
+    starter: { python: 'class Solution:\n    def mirrorText(self, text: str) -> str:\n        return text\n', java: 'class Solution {\n    public String mirrorText(String text) {\n        return text;\n    }\n}\n', go: 'func mirrorText(text string) string {\n    // 中文按 rune 字符处理，不要逐字节反转 UTF-8。\n    return text\n}\n', cpp: 'class Solution {\npublic:\n    string mirrorText(string text) {\n        // 中文按 Unicode 字符处理，不要逐字节反转 UTF-8。\n        return text;\n    }\n};\n' },
   },
   {
     id: 'sum-stdin', title: '输入输出练习', topic: 'ACM', difficulty: '基础',
@@ -31,6 +31,6 @@ export const demoProblems: DemoProblem[] = [
     constraints: ['输入可能包含多行', '所有数字及总和均在 32 位有符号整数范围内'],
     mode: 'acm', cases: [{ stdin: '2 4 6\n', expected: '12\n' }, { stdin: '-1\n1 5\n', expected: '5\n' }, { stdin: '', expected: '0\n' }],
     exampleInput: '2 4 6', exampleOutput: '12',
-    starter: { python: 'import sys\n\n# 从 sys.stdin 读取输入\nprint(0)\n', java: 'import java.util.Scanner;\n\npublic class Main {\n    public static void main(String[] args) {\n        Scanner input = new Scanner(System.in);\n        System.out.println(0);\n    }\n}\n' },
+    starter: { python: 'import sys\n\n# 从 sys.stdin 读取输入\nprint(0)\n', java: 'import java.util.Scanner;\n\npublic class Main {\n    public static void main(String[] args) {\n        Scanner input = new Scanner(System.in);\n        System.out.println(0);\n    }\n}\n', go: 'package main\n\nimport "fmt"\n\nfunc main() {\n    // 从标准输入读取整数，输出总和。\n    fmt.Println(0)\n}\n', cpp: '#include <iostream>\n\nint main() {\n    // 从标准输入读取整数，输出总和。\n    std::cout << 0 << "\\n";\n    return 0;\n}\n' },
   },
 ];

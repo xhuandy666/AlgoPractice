@@ -257,7 +257,7 @@ test('claimed display attempts and skipped pending assessments survive backup an
   const before = f.store.reviewOpportunities().items[0];
   const backup = join(f.directory, 'new-schema-backup.sqlite');
   await f.store.backupTo(backup);
-  assert.equal(PracticeStore.inspectBackupSnapshot(backup).schemaVersion, 9);
+  assert.equal(PracticeStore.inspectBackupSnapshot(backup).schemaVersion, 10);
   const restoredPath = join(f.directory, 'restored.sqlite');
   PracticeStore.restoreBackup(backup, restoredPath);
   const restored = new PracticeStore(restoredPath);
@@ -300,7 +300,7 @@ test('schema8 backup includes committed WAL, upgrades without reapplying v8, and
   legacy.prepare('UPDATE drafts SET code=?,code_hash=?,revision=revision+1 WHERE problem_id=?').run('committed WAL draft', hashCode('committed WAL draft'), f.problem.id);
   const upgraded = new PracticeStore(f.dbPath);
   try {
-    assert.ok(upgraded.migrationBackupPath?.includes('.before-v9-'));
+    assert.ok(upgraded.migrationBackupPath?.includes('.before-v10-'));
     assert.ok(existsSync(upgraded.migrationBackupPath!));
     assert.equal(PracticeStore.inspectBackupSnapshot(upgraded.migrationBackupPath!).schemaVersion, 8);
     const saved = new DatabaseSync(upgraded.migrationBackupPath!, { readOnly: true });
@@ -335,21 +335,21 @@ test('schema8 backup includes committed WAL, upgrades without reapplying v8, and
   finally { reopened.close(); }
 });
 
-test('failed schema9 migration retains original v8 database and independently inspectable pre-upgrade backup', t => {
+test('failed upgrade to schema10 retains original v8 database and independently inspectable pre-upgrade backup', t => {
   const f = fixture(t);
   f.store.close();
   const old = new DatabaseSync(f.dbPath);
   stripProblemReviewSchema(old);
   old.exec('CREATE TABLE problem_review_plans(unexpected TEXT);');
   old.close();
-  assert.throws(() => new PracticeStore(f.dbPath), /Schema v9 migration failed/);
+  assert.throws(() => new PracticeStore(f.dbPath), /Schema v10 migration failed/);
   const raw = new DatabaseSync(f.dbPath, { readOnly: true });
   try {
     assert.equal(raw.prepare('PRAGMA user_version').get()?.user_version, 8);
     assert.equal(raw.prepare("SELECT 1 FROM sqlite_schema WHERE type='table' AND name='problem_review_events'").get(), undefined);
     assert.equal(raw.prepare('SELECT answer_format FROM attempts WHERE id=?').get(f.attempt.id)?.answer_format, 'function');
   } finally { raw.close(); }
-  const backupName = readdirSync(f.directory).find(name => name.includes('.before-v9-') && name.endsWith('.sqlite'));
+  const backupName = readdirSync(f.directory).find(name => name.includes('.before-v10-') && name.endsWith('.sqlite'));
   assert.ok(backupName);
   assert.equal(PracticeStore.inspectBackupSnapshot(join(f.directory, backupName)).schemaVersion, 8);
 });

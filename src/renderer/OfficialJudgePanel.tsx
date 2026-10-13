@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import { languageLabel } from '../shared/languages';
 import type { OfficialSubmission, OfficialVerdict } from '../shared/official';
 import { dateTime } from './ui';
 
@@ -46,6 +47,6 @@ export function OfficialJudgePanel({ records, currentCode, problemVersion, focus
       {record.status === 'unknown' && <button className="text-button" onClick={() => onOpen(`https://leetcode.cn/problems/${record.slug}/submissions/`)}>查看官网提交记录 ↗</button>}
       {result && result.status !== 'accepted' && !stale && onCoach && <button className="text-button" onClick={onCoach}>让 AI 帮我分析</button>}
     </div>
-    <details className="official-code-snapshot"><summary>本次提交的代码 · {record.language === 'python' ? 'Python3' : 'Java'}</summary><pre className="archive-code">{record.code}</pre></details>
+    <details className="official-code-snapshot"><summary>本次提交的代码 · {languageLabel(record.language)}</summary><pre className="archive-code">{record.code}</pre></details>
   </section>;
 }

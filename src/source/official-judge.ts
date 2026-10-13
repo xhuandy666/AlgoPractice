@@ -1,4 +1,5 @@
 import type { OfficialError, OfficialJudgeResult, OfficialSubmission } from '../shared/official.ts';
+import { isLanguage, LANGUAGE_DETAILS } from '../shared/languages.ts';
 
 const ORIGIN = 'https://leetcode.cn';
 const MAX_RESPONSE = 512 * 1024;
@@ -134,12 +135,12 @@ export class LeetCodeOfficialJudge implements OfficialJudgeTransport {
     throw new OfficialJudgeError({ code: 'protocol', message: '暂时无法确认力扣登录状态，请打开登录窗口后重试。' });
   }
   async submit(input: Pick<OfficialSubmission, 'slug' | 'sourceId' | 'language' | 'code'>, signal?: AbortSignal): Promise<string> {
-    if (!/^[a-z0-9][a-z0-9-]*$/.test(input.slug) || !/^\d{1,30}$/.test(input.sourceId) || !['python', 'java'].includes(input.language)) {
+    if (!/^[a-z0-9][a-z0-9-]*$/.test(input.slug) || !/^\d{1,30}$/.test(input.sourceId) || !isLanguage(input.language)) {
       throw new OfficialJudgeError({ code: 'protocol', message: '题目缺少官方提交信息，请重新导入题目。' });
     }
     const data = await this.#request(`/problems/${input.slug}/submit/`, { method: 'POST',
       headers: await this.#headers(`/problems/${input.slug}/`, true), body: JSON.stringify({
-        lang: input.language === 'python' ? 'python3' : 'java', question_id: input.sourceId, typed_code: input.code,
+        lang: LANGUAGE_DETAILS[input.language].officialSlug, question_id: input.sourceId, typed_code: input.code,
       }) }, signal, true);
     if (object(data)) {
       const value = data.submission_id;

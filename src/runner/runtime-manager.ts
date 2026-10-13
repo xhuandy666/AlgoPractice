@@ -4,6 +4,8 @@ import path from 'node:path';
 import { installRuntime, runtimeManifest, type InstallProgress } from './managed-runtime.ts';
 import { resolveRuntime, type DiscoveryOptions, type RuntimeResolution } from './runtime-discovery.ts';
 import type { Language } from './types.ts';
+import { LANGUAGES, isLanguage } from '../shared/languages.ts';
+import { invalidateRuntimeInspection } from './runtime-inspect.ts';
 
 export type RuntimeTaskPhase = 'idle' | InstallProgress['phase'] | 'cancelled' | 'error' | 'uninstalling';
 export interface RuntimeTaskState {
@@ -23,17 +25,17 @@ export interface RuntimeDetails {
   language: Language; artifact: RuntimeArtifactDetails; managed: ManagedRuntimeDetails;
   task: RuntimeTaskState; references: { run: number; pending: number };
 }
-interface Marker { schema: 1; installationId: string; language: Language; target: string; version: string; sha256: string; source: string; installedAt: string; }
+interface Marker { schema: 1; installationId: string; language: Language; target: string; version: string; sha256: string; source: string; installedAt: string; warmState?: 'pending' | 'ready'; }
 type Installed = Awaited<ReturnType<typeof installRuntime>>;
 interface ManagerOptions {
   root: string; onState?: (state: RuntimeTaskState) => void;
   /** Host-only injection for tests. Production always uses the verified installer. */
   installer?: typeof installRuntime; resolver?: typeof resolveRuntime; now?: () => number;
 }
-const languages: Language[] = ['python', 'java'];
+const languages: readonly Language[] = LANGUAGES;
 const markerName = '.algopractice-runtime.json';
 const isMissing = (error: unknown) => (error as NodeJS.ErrnoException).code === 'ENOENT';
-function validateLanguage(language: Language): void { if (!languages.includes(language)) throw new Error('Unsupported language'); }
+function validateLanguage(language: Language): void { if (!isLanguage(language)) throw new Error('Unsupported language'); }
 function artifactDetails(language: Language): RuntimeArtifactDetails {
   const target = `${process.platform}-${process.arch}`, family = runtimeManifest[language];
   const artifact = family.targets[target as keyof typeof family.targets];
@@ -48,6 +50,7 @@ async function ownedMarker(root: string, language: Language): Promise<Marker | u
     const marker = JSON.parse(await readFile(markerPath, 'utf8')) as Marker;
     if (marker.schema !== 1 || marker.language !== language || !/^[a-f0-9-]{36}$/.test(marker.installationId) || !/^[a-f0-9]{64}$/.test(marker.sha256)
       || !['darwin-arm64', 'darwin-x64', 'win32-x64'].includes(marker.target) || typeof marker.version !== 'string' || typeof marker.source !== 'string' || typeof marker.installedAt !== 'string') return undefined;
+    if ((language === 'go' || language === 'cpp') && marker.warmState !== 'ready') return undefined;
     return marker;
   } catch (error) { if (isMissing(error) || error instanceof SyntaxError) return undefined; throw error; }
 }
@@ -95,7 +98,7 @@ export class RuntimeManager {
     this.emit(language, { phase: progress.phase, progress }, notify);
     if (notify) this.progressNotifications.set(language, { phase: progress.phase, at });
   }
-  invalidate(language?: Language): void { if (language) this.detailCache.delete(language); else this.detailCache.clear(); }
+  invalidate(language?: Language): void { if (language) this.detailCache.delete(language); else this.detailCache.clear(); invalidateRuntimeInspection(language); }
   inspect(language: Language, options: Omit<DiscoveryOptions, 'root'> = {}): Promise<RuntimeResolution> {
     validateLanguage(language); return (this.options.resolver ?? resolveRuntime)(language, { ...options, root: this.root });
   }

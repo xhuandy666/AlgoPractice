@@ -24,7 +24,7 @@ export interface RunArchive {
 export interface RuntimeProgress { language: Language; phase: 'download' | 'copy' | 'verify' | 'extract' | 'validate' | 'commit' | 'ready'; receivedBytes: number; totalBytes: number; }
 export interface EnvironmentInfo {
   platform: string; arch: string; electron: string; node: string; sqlite: string;
-  python: string | null; java: string | null; dataDirectory: string;
+  python: string | null; java: string | null; go: string | null; cpp: string | null; dataDirectory: string;
   runtimeNotices: string[];
   installation: { language: Language; progress: RuntimeProgress | null } | null;
   runtimeStates: Record<Language, RuntimeState>;

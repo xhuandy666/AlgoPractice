@@ -34,7 +34,7 @@ const report = {
   version: JSON.parse(await readFile(join(root, 'package.json'), 'utf8')).version,
   executable: packaged || require('electron'), dataDirectory, runtimeDirectory,
   assertions: [], screenshots: [], rendererErrors: [], httpAttempts: [], exits: [],
-  scope: 'Real Electron, SQLite, Python, Java, Markdown and FSRS; only the three bundled authored problems.',
+  scope: 'Real Electron, SQLite, Python, Java, Go, C++17, Markdown and FSRS; only the three bundled authored problems.',
   limitations: ['HTTP guards observe renderer requests and main-process Fetch after attachment; this is not an OS network sandbox.',
     'No API Key, model call or teaching-quality claim. The interview screenshot shows setup, not a completed mock interview.',
     'Only the host platform and selected executable are exercised.'],
@@ -90,20 +90,22 @@ async function close() {
   report.exits.push({ pid: child.pid, observedPids: pids, exitCode: child.exitCode, signal: child.signalCode, remainingPids: pids.filter(isAlive) });
   app = null;
 }
-async function shot(name) {
+async function shot(name, { keepScroll = false, width = 1440, height = 1000 } = {}) {
   if (!screenshots) return;
   const dismissNotice = page.locator('.preview-banner').getByRole('button', { name: '收起', exact: true });
   if (await dismissNotice.count()) await dismissNotice.click();
   assert.equal(await page.locator('.error-banner').count(), 0, 'No application error banner may be hidden in a public screenshot');
-  await page.evaluate(async () => {
+  await page.evaluate(async keepScroll => {
     document.activeElement?.blur();
-    document.scrollingElement?.scrollTo(0, 0);
-    for (const element of document.querySelectorAll('.scroll-page,.history-pane')) element.scrollTo(0, 0);
+    if (!keepScroll) {
+      document.scrollingElement?.scrollTo(0, 0);
+      for (const element of document.querySelectorAll('.scroll-page,.history-pane')) element.scrollTo(0, 0);
+    }
     await new Promise(done => requestAnimationFrame(() => requestAnimationFrame(done)));
-  });
+  }, keepScroll);
   const bounds = await page.evaluate(() => ({ width: innerWidth, height: innerHeight, scrollWidth: document.documentElement.scrollWidth }));
-  assert.equal(bounds.width, 1440); assert.equal(bounds.height, 1000); assert.ok(bounds.scrollWidth <= bounds.width);
-  await page.screenshot({ path: join(captureDirectory, name), clip: { x: 0, y: 0, width: 1440, height: 1000 }, scale: 'css' });
+  assert.equal(bounds.width, width); assert.equal(bounds.height, height); assert.ok(bounds.scrollWidth <= bounds.width);
+  await page.screenshot({ path: join(captureDirectory, name), clip: { x: 0, y: 0, width, height }, scale: 'css' });
   report.screenshots.push({ name, ...bounds });
 }
 async function runProblem(id, title, language, code) {
@@ -131,21 +133,23 @@ async function runProblem(id, title, language, code) {
 
 const python = 'class Solution:\n    def arrayTotal(self, nums: list[int]) -> int:\n        total = 0\n        for number in nums:\n            total += number\n        return total\n';
 const java = 'class Solution {\n    public String mirrorText(String text) {\n        return new StringBuilder(text).reverse().toString();\n    }\n}\n';
+const go = 'func mirrorText(text string) string {\n    chars := []rune(text)\n    for i, j := 0, len(chars)-1; i < j; i, j = i+1, j-1 {\n        chars[i], chars[j] = chars[j], chars[i]\n    }\n    return string(chars)\n}\n';
+const cpp = 'class Solution {\npublic:\n    int arrayTotal(vector<int>& nums) {\n        int total = 0;\n        for (int value : nums) total += value;\n        return total;\n    }\n};\n';
 const noteTitle = '数组求和：从边界想到循环';
 const markdown = '## 先确认边界\n\n空数组返回 0；负数和正数都参与累加。\n\n## 循环里保存什么\n\n`total` 表示已经遍历的元素之和。每读到一个数，就把它加进去。\n\n- 时间复杂度：O(n)\n- 额外空间：O(1)\n\n## 下次重写\n\n先说清楚变量含义，再独立写出循环；最后检查空数组和负数用例。\n';
-let confirmedNote, provider, pythonRun, javaRun, reviewAssessment;
+let confirmedNote, provider, pythonRun, javaRun, goRun, cppRun, reviewAssessment;
 try {
   await load();
   const environment = await api('environment');
   assert.equal(resolve(environment.dataDirectory), dataDirectory);
-  assert.ok(environment.python && environment.java, 'Install both runtimes with npm run runtime:install, or set ALGOPRACTICE_RUNTIME_DIR to a prepared runtime directory.');
+  for (const language of ['python', 'java', 'go', 'cpp']) assert.equal(environment.runtimeStates[language].status, 'ready', `${language}: prepare all four runtimes with npm run runtime:install or ALGOPRACTICE_RUNTIME_DIR.`);
   assert.equal(await app.evaluate(({ app }) => app.getName()), 'AlgoPractice', 'Keep the existing macOS credential identity');
   assert.equal(await page.title(), '题炼 · 练习工作台');
   assert.equal(await page.locator('.sidebar .wordmark span').last().innerText(), '题炼');
   assert.equal(await page.evaluate(() => typeof window.require), 'undefined');
   assert.deepEqual((await api('libraryIndex')).problems.map(problem => problem.id).sort(), ['array-total', 'mirror-text', 'sum-stdin']);
   await page.getByRole('heading', { name: '今日进度', exact: true }).waitFor();
-  pass('Fresh startup shows the three bundled problems and both real runtimes', { python: environment.python, java: environment.java });
+  pass('Fresh startup shows the three bundled problems and all four real language environments', { python: environment.python, java: environment.java, go: environment.go, cpp: environment.cpp });
   const reminder = await api('reminderState');
   await api('saveReminderSettings', { ...reminder.settings, enabled: false });
 
@@ -185,6 +189,40 @@ try {
   assert.equal(await page.getByRole('dialog').count(), 0, 'ending another local practice must also remain quiet');
   pass('Java executes all three cases, including empty text and Chinese characters', { runId: javaRun.id, status: javaRun.result.status });
 
+  goRun = await runProblem('mirror-text', '反转字符串', 'go', go);
+  assert.deepEqual(await page.getByRole('combobox', { name: '编程语言', exact: true }).locator('option').allTextContents(), ['Python', 'Java', 'Go', 'C++']);
+  await shot('workbench-go.png');
+  await page.getByRole('button', { name: '结束练习', exact: true }).click();
+  await until(async () => !(await api('archiveOverview', goRun.attemptId)).attempt.isActive, 'Go practice archived');
+  pass('Go editor selection, Unicode rune solution, real execution and archive work through the UI', { runId: goRun.id });
+
+  cppRun = await runProblem('array-total', '数组求和', 'cpp', cpp);
+  await shot('workbench-cpp.png');
+  await page.getByRole('button', { name: '结束练习', exact: true }).click();
+  await until(async () => !(await api('archiveOverview', cppRun.attemptId)).attempt.isActive, 'C++ practice archived');
+  assert.equal((await api('loadDraft', 'array-total', 'python')).code, python);
+  assert.equal((await api('loadDraft', 'mirror-text', 'java')).code, java);
+  pass('C++ editor selection and real execution preserve the previously saved Python/Java drafts', { runId: cppRun.id });
+
+  await nav('运行环境');
+  await until(async () => await page.locator('.runtime-environment-card').count() === 4, 'four environment cards render');
+  for (const language of ['python', 'java', 'go', 'cpp']) {
+    assert.equal(await page.locator(`#runtime-heading-${language}`).count(), 1);
+    assert.match(await page.locator(`#runtime-heading-${language}`).innerText(), new RegExp(language === 'cpp' ? 'C\\+\\+' : language === 'go' ? 'Go' : language === 'java' ? 'Java' : 'Python'));
+  }
+  await until(async () => /^C\+\+17 · 编译器 /.test(await page.locator('#runtime-heading-cpp').innerText()), 'C++ inspection renders its backend version separately from C++17');
+  assert.match(await page.locator('#runtime-heading-cpp').innerText(), /^C\+\+17 · 编译器 /, 'C++ standard and backend version are presented separately');
+  await shot('environment-four-languages.png');
+  await page.locator('#runtime-heading-cpp').scrollIntoViewIfNeeded();
+  await shot('environment-go-cpp.png', { keepScroll: true });
+  const environmentCdp = await app.context().newCDPSession(page);
+  await environmentCdp.send('Emulation.setDeviceMetricsOverride', { width: 760, height: 900, deviceScaleFactor: 1, mobile: false });
+  await page.locator('#runtime-heading-cpp').scrollIntoViewIfNeeded();
+  assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), 'Four environment cards do not overflow the narrow viewport');
+  await shot('environment-go-cpp-narrow.png', { keepScroll: true, width: 760, height: 900 });
+  await environmentCdp.send('Emulation.setDeviceMetricsOverride', { width: 1440, height: 1000, deviceScaleFactor: 1, mobile: false });
+  pass('Environment status, language-specific headings and independent actions render for all four languages');
+
   const reviews = await api('addProblemReviews', { problemIds: ['array-total', 'mirror-text'] });
   assert.equal(reviews.length, 2);
   assert.equal((await api('addProblemReviews', { problemIds: ['array-total'] }))[0].id, reviews.find(plan => plan.problemId === 'array-total').id);
@@ -217,6 +255,8 @@ try {
   assert.deepEqual((await api('aiProvider')).config, provider.config); assert.equal((await api('aiProvider')).hasKey, false);
   assert.equal((await api('runDetail', pythonRun.id)).result.status, 'passed');
   assert.equal((await api('runDetail', javaRun.id)).result.status, 'passed');
+  assert.equal((await api('runDetail', goRun.id)).result.status, 'passed');
+  assert.equal((await api('runDetail', cppRun.id)).result.status, 'passed');
   assert.equal((await api('reviewPlan', { view: 'all' })).summary.totalCount, 2);
   assert.equal((await api('problemReviewDetail', 'array-total')).events.items[0].id, reviewAssessment.event.id);
   assert.equal(await page.getByRole('dialog').count(), 0, 'restart does not invent an automatic rating opportunity');

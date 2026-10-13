@@ -5,6 +5,7 @@ import { assertAnswerFormat, validateAcmTestConfig } from '../shared/answer-form
 import { conversationMemoryPayload } from './conversation-memory.ts';
 import { systemPrompt, coachScenarioGuidance } from './coach-skill.ts';
 import { buildEvidenceCatalog } from './evidence-catalog.ts';
+import { isLanguage } from '../shared/languages.ts';
 
 export function assertMode(context: Pick<AiTrustedContext, 'mode' | 'isActive'>): void {
   if (!['practice', 'strict', 'coached'].includes(context.mode) || typeof context.isActive !== 'boolean') throw new AiServiceError('INVALID_REQUEST');
@@ -15,7 +16,7 @@ export function buildRequestSnapshot(rawInput: AiRequestInput, rawContext: AiTru
   const input = validateRequestInput(rawInput), provider = normalizeProviderConfig(rawProvider);
   // JSON cloning fixes the snapshot before the first provider await; callback owners may mutate their own objects later.
   const context = JSON.parse(canonicalJson(rawContext)) as AiTrustedContext;
-  if (context.attemptId !== input.attemptId || !['python', 'java'].includes(context.language) || typeof context.code !== 'string' || Buffer.byteLength(context.code) > 512 * 1024 || !Number.isInteger(context.draftRevision) || context.draftRevision < 0) throw new AiServiceError('INVALID_REQUEST');
+  if (context.attemptId !== input.attemptId || !isLanguage(context.language) || typeof context.code !== 'string' || Buffer.byteLength(context.code) > 512 * 1024 || !Number.isInteger(context.draftRevision) || context.draftRevision < 0) throw new AiServiceError('INVALID_REQUEST');
   identifier(context.problemId); identifier(context.problemVersion); identifier(context.draftScopeId); assertMode(context);
   if (context.answerFormat !== undefined) {
     try { assertAnswerFormat(context.answerFormat); } catch { throw new AiServiceError('INVALID_REQUEST'); }

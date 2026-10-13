@@ -1,13 +1,14 @@
 import { createHash } from 'node:crypto';
-import { capability } from '../shared/capability';
+import { capability, missingLanguageTemplateReason, unsupportedAdapterReason } from '../shared/capability';
 import type { LibraryProblem } from '../shared/library';
 import type { ProblemListItem } from '../shared/learning';
 import type { Attempt } from '../storage/practice-store';
 import type { CompanyDataset, InterviewRules, InterviewPool, InterviewCandidate } from '../shared/interview';
 import { normalizeCompany } from './company';
+import { isLanguage } from '../shared/languages';
 export const SAMPLING_VERSION = 'sha256-stratified-without-replacement-v1';
 export function validateRules(value: InterviewRules): InterviewRules {
-  if (!value || !['strict','coached'].includes(value.mode) || !['python','java'].includes(value.language) || !Number.isInteger(value.durationMinutes) || value.durationMinutes < 1 || value.durationMinutes > 240 || !Number.isInteger(value.excludeRecentDays) || value.excludeRecentDays < 0 || value.excludeRecentDays > 365 || !['uniform','frequency'].includes(value.sampling) || typeof value.seed !== 'string' || !value.seed.trim() || value.seed.length > 200 || !Array.isArray(value.tags) || value.tags.length > 30 || value.tags.some(t => typeof t !== 'string' || t.length > 100) || !value.counts) throw new Error('面试配置无效。');
+  if (!value || !['strict','coached'].includes(value.mode) || !isLanguage(value.language) || !Number.isInteger(value.durationMinutes) || value.durationMinutes < 1 || value.durationMinutes > 240 || !Number.isInteger(value.excludeRecentDays) || value.excludeRecentDays < 0 || value.excludeRecentDays > 365 || !['uniform','frequency'].includes(value.sampling) || typeof value.seed !== 'string' || !value.seed.trim() || value.seed.length > 200 || !Array.isArray(value.tags) || value.tags.length > 30 || value.tags.some(t => typeof t !== 'string' || t.length > 100) || !value.counts) throw new Error('面试配置无效。');
   const counts = { easy: value.counts.easy, medium: value.counts.medium, hard: value.counts.hard };
   if (Object.values(counts).some(n => !Number.isInteger(n) || n < 0 || n > 10) || Object.values(counts).reduce((a,b) => a+b,0) < 1 || Object.values(counts).reduce((a,b) => a+b,0) > 10) throw new Error('每场请选择 1–10 道题。');
   for (const v of [value.company, value.datasetId]) if (v !== null && (typeof v !== 'string' || !v.trim() || v.length > 1000)) throw new Error('企业或数据集配置无效。');
@@ -18,6 +19,7 @@ function difficulty(value: string): InterviewCandidate['difficulty'] | null { re
 function candidateSupport(problem: LibraryProblem | ProblemListItem, language: InterviewRules['language']) {
   if (!('capabilities' in problem)) return capability(problem.content, language);
   if (problem.capability.canRun && problem.capabilities[language]) return problem.capability;
+  if (!problem.capabilities[language]) return { canRun: false, reason: language === 'cpp' && problem.capabilities.cppTemplate ? unsupportedAdapterReason(language) : missingLanguageTemplateReason(language) };
   return { canRun: false, reason: problem.content.supportReason || '题面、函数签名、语言模板或用例尚未准备完整。' };
 }
 function uniform(seed: string, id: string): number { const bytes = createHash('sha256').update(JSON.stringify([SAMPLING_VERSION, seed, id])).digest(); return (bytes.readUIntBE(0,6) + 1) / (2 ** 48 + 1); }

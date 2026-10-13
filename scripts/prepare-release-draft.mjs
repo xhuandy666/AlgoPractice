@@ -11,7 +11,7 @@ import { promisify } from 'node:util';
 
 const execute = promisify(execFile);
 const sha256 = bytes => createHash('sha256').update(bytes).digest('hex');
-const privateAsset = /(?:^|\/)(?:\.aoci|\.local|\.runtime|docs|credentials|backups|runtimes|logs)(?:\/|$)|(?:^|\/)(?:AGENTS\.md|aoci(?:\.code|\.meta)?\.txt|\.mcp\.json|\.env(?:\.[^/]*)?|python(?:3(?:\.\d+)?)?(?:\.exe)?|java(?:c)?(?:\.exe)?|libjvm\.[^/]+)$|\.(?:sqlite(?:3)?|db|algobak|log|tar(?:\.gz)?|tgz|zip)(?:$|-wal$|-shm$)/i;
+const privateAsset = /(?:^|\/)(?:\.aoci|\.local|\.runtime|\.toolchain-cache|\.algopractice-cache|docs|credentials|backups|runtimes|logs)(?:\/|$)|(?:^|\/)(?:AGENTS\.md|aoci(?:\.code|\.meta)?\.txt|\.mcp\.json|\.env(?:\.[^/]*)?|python(?:3(?:\.\d+)?)?(?:\.exe)?|java(?:c)?(?:\.exe)?|go(?:\.exe)?|zig(?:\.exe)?|clang(?:\+\+)?(?:\.exe)?|g\+\+(?:\.exe)?|libjvm\.[^/]+)$|\.(?:sqlite(?:3)?|db|algobak|log|tar(?:\.(?:gz|xz))?|tgz|zip)(?:$|-wal$|-shm$)/i;
 const platforms = [
   { key: 'macos-arm64', artifact: 'macos-arm64-packages', job: 'macOS Apple Silicon', suffix: 'mac-arm64', target: 'darwin-arm64' },
   { key: 'macos-x64', artifact: 'macos-x64-packages', job: 'macOS Intel', suffix: 'mac-x64', target: 'darwin-x64' },
@@ -106,22 +106,30 @@ export function validateBuildInfo(build, expected) {
 
 export function runtimeAssets(manifest) {
   const assets = [];
-  for (const language of ['python', 'java']) for (const { target } of platforms) {
+  const sources = {
+    python: { host: 'github.com', prefix: '/astral-sh/python-build-standalone/releases/download/' },
+    java: { host: 'github.com', prefix: '/adoptium/temurin25-binaries/releases/download/' },
+    go: { host: 'dl.google.com', prefix: '/go/' },
+    cpp: { host: 'ziglang.org', prefix: `/download/${manifest.cpp?.version}/` },
+  };
+  const languages = Object.keys(sources).filter(language => Object.hasOwn(manifest, language));
+  assert.ok(languages.includes('python') && languages.includes('java'), 'The baseline runtime families are missing');
+  for (const language of languages) for (const { target } of platforms) {
     const artifact = manifest[language]?.targets?.[target];
     assert.ok(artifact && Number.isSafeInteger(artifact.size) && artifact.size > 0);
     assert.match(artifact.sha256, /^[a-f0-9]{64}$/);
     const url = new URL(artifact.url);
-    assert.equal(url.protocol, 'https:'); assert.equal(url.hostname, 'github.com');
+    assert.equal(url.protocol, 'https:'); assert.equal(url.hostname, sources[language].host);
     assert.ok(!url.username && !url.password && !url.port && !url.search && !url.hash);
-    assert.ok(url.pathname.startsWith(language === 'python' ? '/astral-sh/python-build-standalone/releases/download/' : '/adoptium/temurin25-binaries/releases/download/'));
+    assert.ok(url.pathname.startsWith(sources[language].prefix));
     const upstreamName = decodeURIComponent(basename(url.pathname));
-    assert.ok(['tar.gz', 'zip'].includes(artifact.archive), 'Unexpected runtime archive format');
-    assert.match(upstreamName, /^[A-Za-z0-9_+.\-]+\.(?:tar\.gz|zip)$/);
+    assert.ok(['tar.gz', 'tar.xz', 'zip'].includes(artifact.archive), 'Unexpected runtime archive format');
+    assert.match(upstreamName, /^[A-Za-z0-9_+.\-]+\.(?:tar\.(?:gz|xz)|zip)$/);
     assert.ok(upstreamName.endsWith(`.${artifact.archive}`), 'Runtime URL and archive format differ');
     const name = `AlgoPractice-runtime-${language}-${target}.${artifact.archive}`;
     assets.push({ ...artifact, language, target, name });
   }
-  assert.equal(new Set(assets.map(asset => asset.name)).size, 6, 'Runtime asset names must be unique');
+  assert.equal(new Set(assets.map(asset => asset.name)).size, assets.length, 'Runtime asset names must be unique');
   return assets;
 }
 
@@ -265,9 +273,11 @@ async function verifyInstaller(archive, platform, expected, portable, temporary,
   } finally { await command('hdiutil', ['detach', mountpoint]); }
 }
 
-export function releaseCreateArguments(configuration, files, notesPath) {
-  assert.equal(files.length, 14, 'Expected exactly 14 release assets');
-  assert.equal(new Set(files.map(path => basename(path))).size, 14, 'Duplicate release asset name');
+export function releaseCreateArguments(configuration, files, notesPath, manifest) {
+  const names = expectedReleaseAssets(configuration.version, manifest);
+  assert.equal(files.length, names.length, 'Release asset count differs from the pinned manifest');
+  assert.equal(new Set(files.map(path => basename(path))).size, names.length, 'Duplicate release asset name');
+  assert.deepEqual(files.map(path => basename(path)).sort(), [...names].sort(), 'Release asset names differ from the pinned manifest');
   return ['release', 'create', configuration.tag, '--repo', configuration.repo, '--draft', '--target', configuration.sha, '--title', `题炼 ${configuration.tag}`, '--notes-file', notesPath, ...files];
 }
 
@@ -349,10 +359,10 @@ export async function prepareReleaseDraft(argv = process.argv.slice(2), env = pr
   digests.set('SHA256SUMS.txt', await fileDigest(join(assetsDirectory, 'SHA256SUMS.txt')));
   assert.deepEqual((await readdir(assetsDirectory)).sort(), [...names].sort());
   const notesPath = join(temporary, 'release-notes.md');
-  await writeFile(notesPath, `题炼 ${tag} 草稿。\n\n构建提交：${sha}\n三平台验证：[Desktop checks](https://github.com/${repo}/actions/runs/${runId})\n\n包含 macOS Apple Silicon、macOS Intel 与 Windows x64 的安装器和便携包，以及独立的 Python 3.14 与 Java 25 离线运行时；应用不内置语言运行环境。\n\nmacOS 使用临时签名，未进行开发者签名或公证；Windows 安装器未签名。升级前请先导出本机学习备份。AI 使用自带 Key，费用由所选服务商决定。\n\n本工具仅创建草稿，不发布、不覆盖已有版本。\n`);
+  await writeFile(notesPath, `题炼 ${tag} 草稿。\n\n构建提交：${sha}\n三平台验证：[Desktop checks](https://github.com/${repo}/actions/runs/${runId})\n\n包含 macOS Apple Silicon、macOS Intel 与 Windows x64 的安装器和便携包，以及清单固定的 Python、Java、Go 与 C++17（Zig 后端）独立离线环境；应用不内置语言运行环境。\n\nmacOS 使用临时签名，未进行开发者签名或公证；Windows 安装器未签名。升级前请先导出本机学习备份。AI 使用自带 Key，费用由所选服务商决定。\n\n本工具仅创建草稿，不发布、不覆盖已有版本。\n`);
   // Recheck immediately before the only release mutation.
   await ensureReleaseAbsent(); await ensureAbsent(`repos/${repo}/git/ref/tags/${tag}`);
-  await command('gh', releaseCreateArguments(configuration, names.map(name => join(assetsDirectory, name)), notesPath), { env, timeout: 600_000 });
+  await command('gh', releaseCreateArguments(configuration, names.map(name => join(assetsDirectory, name)), notesPath, manifest), { env, timeout: 600_000 });
   const created = await findRelease(); assert.ok(created, 'Created release is missing from the authenticated listing');
   const release = await api(`repos/${repo}/releases/${created.id}`);
   assert.equal(release.draft, true); assert.equal(release.target_commitish, sha); assert.equal(release.tag_name, tag);

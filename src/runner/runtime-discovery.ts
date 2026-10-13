@@ -50,31 +50,43 @@ export async function runtimeDiscoveryPaths(language: Language, options: Pick<Di
     } catch { /* A missing or inaccessible optional installation root is not an error. */ }
   };
   if (language === 'java' && env.JAVA_HOME) add(p.join(env.JAVA_HOME, 'bin', platform === 'win32' ? 'java.exe' : 'java'));
+  if (language === 'go' && env.GOROOT) add(p.join(env.GOROOT, 'bin', platform === 'win32' ? 'go.exe' : 'go'));
   if (platform === 'darwin') {
     if (language === 'python') {
       add('/Library/Frameworks/Python.framework/Versions/3.14/bin/python3');
       add('/opt/homebrew/opt/python@3.14/bin/python3.14'); add('/usr/local/opt/python@3.14/bin/python3.14');
       add('/opt/homebrew/bin/python3.14'); add('/usr/local/bin/python3.14');
-    } else {
+    } else if (language === 'java') {
       for (const directory of ['/Library/Java/JavaVirtualMachines', p.join(home, 'Library/Java/JavaVirtualMachines')]) await children(directory, name => p.join(directory, name, 'Contents/Home/bin/java'));
       add('/opt/homebrew/opt/openjdk@25/bin/java'); add('/usr/local/opt/openjdk@25/bin/java');
+    } else if (language === 'go') {
+      add('/usr/local/go/bin/go'); add('/opt/homebrew/bin/go'); add('/usr/local/bin/go');
+    } else {
+      add('/opt/homebrew/bin/zig'); add('/usr/local/bin/zig');
+      add('/opt/homebrew/opt/llvm/bin/clang++'); add('/usr/local/opt/llvm/bin/clang++');
+      add('/Library/Developer/CommandLineTools/usr/bin/clang++');
     }
   } else if (platform === 'win32') {
     if (language === 'python') {
       if (env.LOCALAPPDATA) add(p.join(env.LOCALAPPDATA, 'Programs/Python/Python314/python.exe'));
       if (env.ProgramFiles) add(p.join(env.ProgramFiles, 'Python314/python.exe'));
-    } else {
+    } else if (language === 'java') {
       for (const base of [env.ProgramFiles, env['ProgramFiles(x86)']].filter((item): item is string => !!item)) {
         for (const vendor of ['Eclipse Adoptium', 'Java', 'Microsoft']) {
           const directory = p.join(base, vendor); await children(directory, name => p.join(directory, name, 'bin/java.exe'));
         }
       }
+    } else if (language === 'go') {
+      if (env.ProgramFiles) add(p.join(env.ProgramFiles, 'Go/bin/go.exe'));
     }
   }
   const pathValue = env.PATH ?? env.Path ?? '';
   for (const directory of pathValue.split(platform === 'win32' ? ';' : ':').slice(0, 64)) {
     if (!p.isAbsolute(directory) || fromWorkingDirectory(p.join(directory, 'candidate'), cwd, home, p)) continue;
-    const names = language === 'python' ? (platform === 'win32' ? ['python.exe', 'python3.exe'] : ['python3.14', 'python3']) : [platform === 'win32' ? 'java.exe' : 'java'];
+    const names = language === 'python' ? (platform === 'win32' ? ['python.exe', 'python3.exe'] : ['python3.14', 'python3'])
+      : language === 'java' ? [platform === 'win32' ? 'java.exe' : 'java']
+        : language === 'go' ? [platform === 'win32' ? 'go.exe' : 'go']
+          : platform === 'win32' ? ['zig.exe', 'clang++.exe', 'g++.exe'] : ['zig', 'clang++', 'g++'];
     for (const name of names) add(p.join(directory, name));
   }
   return result.slice(0, 64);
@@ -85,7 +97,7 @@ export async function resolveRuntime(language: Language, options: DiscoveryOptio
   const inspected = new Set<string>();
   const finish = (inspection: RuntimeInspection, source: RuntimeSource, blockedByExplicit = false): RuntimeResolution => ({ ...inspection, source, blockedByExplicit, candidates });
   const probe = async (executable: string, source: RuntimeCandidate['source'], signal = options.signal) => {
-    const inspection = await inspect(language, { runtimePath: executable, signal });
+    const inspection = await inspect(language, { root: options.root, runtimePath: executable, signal });
     candidates.push({ executable, source, inspection }); inspected.add(path.resolve(executable));
     return inspection;
   };
@@ -99,7 +111,7 @@ export async function resolveRuntime(language: Language, options: DiscoveryOptio
   if (managed.status === 'ready' || managed.status === 'cancelled') return finish(managed, 'managed');
   const projectDirectory = await realpath(options.cwd ?? process.cwd()).catch(() => path.resolve(options.cwd ?? process.cwd()));
   const homeDirectory = await realpath(options.home ?? os.homedir()).catch(() => options.home ?? os.homedir());
-  const signal = AbortSignal.any([...(options.signal ? [options.signal] : []), AbortSignal.timeout(20000)]);
+  const signal = AbortSignal.any([...(options.signal ? [options.signal] : []), AbortSignal.timeout(language === 'go' || language === 'cpp' ? 330000 : 20000)]);
   let incompatible: RuntimeInspection | undefined;
   for (const executable of await runtimeDiscoveryPaths(language, options)) {
     if (signal.aborted) break;

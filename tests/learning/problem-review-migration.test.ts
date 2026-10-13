@@ -77,8 +77,8 @@ test('v8 WAL migration merges only a shared nonnull attempt, applies last insert
   f.item('null-concept', 'nulls', 'understanding', 'none'); f.item('null-py', 'nulls', 'rewrite', 'python');
   f.review('null-one', 'null-concept', 3, firstAt); f.review('null-two', 'null-py', 2, firstAt);
   const before = legacyRows(f.raw), store = f.upgrade();
-  assert.equal(f.raw.prepare('PRAGMA user_version').get()!.user_version, 9);
-  assert.ok(store.migrationBackupPath?.includes('.before-v9-'));
+  assert.equal(f.raw.prepare('PRAGMA user_version').get()!.user_version, 10);
+  assert.ok(store.migrationBackupPath?.includes('.before-v10-'));
   const backup = new DatabaseSync(store.migrationBackupPath!, { readOnly: true });
   try { assert.equal(backup.prepare('PRAGMA user_version').get()!.user_version, 8); assert.deepEqual(legacyRows(backup), before); }
   finally { backup.close(); }
@@ -160,18 +160,18 @@ test('same-time null observations use stable original IDs, all-paused conflicts 
   reopened.integrityCheck();
 });
 
-for (const invalid of ['version', 'parameters'] as const) test(`unsupported old ${invalid} rolls the whole v9 migration back and publishes an unchanged v8 WAL backup`, t => {
+for (const invalid of ['version', 'parameters'] as const) test(`unsupported old ${invalid} rolls the whole upgrade back and publishes an unchanged v8 WAL backup`, t => {
   const f = fixture(t); f.item('valid-first', 'empty', 'understanding', 'none');
   f.item('unsupported', 'merged', 'rewrite', 'python', false, null,
     invalid === 'version' ? 'unknown-fsrs' : FSRS_VERSION,
     invalid === 'parameters' ? { ...FSRS_PARAMETERS, request_retention: 0.8 } : FSRS_PARAMETERS);
   f.review('valid-original', 'valid-first', 3, '2026-01-02T12:00:00.000Z');
   const before = legacyRows(f.raw), schema = f.raw.prepare('SELECT name,sql FROM sqlite_schema ORDER BY name').all();
-  assert.throws(() => f.upgrade(), /Schema v9 migration failed/);
+  assert.throws(() => f.upgrade(), /Schema v10 migration failed/);
   assert.equal(f.raw.prepare('PRAGMA user_version').get()!.user_version, 8);
   assert.deepEqual(legacyRows(f.raw), before); assert.deepEqual(f.raw.prepare('SELECT name,sql FROM sqlite_schema ORDER BY name').all(), schema);
   assert.equal(f.raw.prepare("SELECT 1 FROM sqlite_schema WHERE name='problem_review_plans'").get(), undefined);
-  const backupName = readdirSync(f.directory).find(name => name.includes('.before-v9-') && name.endsWith('.sqlite')); assert.ok(backupName);
+  const backupName = readdirSync(f.directory).find(name => name.includes('.before-v10-') && name.endsWith('.sqlite')); assert.ok(backupName);
   const backup = new DatabaseSync(join(f.directory, backupName), { readOnly: true });
   try { assert.equal(backup.prepare('PRAGMA user_version').get()!.user_version, 8); assert.deepEqual(legacyRows(backup), before); }
   finally { backup.close(); }
@@ -181,8 +181,8 @@ test('new backup restore preserves canonical projections, raw old history, compa
   const f = fixture(t); f.item('backup-old', 'merged', 'understanding', 'none');
   const input = f.review('backup-rating', 'backup-old', 3, '2026-01-02T12:00:00.000Z', f.attempts[0]);
   const store = f.upgrade(), detail = store.getProblemReviewDetail('merged'), before = legacyRows(f.raw);
-  const target = join(f.directory, 'new-v9-backup.sqlite'); await store.backupTo(target);
-  assert.equal(PracticeStore.inspectBackupSnapshot(target).schemaVersion, 9);
+  const target = join(f.directory, 'new-v10-backup.sqlite'); await store.backupTo(target);
+  assert.equal(PracticeStore.inspectBackupSnapshot(target).schemaVersion, 10);
   const restoredPath = join(f.directory, 'restored.sqlite'); PracticeStore.restoreBackup(target, restoredPath);
   const restored = new PracticeStore(restoredPath), copy = new DatabaseSync(restoredPath);
   try {

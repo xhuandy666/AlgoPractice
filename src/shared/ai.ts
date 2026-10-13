@@ -1,4 +1,5 @@
 import type { AnswerFormat, AcmTestConfig } from './answer-format';
+import type { Language } from './languages';
 /** Renderer-visible AI data. Credentials never appear in these structures. */
 export const AI_POLICY_VERSION = 'tilian-ai-policy-v2';
 export const AI_PROMPT_VERSION = 'tilian-chat-coach-v2.5';
@@ -82,7 +83,7 @@ export interface AiOfficialEvidence {
 }
 /** Construct only in main/business code, using the persisted Attempt and Draft/Run. Never accept this object from IPC. */
 export interface AiTrustedContext {
-  attemptId: string; problemId: string; problemVersion: string; language: 'python' | 'java';
+  attemptId: string; problemId: string; problemVersion: string; language: Language;
   mode: AiMode; isActive: boolean; draftScopeId: string; draftRevision: number;
   code: string;
   answerFormat?: AnswerFormat; specVersion?: string; testConfigDigest?: string;
@@ -116,7 +117,7 @@ export interface AiConversationMemory {
 }
 export interface AiRequestSnapshot {
   policyVersion: string; promptVersion: string;
-  attemptId: string; problemId: string; problemVersion: string; language: 'python' | 'java';
+  attemptId: string; problemId: string; problemVersion: string; language: Language;
   mode: AiMode; isActive: boolean; draftScopeId: string; draftRevision: number;
   codeHash: string; code: string; kind: AiKind; question: string;
   officialSubmissionId?: string;
@@ -205,7 +206,7 @@ export interface AiEvent {
   receivedBytes?: number;
 }
 export interface AiPatchApplication {
-  requestId: string; attemptId: string; problemId: string; problemVersion: string; language: 'python' | 'java';
+  requestId: string; attemptId: string; problemId: string; problemVersion: string; language: Language;
   draftScopeId: string; expectedDraftRevision: number; baseCodeHash: string; code: string;
   answerFormat?: AnswerFormat; specVersion?: string; testConfigDigest?: string;
 }
@@ -216,7 +217,7 @@ export interface AiConnectionResult {
   usage: AiUsage | null; error: AiError | null;
 }
 export interface AiHelpRun {
-  id: string; attemptId: string; status: string; language: 'python' | 'java';
+  id: string; attemptId: string; status: string; language: Language;
   /** Count only actual user-code execution with trustworthy expected results. */
   executed: boolean; attributableToUser: boolean; trustworthyExpected: boolean;
   diagnostics: AiDiagnostic[];

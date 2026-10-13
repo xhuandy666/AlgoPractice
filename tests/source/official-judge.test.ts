@@ -7,6 +7,14 @@ const jsonResponse = (body: unknown, status = 200) => new Response(JSON.stringif
 const snapshot = { slug: 'two-sum', sourceId: '987', language: 'python' as const, code: 'class Solution:\n    pass' };
 const client = (fetchImpl: typeof fetch, csrfToken: () => Promise<string | undefined> = async () => csrf) => new LeetCodeOfficialJudge({ fetchImpl, csrfToken });
 
+for (const [language, officialSlug] of [['python', 'python3'], ['java', 'java'], ['go', 'golang'], ['cpp', 'cpp']] as const) test(`official ${language} maps its slug and submits only the exact original source`, async () => {
+  let payload: unknown;
+  const code = 'ORIGINAL_USER_SOURCE 算法🚀\n';
+  const judge = client(async (_url, init) => { payload = JSON.parse(String(init?.body)); return jsonResponse({ submission_id: '999' }); });
+  assert.equal(await judge.submit({ ...snapshot, language, code }), '999');
+  assert.deepEqual(payload, { lang: officialSlug, question_id: snapshot.sourceId, typed_code: code });
+});
+
 test('official transport verifies server authentication and submits internal question ID with Python3 mapping', async () => {
   const calls: Array<{ url: string; init?: RequestInit }> = [];
   const judge = client(async (url, init) => {

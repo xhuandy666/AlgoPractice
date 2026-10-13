@@ -6,6 +6,8 @@ import type { ImportJob, ListSnapshotInput, ProblemContent } from '../shared/lib
 import type { Hot100ImportResult, PreparedImport, PreparedProblemRefresh } from '../shared/bridge';
 import { HOT100 } from '../shared/builtin-lists';
 import { cacheProblemMedia } from './media-cache';
+import { LANGUAGES } from '../shared/languages';
+import { demoProblems } from '../shared/demo-problems';
 
 const hash = (text: string) => createHash('sha256').update(text).digest('hex');
 const HOT100_REQUEST_KEY = `builtin:${HOT100.id}:v1`;
@@ -166,13 +168,32 @@ export class ImportService {
     }
   }
   async prepareProblem(id: string): Promise<PreparedProblemRefresh> {
-    const before = this.store.getProblem(id); if (!before?.content.sourceUrl) throw new Error('此题没有可刷新的线上来源。');
+    const before = this.store.getProblem(id); if (!before) throw new Error('题目尚未导入。');
+    const builtin = before.content.source === 'local' ? demoProblems.find(problem => problem.id === id) : undefined;
+    if (!before.content.sourceUrl && !builtin) throw new Error('此题没有可刷新的线上来源。');
     const controller = new AbortController(); this.#fetches.add(controller);
     try {
-      const fetched = await this.adapter.fetchProblemContent(before.content.sourceUrl, { signal: controller.signal });
-      let after = fetched.content;
-      if (hasPreparedContent(before.content) && (fetched.capability === 'link-only' || !hasPreparedContent(after) || (before.content.description.trim() && !after.description.trim()))) throw new Error('来源暂未返回可用内容，已有缓存已保留；请确认访问权限后重试。');
-      after = await cacheProblemMedia(after, this.mediaDirectory, controller.signal);
+      let after: ProblemContent;
+      if (builtin) {
+        const starter = { ...before.content.starter };
+        for (const language of LANGUAGES) if (!starter[language]?.trim()) starter[language] = builtin.starter[language];
+        after = { ...before.content, starter };
+      } else {
+        const fetched = await this.adapter.fetchProblemContent(before.content.sourceUrl!, { signal: controller.signal });
+        after = fetched.content;
+        const lostTemplate = LANGUAGES.some(language => before.content.starter[language]?.trim() && !after.starter[language]?.trim());
+        const sameSpec = before.content.mode === after.mode && JSON.stringify(before.content.adapter) === JSON.stringify(after.adapter);
+        if (hasPreparedContent(before.content) && (fetched.capability === 'link-only' || !hasPreparedContent(after)
+          || (before.content.description.trim() && !after.description.trim()) || (before.content.cases.length && !after.cases.length)
+          || (before.content.adapter && !after.adapter) || (lostTemplate && !sameSpec))) throw new Error('来源暂未返回可用内容，已有缓存已保留；请确认访问权限后重试。');
+        if (lostTemplate) {
+          const starter = { ...after.starter };
+          for (const language of LANGUAGES) if (!starter[language]?.trim() && before.content.starter[language]?.trim()) starter[language] = before.content.starter[language];
+          after = { ...after, starter };
+        }
+        after = await cacheProblemMedia(after, this.mediaDirectory, controller.signal);
+      }
+      controller.signal.throwIfAborted();
       const prepared = { id: randomUUID(), before, after, changed: JSON.stringify(before.content) !== JSON.stringify(after) };
       if (this.#problemPreviews.size >= 12) this.#problemPreviews.delete(this.#problemPreviews.keys().next().value!);
       this.#problemPreviews.set(prepared.id, prepared); return prepared;

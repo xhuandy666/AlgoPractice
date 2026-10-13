@@ -4,10 +4,11 @@ import type { ProblemContent } from '../shared/library.ts';
 import { nonempty, record, type ObjectValue } from './errors.ts';
 import { htmlText, jsonValuePrefix, parseLosslessJSON } from './json.ts';
 import type { Observation, ProblemReference, SourceProblemContent, SourceReference } from './types.ts';
+import { LANGUAGES, languageFromOfficialSlug } from '../shared/languages.ts';
 
 export function mapSourceType(value: unknown, depth = 0): ValueType | null {
   if (typeof value !== 'string' || depth > 8) return null;
-  const type = value.trim(); const primitives: Record<string, ValueType> = { integer: 'int', long: 'int64', double: 'float', float: 'float', boolean: 'boolean', string: 'string', ListNode: 'listnode', TreeNode: 'treenode' };
+  const type = value.trim(); const primitives: Record<string, ValueType> = { integer: 'int', long: 'int64', double: 'float', float: 'float', boolean: 'boolean', string: 'string', character: 'char', char: 'char', ListNode: 'listnode', TreeNode: 'treenode' };
   if (Object.hasOwn(primitives, type)) return primitives[type];
   if (type.endsWith('[]')) { const child = mapSourceType(type.slice(0, -2), depth + 1); return child ? { array: child } : null; }
   const list = type.match(/^list<(.+)>$/); if (list) { const child = mapSourceType(list[1], depth + 1); return child ? { list: child } : null; }
@@ -103,7 +104,7 @@ export function problemContent(q: ObjectValue, reference: SourceReference, probl
   const description = nonempty(q.translatedContent) ? q.translatedContent : nonempty(q.content) ? q.content : '';
   const starter: ProblemContent['starter'] = {};
   for (const value of Array.isArray(q.codeSnippets) ? q.codeSnippets : []) { const snippet = record(value); if (!snippet || !nonempty(snippet.code) || Buffer.byteLength(snippet.code) > 1048576) continue;
-    if (snippet.langSlug === 'python3') starter.python = snippet.code; else if (snippet.langSlug === 'java') starter.java = snippet.code;
+    const language = languageFromOfficialSlug(snippet.langSlug); if (language) starter[language] = snippet.code;
   }
   const tags = Array.isArray(q.topicTags) ? q.topicTags.map(t => record(t)?.translatedName ?? record(t)?.nameTranslated ?? record(t)?.name).filter(nonempty) : [];
   const plain = htmlText(description); const constraintText = plain.split(/(?:^|\n)\s*(?:Constraints|提示)\s*[:：]\s*/i)[1];
@@ -114,7 +115,7 @@ export function problemContent(q: ObjectValue, reference: SourceReference, probl
   const adapter = sourceAdapter(metadata);
   if (!adapter) { content.supportReason = '函数签名、返回类型或交互/设计题协议尚未可靠适配；可阅读题面与记录代码。'; return { content, reference, capability: 'statement-only', warnings, observation, rawMetadata: metadata }; }
   const args = sampleArguments(q, adapter);
-  if (!args.length || (!starter.python && !starter.java)) { content.supportReason = '缺少可验证的结构化输入样例或语言模板；当前只提供题面。'; return { content, reference, capability: 'statement-only', warnings, observation, rawMetadata: metadata }; }
+  if (!args.length || !LANGUAGES.some(language => starter[language]?.trim())) { content.supportReason = '缺少可验证的结构化输入样例或语言模板；当前只提供题面。'; return { content, reference, capability: 'statement-only', warnings, observation, rawMetadata: metadata }; }
   content.adapter = adapter; content.cases = args.map(args => ({ args }));
   const profile = profiles[reference.slug]; const signature = (a: Adapter) => JSON.stringify({ method: a.method, params: a.params, returns: a.returns });
   if (!profile || signature(profile) !== signature(adapter)) {

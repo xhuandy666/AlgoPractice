@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import { LANGUAGES, languageLabel } from '../shared/languages';
 import type { DesktopBridge, Page } from '../shared/bridge';
 import type { InterviewRules, InterviewPool, CompanyPreview } from '../shared/interview';
 import { defaultInterviewRules } from '../shared/interview';
@@ -25,7 +26,7 @@ export function InterviewPage({api,onError,onNavigate}:{api:DesktopBridge|undefi
     {message&&<p role="status" className="success-text">{message}</p>}
     <div className="interview-setup"><form onSubmit={e=>{e.preventDefault();void act('preview',async()=>{if(api)setPreview(await api.previewInterview(rules));});}}>
       <div className="heading-with-help"><h3>本场规则</h3><HelpHint label="面试模式说明">严格模式仅开放题面、代码和本地测试。中途可转为辅导模式，转换记录会永久保留。</HelpHint></div><div className="interview-fields"><label>面试模式<select aria-label="面试模式" value={rules.mode} disabled={Boolean(busy||state.active)} onChange={e=>update('mode',e.target.value as InterviewRules['mode'])}><option value="strict">严格模式</option><option value="coached">辅导模式</option></select></label>
-      <label>作答语言<select aria-label="面试语言" value={rules.language} disabled={Boolean(busy||state.active)} onChange={e=>update('language',e.target.value as InterviewRules['language'])}><option value="python">Python</option><option value="java">Java</option></select></label>
+      <label>作答语言<select aria-label="面试语言" value={rules.language} disabled={Boolean(busy||state.active)} onChange={e=>update('language',e.target.value as InterviewRules['language'])}>{LANGUAGES.map(language => <option key={language} value={language}>{languageLabel(language)}</option>)}</select></label>
       <label>时长（分钟）<input aria-label="面试时长" type="number" min={1} max={240} value={rules.durationMinutes} onChange={e=>update('durationMinutes',Number(e.target.value))} /></label>
       <label>排除最近几天练习题<input aria-label="排除近期天数" type="number" min={0} max={365} value={rules.excludeRecentDays} onChange={e=>update('excludeRecentDays',Number(e.target.value))} /></label></div>
       <fieldset className="interview-counts"><legend>难度与题数 · 合计最多 10 道</legend>{(['easy','medium','hard'] as const).map(tier=><label key={tier}>{{easy:'简单',medium:'中等',hard:'困难'}[tier]}<input aria-label={`${{easy:'简单',medium:'中等',hard:'困难'}[tier]}题数`} type="number" min={0} max={10} value={rules.counts[tier]} onChange={e=>update('counts',{...rules.counts,[tier]:Number(e.target.value)})} /></label>)}</fieldset>

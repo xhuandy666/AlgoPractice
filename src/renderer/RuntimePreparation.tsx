@@ -5,6 +5,7 @@ import type { RuntimeArtifactInfo, RuntimeState } from '../shared/runtime';
 import { runtimeBytes, runtimePhaseLabels, runtimeTransferPercent } from './runtime-presentation';
 import { HelpHint } from './HelpHint';
 import './runtime-preparation.css';
+import { languageLabel } from '../shared/languages';
 
 export interface RuntimePreparationProps {
   language: Language;
@@ -38,7 +39,7 @@ export function RuntimeArtifactDetails({ artifact }: { artifact: RuntimeArtifact
 export function RuntimeInstallProgress({ language, progress, cancelling, onCancel }: {
   language: Language; progress: RuntimeProgress | null; cancelling: boolean; onCancel: () => void;
 }) {
-  const label = language === 'python' ? 'Python' : 'Java';
+  const label = languageLabel(language);
   const phase = progress?.phase;
   const percentage = runtimeTransferPercent(progress);
   const committing = phase === 'commit';
@@ -56,6 +57,7 @@ export function RuntimeInstallProgress({ language, progress, cancelling, onCance
     {!ready && <progress className="runtime-progress-bar" aria-label={`${label} ${progress ? runtimePhaseLabels[progress.phase] : '准备进度'}`} max={100} value={percentage} />}
     {percentage !== undefined && progress && <p className="runtime-transfer-count" aria-hidden="true">{runtimeBytes(progress.receivedBytes)} / {runtimeBytes(progress.totalBytes)} · {phase === 'copy' ? '读取' : '下载'} {percentage}%</p>}
     {committing && <p className="field-help">正在完成安装，暂时无法取消。</p>}
+    {phase === 'validate' && (language === 'go' || language === 'cpp') && <p className="field-help">正在验证编译并预热标准库缓存。首次准备可能需要几分钟，可以取消。</p>}
   </div>;
 }
 
@@ -65,7 +67,7 @@ export function RuntimePreparation(props: RuntimePreparationProps) {
     onInstall, onSelect, onOffline, onCancel, onDismiss, onAutoInstallChange } = props;
   const headingId = useId();
   const preferenceId = useId();
-  const label = language === 'python' ? 'Python' : 'Java';
+  const label = languageLabel(language);
   const ready = state?.status === 'ready' && !installing;
   const disabled = busy || installing;
   const title = installing ? `正在准备 ${label} 环境` : ready ? `${label} 已就绪`

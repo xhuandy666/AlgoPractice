@@ -108,7 +108,7 @@ test('two-sum profile handles unordered valid indices using the existing multise
 });
 
 test('source longs retain precision and unsupported metadata types are not coerced', async () => {
-  assert.equal(mapSourceType('long'), 'int64'); assert.equal(mapSourceType('character[]'), null); assert.equal(mapSourceType('void'), null);
+  assert.equal(mapSourceType('long'), 'int64'); assert.deepEqual(mapSourceType('character[]'), { array: 'char' }); assert.equal(mapSourceType('void'), null);
   assert.deepEqual(parseLosslessJSON('[9223372036854775807,"12345678901234567890"]'), ['9223372036854775807', '12345678901234567890']);
   const source = problemAdapter({ titleSlug: 'long-example', metaData: JSON.stringify({ name: 'solve', params: [{ name: 'x', type: 'long' }], return: { type: 'long' } }), jsonExampleTestcases: JSON.stringify(['9223372036854775807']) });
   const result = await source.fetchProblemContent('https://leetcode.cn/problems/long-example/'); assert.deepEqual(result.content.cases[0].args, ['9223372036854775807']);
@@ -167,4 +167,43 @@ test('repeated collection links fetch once and membership completeness is indepe
   const mock = favorite(); const result = await previewImport({ kind: 'links', text: `${listUrl}\n${listUrl}?page=1` }, { adapter: new LeetCodeCnSourceAdapter({ fetchImpl: mock.fetchImpl, pageSize: 2 }) });
   assert.equal(result.complete, true); assert.equal(result.items.length, 3); assert.equal(result.duplicates.length, 1); assert.equal(mock.headers, 2);
   assert.equal(result.items.every(item => item.content === undefined), true);
+});
+
+for (const [language, slug, code] of [
+  ['go', 'golang', 'func isValid(s string) bool { return false }'],
+  ['cpp', 'cpp', 'class Solution { public: bool isValid(string s) { return false; } };'],
+] as const) test(`${language}-only source templates retain verified sample evidence and official metadata`, async () => {
+  const source = problemAdapter({ codeSnippets: [{ langSlug: slug, code }, { langSlug: 'rust', code: 'not supported' }] });
+  const result = await source.fetchProblemContent('https://leetcode.cn/problems/valid-parentheses/');
+  assert.equal(result.capability, 'sample-verified');
+  assert.deepEqual(result.content.starter, { [language]: code });
+  assert.deepEqual(result.content.cases.map(test => test.expected), [true, false]);
+  const metadata = await source.fetchProblem('https://leetcode.cn/problems/valid-parentheses/');
+  assert.equal(metadata.templates.length, 1); assert.equal(metadata.templates[0].language, slug);
+  assert.ok(!JSON.stringify(metadata).includes(code), 'Metadata must not retain source code');
+});
+
+test('schemaVersion 1 JSON and quoted CSV accept Go/C++ without changing their source text', async () => {
+  const code = 'package main\nimport "fmt"\nfunc main(){ fmt.Println("算法🚀") }';
+  const parsed = await previewImport({ kind: 'json', text: JSON.stringify({ schemaVersion: 1, problems: [{
+    id: 'four-language', title: 'Own stdin task', description: 'Own fixture', mode: 'acm',
+    starter: { go: code, cpp: '#include <iostream>\nint main(){std::cout << "算法🚀";}' },
+    cases: [{ stdin: '', expected: '算法🚀' }],
+  }] }) });
+  assert.equal(parsed.complete, true); assert.equal(parsed.items[0].content?.starter.go, code);
+  assert.ok(parsed.items[0].content?.starter.cpp);
+  const csv = await previewImport({ kind: 'csv', text: `id,title,description,mode,go,cpp\nquote,Own,Own,acm,"${code.replaceAll('"', '""')}","int main(){return 0;}"` });
+  assert.equal(csv.complete, true); assert.deepEqual(csv.warnings, []);
+  assert.equal(csv.items[0].content?.starter.go, code); assert.equal(csv.items[0].content?.starter.cpp, 'int main(){return 0;}');
+});
+
+test('source char is explicitly ASCII, including nested character boards', async () => {
+  assert.deepEqual(mapSourceType('character[][]'), { array: { array: 'char' } });
+  const base = { title: 'Own char board', description: 'Own fixture', adapter: { method: 'solve', params: [{ array: { array: 'char' } }], returns: 'char' }, starter: { go: 'func solve(board [][]byte) byte { return board[0][0] }' } };
+  const valid = await previewImport({ kind: 'json', text: JSON.stringify([{ ...base, cases: [{ args: [[['a', '\u0000']]], expected: 'a' }] }]) });
+  assert.equal(valid.complete, true);
+  for (const value of ['界', '🚀', '', 'ab']) {
+    const invalid = await previewImport({ kind: 'json', text: JSON.stringify([{ ...base, cases: [{ args: [[[value]]], expected: 'a' }] }]) });
+    assert.equal(invalid.complete, false); assert.equal(invalid.items.length, 0);
+  }
 });

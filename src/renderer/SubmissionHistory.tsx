@@ -1,4 +1,5 @@
 import { memo, useEffect, useId, useState } from 'react';
+import { languageLabel } from '../shared/languages';
 import type { DesktopBridge } from '../shared/bridge';
 import type { Language } from '../runner/types';
 import type { SubmissionHistoryItem } from '../shared/submission-history';
@@ -47,7 +48,7 @@ export const SubmissionHistory = memo(function SubmissionHistory({ api, problemI
     return () => { alive = false; };
   }, [api, active, problemId, language, selectedFormat, offset, refreshKey, retry]);
   return <section className="submission-history" aria-label="提交历史" aria-busy={loading}>
-    <div className="submission-history-heading"><h2>历史提交 <span>{total} 次</span></h2><span className="muted">{language === 'python' ? 'Python' : 'Java'} · 全部练习</span></div>
+    <div className="submission-history-heading"><h2>历史提交 <span>{total} 次</span></h2><span className="muted">{languageLabel(language)} · 全部练习</span></div>
     <div className="submission-format-filter"><label htmlFor={formatFilterId}>答题格式筛选</label><select id={formatFilterId} value={formatFilter} disabled={busy} onChange={event => setFormatFilter(event.target.value as typeof formatFilter)}>
       {answerFormat && <option value="current">当前格式（{answerFormat === 'acm' ? 'ACM' : '函数式'}）</option>}
       <option value="all">全部格式</option><option value="function">函数式</option><option value="acm">ACM</option>

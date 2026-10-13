@@ -1,4 +1,5 @@
 import { memo, useCallback, useEffect, useRef, useState } from 'react';
+import { languageLabel } from '../shared/languages';
 import type { DesktopBridge } from '../shared/bridge';
 import { SUBMISSION_REMARK_LIMIT, type SubmissionHistoryDetail, type SubmissionRemark } from '../shared/submission-history';
 import { Editor } from './Editor';
@@ -51,7 +52,7 @@ export const HistoricalCodePanel = memo(function HistoricalCodePanel({ api, reco
   }, [flush, record.id, record.source]);
   const save = () => { void flush().catch(() => {}); };
   return <section className="results-pane historical-code-panel" aria-label="历史代码">
-    <div className="historical-code-heading"><div><strong>历史代码 <span className="historical-readonly">只读</span></strong><p><span className={submissionTone(record)}>{submissionStatus(record)}</span><span>{record.source === 'official' ? '力扣提交' : '本地运行'} · {record.language === 'python' ? 'Python' : 'Java'}</span><time dateTime={record.createdAt}>{dateTime(record.createdAt)}</time></p></div><div className="historical-code-actions"><button className="text-button" disabled={frozen} onClick={() => { void api.copyCode(record.code).then(() => setCopied(true)).catch(error => setFailure(errorText(error))); }}>{copied ? '已复制' : '复制代码'}</button><button className="text-button" disabled={frozen} onClick={onClose}>返回运行结果</button></div></div>
+    <div className="historical-code-heading"><div><strong>历史代码 <span className="historical-readonly">只读</span></strong><p><span className={submissionTone(record)}>{submissionStatus(record)}</span><span>{record.source === 'official' ? '力扣提交' : '本地运行'} · {languageLabel(record.language)}</span><time dateTime={record.createdAt}>{dateTime(record.createdAt)}</time></p></div><div className="historical-code-actions"><button className="text-button" disabled={frozen} onClick={() => { void api.copyCode(record.code).then(() => setCopied(true)).catch(error => setFailure(errorText(error))); }}>{copied ? '已复制' : '复制代码'}</button><button className="text-button" disabled={frozen} onClick={onClose}>返回运行结果</button></div></div>
     <div className="submission-remark"><label htmlFor="submission-remark">备注</label><input id="submission-remark" aria-label="提交备注" value={remark} maxLength={SUBMISSION_REMARK_LIMIT} disabled={frozen} placeholder="例如：哈希表 · 一次遍历（选填）" onChange={event => {
       if (editsFrozen() || busy) return;
       const value = event.target.value; current.current.text = value; setRemark(value); setStatus(''); setFailure('');

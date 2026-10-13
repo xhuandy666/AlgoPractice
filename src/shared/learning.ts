@@ -1,3 +1,5 @@
+import type { Language } from './languages.ts';
+
 export type NoteKind = 'problem' | 'topic';
 export type NoteOrigin = 'user' | 'ai';
 export type NoteState = 'draft' | 'confirmed';
@@ -20,7 +22,7 @@ export interface ConfirmNoteInput { requestId: string; noteId: string; version: 
 export interface NoteFilter { kind?: NoteKind; subjectId?: string; tag?: string; search?: string; }
 
 export type ReviewTarget = 'understanding' | 'rewrite';
-export type ReviewLanguage = 'none' | 'python' | 'java';
+export type ReviewLanguage = 'none' | Language;
 export type ReviewRating = 1 | 2 | 3 | 4;
 export interface FsrsCardSnapshot {
   due: string; stability: number; difficulty: number; elapsed_days: number; scheduled_days: number;
@@ -80,17 +82,19 @@ export interface PageRequest { offset?: number; limit?: number; }
 export interface PageResult<T> { items: T[]; total: number; offset: number; limit: number; hasMore: boolean; }
 export interface ProblemPageFilter extends PageRequest {
   search?: string; listId?: string; chapterId?: string; difficulty?: string; ids?: string[];
-  support?: 'runnable' | 'reading'; language?: 'python' | 'java';
+  support?: 'runnable' | 'reading'; language?: Language;
 }
 export interface ProblemListItem {
   id: string; version: string; createdAt: string; updatedAt: string;
   content: Pick<import('./library').ProblemContent, 'title' | 'difficulty' | 'tags' | 'source' | 'sourceUrl' | 'mode' | 'supportReason'> & { media?: { complete: boolean } };
   capability: { level: string; label: string; canRun: boolean; reason: string };
-  capabilities: { statement: boolean; adapter: boolean; python: boolean; java: boolean; cases: number; expected: boolean };
+  capabilities: { statement: boolean; adapter: boolean; python: boolean; java: boolean; go: boolean; cpp: boolean;
+    /** Raw C++ template evidence; historical pool snapshots may predate this projection. */
+    cppTemplate?: boolean; cases: number; expected: boolean };
   listItem?: import('./library').StudyListItem;
 }
 export interface AttemptPageFilter extends PageRequest {
-  problemId?: string; language?: 'python' | 'java'; search?: string; state?: 'active' | 'ended';
+  problemId?: string; language?: Language; search?: string; state?: 'active' | 'ended';
   helpLevel?: 'none' | 'L0' | 'L1' | 'L2' | 'L3' | 'L4'; from?: string; to?: string;
   /** Any recorded activity on this local learning date, including an attempt spanning midnight. */
   learningDate?: string; timeZone?: string;
@@ -101,7 +105,7 @@ export interface AttemptListItem {
   activeMs: number; helpLevel: string | null;
 }
 export interface RunPageFilter extends PageRequest {
-  attemptId?: string; problemId?: string; language?: 'python' | 'java'; includeQueued?: boolean;
+  attemptId?: string; problemId?: string; language?: Language; includeQueued?: boolean;
 }
 export interface RunListItem extends Omit<import('../storage/practice-store').StoredRun, 'code' | 'testSnapshot' | 'result'> {
   durationMs: number | null; caseCount: number; passedCaseCount: number;

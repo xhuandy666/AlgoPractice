@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "createdAt": "2026-09-05T17:14:10.910Z",
+  "createdAt": "2026-10-13T09:40:00.000Z",
   "python": {
     "version": "3.14.7",
     "build": "20260901",
@@ -53,6 +53,26 @@
         "size": 141167264,
         "build": "25.0.4.1+1-LTS"
       }
+    }
+  },
+  "go": {
+    "version": "1.27.2",
+    "provider": "Go official binary distributions",
+    "license": "BSD-3-Clause and bundled component licenses; retain upstream LICENSE and notices",
+    "targets": {
+      "darwin-arm64": { "url": "https://dl.google.com/go/go1.27.2.darwin-arm64.tar.gz", "sha256": "76812b213b1b2302c978d28fa52fa92d541704b9e7d9d5db8002c50e4018c4c5", "archive": "tar.gz", "size": 68195916 },
+      "darwin-x64": { "url": "https://dl.google.com/go/go1.27.2.darwin-amd64.tar.gz", "sha256": "587b59182488b23aa6e5fc25110405a3e0e5b38ed2f5b2f46ed13c32aee356fe", "archive": "tar.gz", "size": 71695284 },
+      "win32-x64": { "url": "https://dl.google.com/go/go1.27.2.windows-amd64.zip", "sha256": "1314008898bd40df77af4b014f777f08873dbdfbcd3d92308728ee03304fe04f", "archive": "zip", "size": 79008081 }
+    }
+  },
+  "cpp": {
+    "version": "0.16.0",
+    "provider": "Zig official distribution (C++17 compiler driver and bundled standard libraries)",
+    "license": "MIT and bundled LLVM/Darwin/MinGW component licenses; retain upstream LICENSE and lib notices",
+    "targets": {
+      "darwin-arm64": { "url": "https://ziglang.org/download/0.16.0/zig-aarch64-macos-0.16.0.tar.xz", "sha256": "b23d70deaa879b5c2d486ed3316f7eaa53e84acf6fc9cc747de152450d401489", "archive": "tar.xz", "size": 52238004 },
+      "darwin-x64": { "url": "https://ziglang.org/download/0.16.0/zig-x86_64-macos-0.16.0.tar.xz", "sha256": "0387557ed1877bc6a2e1802c8391953baddba76081876301c522f52977b52ba7", "archive": "tar.xz", "size": 57396836 },
+      "win32-x64": { "url": "https://ziglang.org/download/0.16.0/zig-x86_64-windows-0.16.0.zip", "sha256": "68659eb5f1e4eb1437a722f1dd889c5a322c9954607f5edcf337bc3684a75a7e", "archive": "zip", "size": 97217739 }
     }
   }
 }

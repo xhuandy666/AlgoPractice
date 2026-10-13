@@ -2,6 +2,9 @@ import { useEffect, useRef } from 'react';
 import * as monaco from 'monaco-editor/editor/editor.api';
 import 'monaco-editor/languages/definitions/python/register';
 import 'monaco-editor/languages/definitions/java/register';
+import 'monaco-editor/languages/definitions/go/register';
+import 'monaco-editor/languages/definitions/cpp/register';
+import { LANGUAGE_DETAILS } from '../shared/languages';
 import EditorWorker from 'monaco-editor/editor/editor.worker?worker';
 import type { Diagnostic, Language } from '../runner/types';
 
@@ -47,7 +50,7 @@ export function Editor({ code, language, readOnly = false, label = '解题代码
   const callbacks = useRef({ onChange, onRun }); callbacks.current = { onChange, onRun };
   useEffect(() => {
     defineEditorTheme();
-    const model = monaco.editor.createModel(code, language);
+    const model = monaco.editor.createModel(code, LANGUAGE_DETAILS[language].monacoLanguage);
     const editor = monaco.editor.create(host.current!, {
       model, theme: 'algopractice', automaticLayout: true, minimap: { enabled: false },
       fontFamily: getComputedStyle(document.documentElement).getPropertyValue('--font-mono'),
@@ -72,7 +75,7 @@ export function Editor({ code, language, readOnly = false, label = '解题代码
   }, [code]);
   useEffect(() => {
     const model = instance.current?.getModel();
-    if (model && model.getLanguageId() !== language) monaco.editor.setModelLanguage(model, language);
+    if (model && model.getLanguageId() !== LANGUAGE_DETAILS[language].monacoLanguage) monaco.editor.setModelLanguage(model, LANGUAGE_DETAILS[language].monacoLanguage);
   }, [language]);
   useEffect(() => { instance.current?.updateOptions({ readOnly }); }, [readOnly]);
   useEffect(() => {

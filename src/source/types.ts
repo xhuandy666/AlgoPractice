@@ -1,5 +1,6 @@
 import type { ProblemContent } from '../shared/library.ts';
 import type { ObjectValue } from './errors.ts';
+import type { OfficialLanguageSlug } from '../shared/languages.ts';
 
 export type SourceKind = 'study-plan' | 'public-list' | 'problem';
 export interface SourceReference { provider: 'leetcode-cn'; kind: SourceKind; slug: string; canonicalUrl: string; sourceKey: string; }
@@ -23,7 +24,7 @@ export interface SourceProblemMetadata {
   source: SourceReference; problem: ProblemReference;
   fields: { statement: boolean; translatedStatement: boolean; functionMetadata: boolean; sampleCases: boolean };
   functionSignature: { name: string | null; parameterTypes: string[]; returnType: string | null } | null;
-  templates: Array<{ language: 'python3' | 'java'; characterCount: number; sha256: string }>;
+  templates: Array<{ language: OfficialLanguageSlug; characterCount: number; sha256: string }>;
   observation: Observation;
   limitation: 'metadata-only; no statement, sample text, or template body retained';
 }

@@ -12,6 +12,8 @@ import type { AdvanceReviewSessionInput, ProblemReviewAssessmentInput, ProblemRe
 import { MIGRATE_V5 } from '../interview/schema.ts';
 import { MIGRATE_V7 } from './submission-history-schema.ts';
 import { MIGRATE_V8 } from './answer-format-schema.ts';
+import { MIGRATE_V10 } from './language-schema.ts';
+import { isLanguage, LANGUAGES, type Language } from '../shared/languages.ts';
 import { assertAnswerFormat, validateAcmTestConfig, NATIVE_SPEC_VERSION, ACM_FREE_SPEC_VERSION, type AnswerFormat, type AcmTestConfig } from '../shared/answer-format.ts';
 import { SUBMISSION_REMARK_LIMIT, type SaveSubmissionRemarkInput, type SubmissionHistoryDetail, type SubmissionHistoryFilter,
   type SubmissionHistoryItem, type SubmissionHistorySource, type SubmissionRemark } from '../shared/submission-history.ts';
@@ -30,7 +32,7 @@ import type {
   StudyList, StudyListItem,
 } from '../shared/library';
 
-export type Language = 'python' | 'java';
+export type { Language } from '../shared/languages.ts';
 export type JsonValue = null | boolean | number | string | JsonValue[] | { [key: string]: JsonValue };
 export const TERMINAL_STATUSES = [
   'passed', 'completed', 'wrong_answer', 'compile_error', 'runtime_error',
@@ -148,8 +150,8 @@ export interface StoredRun {
 }
 
 type Row = Record<string, string | number | null>;
-const SCHEMA_VERSION = 9;
-const SUPPORTED_BACKUP_VERSIONS = [1, 2, 3, 4, 5, 6, 7, 8, SCHEMA_VERSION];
+const SCHEMA_VERSION = 10;
+const SUPPORTED_BACKUP_VERSIONS = [1, 2, 3, 4, 5, 6, 7, 8, 9, SCHEMA_VERSION];
 const MIGRATE_V6 = `
 CREATE TABLE official_submissions (
   id TEXT PRIMARY KEY NOT NULL,
@@ -375,7 +377,7 @@ function requireText(value: string, field: string): void {
 }
 
 function requireLanguage(language: Language): void {
-  if (language !== 'python' && language !== 'java') throw new Error('Unsupported language');
+  if (!isLanguage(language)) throw new Error('Unsupported language');
 }
 
 function requireSource(source: ProblemSource): void {
@@ -520,7 +522,7 @@ export class PracticeStore {
       const version = (this.#db.prepare('PRAGMA user_version').get() as Row).user_version;
       if (![0, ...SUPPORTED_BACKUP_VERSIONS].includes(version as number)) throw new Error(`Unsupported schema version: ${version}`);
       this.#db.exec('PRAGMA foreign_keys = ON; PRAGMA journal_mode = WAL; PRAGMA synchronous = FULL; PRAGMA busy_timeout = 5000;');
-      if (version === 0) this.#transaction(() => {
+      if (version === 0) this.#schemaMigration(() => {
         this.#db.exec(SCHEMA);
         this.#db.exec(MIGRATE_V2);
         this.#db.exec(MIGRATE_V3);
@@ -533,11 +535,13 @@ export class PracticeStore {
         this.#db.exec(MIGRATE_V9);
         const settings = new LearningRepository(this.#db, operation => this.#transaction(operation)).getLearningSettings();
         migrateProblemReviewData(this.#db, settings.timeZone);
+        this.#db.exec(MIGRATE_V10);
         this.#db.exec(`PRAGMA user_version = ${SCHEMA_VERSION}`);
+        checkDatabase(this.#db);
       });
       if (typeof version === 'number' && version > 0 && version < SCHEMA_VERSION) {
         checkDatabase(this.#db, [version]);
-        const backupPath = `${this.dbPath}.before-v9-${new Date().toISOString().replace(/[:.]/g, '-')}-${randomUUID()}.sqlite`;
+        const backupPath = `${this.dbPath}.before-v${SCHEMA_VERSION}-${new Date().toISOString().replace(/[:.]/g, '-')}-${randomUUID()}.sqlite`;
         const temporary = `${backupPath}.partial`;
         try {
           // VACUUM INTO is a synchronous, transactionally consistent snapshot including committed WAL pages.
@@ -549,7 +553,7 @@ export class PracticeStore {
           this.migrationBackupPath = backupPath;
         } finally { if (existsSync(temporary)) unlinkSync(temporary); }
         try {
-          this.#transaction(() => {
+          this.#schemaMigration(() => {
             if (version === 1) this.#db.exec(MIGRATE_V2);
             if (version < 3) {
               this.#db.exec(MIGRATE_V3);
@@ -561,14 +565,17 @@ export class PracticeStore {
             if (version < 7) this.#db.exec(MIGRATE_V7);
             if (version < 8) this.#db.exec(MIGRATE_V8);
             backfillNoteAttachmentReferences(this.#db);
-            this.#db.exec(MIGRATE_V9);
-            const settings = new LearningRepository(this.#db, operation => this.#transaction(operation)).getLearningSettings();
-            migrateProblemReviewData(this.#db, settings.timeZone);
+            if (version < 9) {
+              this.#db.exec(MIGRATE_V9);
+              const settings = new LearningRepository(this.#db, operation => this.#transaction(operation)).getLearningSettings();
+              migrateProblemReviewData(this.#db, settings.timeZone);
+            }
+            this.#db.exec(MIGRATE_V10);
             this.#db.exec(`PRAGMA user_version = ${SCHEMA_VERSION}`);
             checkDatabase(this.#db);
           });
         } catch (error) {
-          throw new Error(`Schema v9 migration failed; original schema retained. Backup: ${backupPath}`, { cause: error });
+          throw new Error(`Schema v${SCHEMA_VERSION} migration failed; original schema retained. Backup: ${backupPath}`, { cause: error });
         }
       }
       // Existing schema 2 databases need only a trigger update; table layouts and stored snapshots stay intact.
@@ -585,6 +592,21 @@ export class PracticeStore {
       this.#db.close();
       this.#closed = true;
       throw error;
+    }
+  }
+
+  /** A parent-table rebuild must switch FK enforcement outside, never inside, its transaction.
+   * All links are checked before commit, including deferred/cyclic Attempt and Run references.
+   */
+  #schemaMigration(operation: () => void): void {
+    if (this.#inTransaction || this.#db.isTransaction) throw new Error('Schema migration cannot join an existing transaction');
+    this.#db.exec('PRAGMA foreign_keys = OFF');
+    try {
+      if (this.#db.prepare('PRAGMA foreign_keys').get()!.foreign_keys !== 0) throw new Error('Cannot disable migration foreign keys');
+      this.#transaction(operation);
+    } finally {
+      this.#db.exec('PRAGMA foreign_keys = ON');
+      if (this.#db.prepare('PRAGMA foreign_keys').get()!.foreign_keys !== 1) throw new Error('Cannot restore foreign key enforcement');
     }
   }
 
@@ -690,10 +712,12 @@ export class PracticeStore {
     if (filter.chapterId) { clauses.push('chapter_id = ?'); values.push(filter.chapterId); }
     if (search) { clauses.push("(problem_id LIKE ? ESCAPE '\\' OR title LIKE ? ESCAPE '\\' OR EXISTS(SELECT 1 FROM json_each(tags_json) WHERE value LIKE ? ESCAPE '\\'))"); values.push(literalLike(search), literalLike(search), literalLike(search)); }
     if (filter.difficulty) { clauses.push("CASE lower(difficulty) WHEN 'easy' THEN '简单' WHEN 'medium' THEN '中等' WHEN 'hard' THEN '困难' ELSE difficulty END = ?"); values.push(filter.difficulty); }
-    const template = filter.language === 'python' ? 'has_python' : filter.language === 'java' ? 'has_java' : '(has_python OR has_java)';
+    const template = filter.language ? `has_${filter.language}` : `(${LANGUAGES.map(language => `has_${language}`).join(' OR ')})`;
     const runnable = `(${template} AND (mode = 'acm' OR has_adapter) AND case_count > 0)`;
     if (filter.support) clauses.push(filter.support === 'runnable' ? runnable : `NOT ${runnable}`);
-    if (filter.language) clauses.push(template);
+    // An unsupported function signature can still be read in its language. Keep it visible
+    // under the language + reading filter, but never admit it to runnable/interview pools.
+    if (filter.language) clauses.push(filter.language === 'cpp' ? 'has_cpp_template' : template);
     const cte = `WITH metadata AS (SELECT h.problem_id, h.version, h.created_at, h.updated_at, h.rowid AS ordering,
       COALESCE(json_extract(v.snapshot_json, '$.title'), h.problem_id) AS title,
       COALESCE(json_extract(v.snapshot_json, '$.difficulty'), '未知') AS difficulty,
@@ -706,6 +730,14 @@ export class PracticeStore {
       COALESCE(json_type(v.snapshot_json, '$.adapter') = 'object', 0) AS has_adapter,
       length(trim(COALESCE(json_extract(v.snapshot_json, '$.starter.python'), ''), ${SQL_TRIM_WHITESPACE})) > 0 AS has_python,
       length(trim(COALESCE(json_extract(v.snapshot_json, '$.starter.java'), ''), ${SQL_TRIM_WHITESPACE})) > 0 AS has_java,
+      length(trim(COALESCE(json_extract(v.snapshot_json, '$.starter.go'), ''), ${SQL_TRIM_WHITESPACE})) > 0 AS has_go,
+      length(trim(COALESCE(json_extract(v.snapshot_json, '$.starter.cpp'), ''), ${SQL_TRIM_WHITESPACE})) > 0 AS has_cpp_template,
+      EXISTS(SELECT 1 FROM json_tree(v.snapshot_json, '$.adapter.params') t WHERE t.type = 'text' AND t.value = 'bigint')
+        OR EXISTS(SELECT 1 FROM json_tree(v.snapshot_json, '$.adapter.returns') t WHERE t.type = 'text' AND t.value = 'bigint') AS has_cpp_bigint,
+      length(trim(COALESCE(json_extract(v.snapshot_json, '$.starter.cpp'), ''), ${SQL_TRIM_WHITESPACE})) > 0
+        AND (json_extract(v.snapshot_json, '$.mode') = 'acm' OR (
+          NOT EXISTS(SELECT 1 FROM json_tree(v.snapshot_json, '$.adapter.params') t WHERE t.type = 'text' AND t.value = 'bigint')
+          AND NOT EXISTS(SELECT 1 FROM json_tree(v.snapshot_json, '$.adapter.returns') t WHERE t.type = 'text' AND t.value = 'bigint'))) AS has_cpp,
       COALESCE(json_array_length(v.snapshot_json, '$.cases'), 0) AS case_count,
       NOT EXISTS(SELECT 1 FROM json_each(v.snapshot_json, '$.cases') c WHERE json_type(c.value, '$.expected') IS NULL) AS has_expected
       ${filter.listId ? ', li.list_id, li.item_key, li.chapter_id, li.position, li.rowid AS item_order' : ''}
@@ -716,17 +748,19 @@ export class PracticeStore {
     const rows = this.#db.prepare(`${cte} SELECT * FROM metadata ${where} ORDER BY ${filter.listId ? 'position, item_order' : 'ordering'} LIMIT ? OFFSET ?`)
       .all(...values, bounds.limit, bounds.offset) as Row[];
     return pageResult(rows.map(row => {
-      const statement = Boolean(row.has_statement), adapter = Boolean(row.has_adapter), python = Boolean(row.has_python), java = Boolean(row.has_java);
-      const canRun = (filter.language === 'python' ? python : filter.language === 'java' ? java : python || java) && (row.mode === 'acm' || adapter) && Number(row.case_count) > 0;
+      const statement = Boolean(row.has_statement), adapter = Boolean(row.has_adapter);
+      const templates = { python: Boolean(row.has_python), java: Boolean(row.has_java), go: Boolean(row.has_go), cpp: Boolean(row.has_cpp) };
+      const canRun = (filter.language ? templates[filter.language] : LANGUAGES.some(language => templates[language])) && (row.mode === 'acm' || adapter) && Number(row.case_count) > 0;
       const expected = Boolean(row.has_expected), supportReason = row.support_reason as string | null;
+      const unsupportedCpp = filter.language === 'cpp' && Boolean(row.has_cpp_template) && Boolean(row.has_cpp_bigint) && row.mode !== 'acm';
       return { id: row.problem_id as string, version: row.version as string, createdAt: row.created_at as string, updatedAt: row.updated_at as string,
         content: { title: row.title as string, difficulty: row.difficulty as string, tags: (JSON.parse(row.tags_json as string) as unknown[]).filter((tag): tag is string => typeof tag === 'string'),
           source: row.source as ProblemSource, mode: row.mode as ProblemContent['mode'], ...(row.source_url ? { sourceUrl: row.source_url as string } : {}),
           ...(supportReason ? { supportReason } : {}), ...(row.media_complete !== null ? { media: { complete: Boolean(row.media_complete) } } : {}) },
-        capabilities: { statement, adapter, python, java, cases: row.case_count as number, expected },
+        capabilities: { statement, adapter, ...templates, cppTemplate: Boolean(row.has_cpp_template), cases: row.case_count as number, expected },
         capability: { canRun, level: canRun ? expected ? 'sample-verified' : 'execution-only' : statement ? 'statement-only' : 'link-only',
           label: canRun ? expected ? statement ? '本地可运行' : '本地可运行 · 缺题面' : '可运行 · 仅看输出' : statement ? '题面可读' : '仅链接',
-          reason: canRun ? expected ? '使用已缓存的本地用例，结果不等同于官方 AC。' : '用例没有完整的可信期望值，只展示实际输出。' : supportReason || '题面、函数签名、语言模板或用例尚未准备完整。' },
+          reason: canRun ? expected ? '使用已缓存的本地用例，结果不等同于官方 AC。' : '用例没有完整的可信期望值，只展示实际输出。' : unsupportedCpp ? 'C++ 本地函数适配暂不支持此签名中的类型；可保存代码，或使用 ACM 自定义输入输出练习。' : supportReason || '题面、函数签名、语言模板或用例尚未准备完整。' },
         ...(filter.listId ? { listItem: { key: row.item_key as string, problemId: row.problem_id as string, position: row.position as number,
           ...(row.chapter_id !== null ? { chapterId: row.chapter_id as string } : {}) } } : {}) };
     }), total, bounds);

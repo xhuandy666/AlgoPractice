@@ -3,6 +3,7 @@ import { checkCancelled, failSchema, nonempty, record, requiredCount, requiredSt
 import { parseSource } from './identify.ts';
 import { SourceTransport, type SourceAdapterOptions } from './transport.ts';
 import { problemContent } from './problem-content.ts';
+import { LANGUAGE_DETAILS, languageFromOfficialSlug } from '../shared/languages.ts';
 import type { FetchOptions, ProblemReference, SourceAdapter, SourcePlan, SourceProblemContent, SourceProblemMetadata, SourceReference } from './types.ts';
 export { SourceError } from './errors.ts';
 export type { SourceErrorCode } from './errors.ts';
@@ -109,7 +110,7 @@ export class LeetCodeCnSourceAdapter implements SourceAdapter {
     if (nonempty(q.metaData)) { try { metadata = record(JSON.parse(q.metaData)); } catch { return failSchema('question.metaData'); } }
     const templates: SourceProblemMetadata['templates'] = [];
     if (!Array.isArray(q.codeSnippets)) return failSchema('question.codeSnippets');
-    for (const value of q.codeSnippets) { const s = record(value); if (s && (s.langSlug === 'python3' || s.langSlug === 'java') && nonempty(s.code)) templates.push({ language: s.langSlug, characterCount: s.code.length, sha256: createHash('sha256').update(s.code).digest('hex') }); }
+    for (const value of q.codeSnippets) { const s = record(value); const language = languageFromOfficialSlug(s?.langSlug); if (s && language && nonempty(s.code)) templates.push({ language: LANGUAGE_DETAILS[language].officialSlug, characterCount: s.code.length, sha256: createHash('sha256').update(s.code).digest('hex') }); }
     const params = metadata && Array.isArray(metadata.params) ? metadata.params : []; const returnInfo = record(metadata?.return);
     return { source, problem, fields: { statement: nonempty(q.content), translatedStatement: nonempty(q.translatedContent), functionMetadata: metadata !== null, sampleCases: nonempty(q.exampleTestcases) || nonempty(q.sampleTestCase) || nonempty(q.jsonExampleTestcases) },
       functionSignature: metadata ? { name: nonempty(metadata.name) ? metadata.name : null, parameterTypes: params.map(p => record(p)?.type).filter(nonempty), returnType: nonempty(returnInfo?.type) ? returnInfo.type : null } : null,

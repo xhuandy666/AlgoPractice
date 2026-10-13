@@ -3,17 +3,25 @@ import { randomUUID } from 'node:crypto';
 import os from 'node:os';
 import path from 'node:path';
 import { runProcess } from './process.ts';
-import { compare, normalizeTyped, observedType, validateType, validateValue } from './values.ts';
+import { compare, normalizeTyped, observedType, supportsAdapter, validateType, validateValue } from './values.ts';
 import { javaWrapper, pythonWrapper, JAVA_NODES } from './wrappers.ts';
 import { javaDiagnostics, PYTHON_ACM_WRAPPER, PYTHON_COMPILE_CHECK, readPythonDiagnostic } from './diagnostics.ts';
 import { compilerPath, defaultRuntimePath } from './runtime-paths.ts';
 import { inspectRuntime } from './runtime-inspect.ts';
+import { isLanguage } from '../shared/languages.ts';
+import { nativeSources, type NativeSources } from './native-driver.ts';
+import { nativeDiagnostics } from './native-diagnostics.ts';
+import { prepareCompilation } from './toolchain-env.ts';
 import type { Diagnostic, RunEvent, RunOptions, RunRequest, RunResult, RunStatus, WireValue } from './types.ts';
 export type * from './types.ts';
 export { defaultRuntimePath } from './runtime-paths.ts';
 export { inspectRuntime } from './runtime-inspect.ts';
+/** Explicit protocol identity for new run archives; existing archives are never rewritten. */
+export function runnerDriverVersion(language: RunRequest['language']): string {
+  return { python: 'python-function-acm-v1', java: 'java-function-acm-v1', go: 'go-function-acm-v1', cpp: 'cpp17-function-acm-v1' }[language];
+}
 function validate(request: RunRequest): void {
-  if (!request || !['python','java'].includes(request.language) || !['acm','function'].includes(request.mode)) throw new Error('Unsupported language or mode');
+  if (!request || !isLanguage(request.language) || !['acm','function'].includes(request.mode)) throw new Error('Unsupported language or mode');
   if (typeof request.code !== 'string' || Buffer.byteLength(request.code) > 1048576) throw new Error('Code must be a string at most 1 MiB');
   for (const [name, value, maximum] of [['timeoutMs',request.timeoutMs,120000],['compileTimeoutMs',request.compileTimeoutMs,120000],['outputLimitBytes',request.outputLimitBytes,1048576]] as const) {
     if (value !== undefined && (!Number.isInteger(value) || value < 1 || value > maximum)) throw new Error(`Invalid ${name}`);
@@ -26,6 +34,7 @@ function validate(request: RunRequest): void {
     const adapter = request.adapter;
     if (!adapter || !/^[A-Za-z_][A-Za-z0-9_]*$/.test(adapter.method) || !Array.isArray(adapter.params) || adapter.params.length > 20) throw new Error('Function adapter requires a valid method and parameter types');
     adapter.params.forEach(t => validateType(t)); if(adapter.returns!=='void')validateType(adapter.returns);
+    if (!supportsAdapter(request.language, adapter)) throw new Error(`${request.language}: portable function adapters do not support bigint; use ACM mode with your own representation.`);
     if (adapter.inPlaceArg !== undefined && (!Number.isInteger(adapter.inPlaceArg) || adapter.inPlaceArg < 0 || adapter.inPlaceArg >= adapter.params.length)) throw new Error('Invalid in-place argument index');
     const outputType=observedType(adapter);
     if(adapter.inPlaceRange){
@@ -67,35 +76,42 @@ export async function runCode(request: RunRequest, options: RunOptions = {}): Pr
     try { validate(request); request = structuredClone(request); } catch(error) { result.status='invalid_request';result.diagnostics.push({phase:'request',source:'runner',message:String(error)});return result; }
     if (options.signal?.aborted) { result.status='cancelled';return result; }
     directory = await mkdtemp(path.join(os.tmpdir(),'algopractice-run-'));
-    const executable = request.runtimePath ?? defaultRuntimePath(request.language);
-    const compiler = compilerPath(executable);
+    const executable = request.runtimePath ?? defaultRuntimePath(request.language, options.runtimeRoot);
+    const compiler = request.language === 'java' ? compilerPath(executable) : executable;
     const processOptions = { cwd:directory,timeoutMs:request.timeoutMs ?? 10000,outputLimitBytes:request.outputLimitBytes ?? 1048576,signal:options.signal };
-    const inspection = await inspectRuntime(request.language, { runtimePath: executable, signal: options.signal });
+    const inspection = await inspectRuntime(request.language, { root: options.runtimeRoot, runtimePath: executable, signal: options.signal });
     result.runtimeVersion=inspection.runtimeVersion;
     if(inspection.status!=='ready'){result.status=inspection.status==='cancelled'?'cancelled':'environment_error';result.diagnostics.push(...inspection.diagnostics);return result;}
     const tests=request.cases?.length ? request.cases : [{stdin:request.stdin ?? ''}];
+    let native: NativeSources | undefined;
+    let profile: Awaited<ReturnType<typeof prepareCompilation>> | undefined;
     if(request.language==='python') {
       await writeFile(path.join(directory,request.mode==='acm'?'main.py':'solution.py'),request.code);
       await writeFile(path.join(directory,'compile-check.py'),PYTHON_COMPILE_CHECK);
       await writeFile(path.join(directory,'wrapper.py'),request.mode==='function'?pythonWrapper(request.adapter!,tests):PYTHON_ACM_WRAPPER);
-    } else {
+    } else if(request.language==='java') {
       if(request.mode==='acm') await writeFile(path.join(directory,'Main.java'),request.code);
       else {
         await writeFile(path.join(directory,'Solution.java'),'import java.util.*;\nimport java.math.*;\n'+request.code);
         await writeFile(path.join(directory,'Nodes.java'),JAVA_NODES);
         await writeFile(path.join(directory,'Main.java'),javaWrapper(request.adapter!,tests));
       }
+    } else {
+      native = await nativeSources(directory, request, tests);
+      try { profile = await prepareCompilation(request.language, inspection, { cwd: directory, root: options.runtimeRoot, signal: options.signal }); }
+      catch (error) { result.status=options.signal?.aborted?'cancelled':'environment_error';result.diagnostics.push({phase:'environment',source:'runner',message:String(error)});return result; }
     }
     const diagnosticsFrom = async (file: string, stderr: string, phase: 'compile' | 'run'): Promise<Diagnostic[]> => {
       if(request.language==='java') return javaDiagnostics(stderr,phase,request);
+      if(request.language==='go'||request.language==='cpp') return nativeDiagnostics(stderr,phase,request);
       try { if((await stat(file)).size<=32768){const diagnostic=readPythonDiagnostic(JSON.parse(await readFile(file,'utf8')),request,phase);if(diagnostic)return [diagnostic];} } catch {}
       return [{phase,source:'user',message:stderr||`${phase} failed without diagnostic output`}];
     };
     const compileDiagnostic=path.join(directory,'compile-diagnostic.json');
     emit('compile');
-    const compilation = await runProcess(request.language==='python'?executable:compiler,
-      request.language==='python'?['-I','-X','utf8','compile-check.py',request.mode==='acm'?'main.py':'solution.py',compileDiagnostic]:['-XDrawDiagnostics','-encoding','UTF-8','-proc:none',...(request.mode==='acm'?['Main.java']:['Main.java','Solution.java','Nodes.java'])],
-      {...processOptions,timeoutMs:request.compileTimeoutMs ?? 30000});
+    const compilation = await runProcess(profile?.executable ?? (request.language==='python'?executable:compiler),
+      native ? [...profile!.argsPrefix, ...native.compileArgs] : request.language==='python'?['-I','-X','utf8','compile-check.py',request.mode==='acm'?'main.py':'solution.py',compileDiagnostic]:['-XDrawDiagnostics','-encoding','UTF-8','-proc:none',...(request.mode==='acm'?['Main.java']:['Main.java','Solution.java','Nodes.java'])],
+      {...processOptions,...(profile?{env:profile.env}:{}),timeoutMs:request.compileTimeoutMs ?? 30000});
     result.stdout=compilation.stdout;result.stderr=compilation.stderr;
     if(compilation.reason || compilation.code!==0) {
       result.status=compilation.reason==='spawn_error'?'environment_error':compilation.reason ?? 'compile_error';
@@ -112,11 +128,11 @@ export async function runCode(request: RunRequest, options: RunOptions = {}): Pr
       if(remaining<=0){result.status='output_limit';return result;}
       const output=path.join(directory,`result-${index}.json`);
       const diagnosticFile=path.join(directory,`diagnostic-${index}.json`);
-      const args=request.language==='python'
+      const args=native ? request.mode==='acm'?[]:[String(index),output,String(remaining)] : request.language==='python'
         ? request.mode==='acm'?['-I','-X','utf8','wrapper.py',diagnosticFile]:['-I','-X','utf8','wrapper.py',String(index),output,String(remaining),diagnosticFile]
         : request.mode==='acm'?['-Xmx256m','-cp',directory,'Main']:['-Xmx256m','-cp',directory,'Main',String(index),output,String(remaining)];
       emit('run',{caseIndex:index});
-      const run=await runProcess(executable,args,{...processOptions,signal:executionSignal,stdin:tests[index].stdin ?? request.stdin,outputLimitBytes:remaining});
+      const run=await runProcess(native?.binary ?? executable,args,{...processOptions,signal:executionSignal,stdin:tests[index].stdin ?? request.stdin,outputLimitBytes:remaining});
       result.stdout+=run.stdout;result.stderr+=run.stderr;
       let status:RunStatus=run.reason==='spawn_error'?'environment_error':run.reason ?? (run.code===0?'completed':'runtime_error');
       if(status==='cancelled' && executionDeadline.signal.aborted && !options.signal?.aborted) status='timeout';

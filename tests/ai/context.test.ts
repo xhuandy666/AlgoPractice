@@ -3,6 +3,19 @@ import assert from 'node:assert/strict';
 import { buildRequestSnapshot, canonicalJson, completionEndpoint, normalizeProviderConfig, requestHash, sha256, validateRequestInput } from '../../src/ai/index.ts';
 import { config, context, input } from './helpers.ts';
 
+test('four-language context snapshots bind language to prompts, cache and patch identity', () => {
+  const hashes = new Set<string>();
+  for (const language of ['python', 'java', 'go', 'cpp'] as const) {
+    const source = { ...context(), language };
+    const snapshot = buildRequestSnapshot(input(), source, config());
+    assert.equal(snapshot.language, language); assert.equal(JSON.parse(snapshot.messages[1].content).learningContext.language, language);
+    hashes.add(requestHash(snapshot));
+    assert.throws(() => buildRequestSnapshot(input(), { ...source, mode: 'strict' }, config()), /STRICT_MODE|严格/);
+  }
+  assert.equal(hashes.size, 4, 'Otherwise identical contexts in different languages never share cached answers');
+  assert.throws(() => buildRequestSnapshot(input(), { ...context(), language: 'golang' as never }, config()));
+});
+
 test('answer format, specification and stdin digest bind AI evidence and cache identity', () => {
   const source = { ...context(), run: null, answerFormat: 'acm' as const, specVersion: 'acm-free-v1', testConfigDigest: 'a'.repeat(64),
     testConfig: { version: 1 as const, compare: 'normalized' as const, cases: [{ stdin: '', expected: '' }] } };

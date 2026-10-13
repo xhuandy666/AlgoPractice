@@ -1,6 +1,6 @@
 import test, { after } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdir, readdir, stat, writeFile, rm } from 'node:fs/promises';
+import { mkdir, stat, writeFile, rm } from 'node:fs/promises';
 import path from 'node:path';
 import os from 'node:os';
 import { runCode, defaultRuntimePath } from '../../src/runner/index.ts';
@@ -8,7 +8,6 @@ import type { Adapter, RunRequest, TestCase } from '../../src/runner/types.ts';
 
 const reports: object[]=[];
 const startedAt=new Date().toISOString();
-const startDirectories=new Set((await readdir(os.tmpdir())).filter(n=>n.startsWith('algopractice-run-')));
 interface Scenario {name:string; adapter:Adapter; cases:TestCase[]; python:string; java:string; expected?:string;}
 const fn=(body:string)=>`class Solution:\n    def solve(self, x):\n        ${body.replaceAll('\n','\n        ')}`;
 const javaFn=(signature:string,body:string)=>`class Solution { public ${signature} { ${body} } }`;
@@ -74,7 +73,14 @@ test('macOS: unicode and space runtime path',{skip:process.platform!=='darwin'?'
  const {symlink}=await import('node:fs/promises'); const link=path.join(root,'python3');await rm(link,{force:true});await symlink(defaultRuntimePath('python'),link);
  await check('unicode space runtime path',{language:'python',mode:'acm',code:'print("路径正确")',runtimePath:link,cases:[{expected:'路径正确'}]},'passed');await rm(root,{recursive:true,force:true});
 });
-test('temporary run directories are cleaned',async()=>{const now=(await readdir(os.tmpdir())).filter(n=>n.startsWith('algopractice-run-')&&!startDirectories.has(n));assert.deepEqual(now,[]);reports.push({name:'temporary directories cleanup',remaining:now,passed:true});});
+test('temporary run directories are cleaned',async()=>{
+ const result=await check('owned temporary directory cleanup',{language:'python',mode:'acm',code:'import os\nprint(os.getcwd())'},'completed');
+ const directory=result.stdout.trim();
+ assert.ok(path.isAbsolute(directory),'The executed program must identify its exact working directory');
+ assert.match(path.basename(directory),/^algopractice-run-/);
+ await assert.rejects(stat(directory),(error:NodeJS.ErrnoException)=>error.code==='ENOENT','The completed run must remove its own temporary source directory');
+ reports.push({name:'temporary directories cleanup',directory,remaining:[],passed:true});
+});
 after(async()=>{
  await mkdir('evidence',{recursive:true});await writeFile('evidence/runner-results.json',JSON.stringify({startedAt,completedAt:new Date().toISOString(),platform:process.platform,architecture:process.arch,osRelease:os.release(),node:process.version,summary:{scenarios:reports.length,passed:reports.filter((r:any)=>r.passed).length,failed:reports.filter((r:any)=>!r.passed).length},reports},null,2)+'\n');
 });

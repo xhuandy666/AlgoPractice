@@ -1,8 +1,12 @@
 import { spawn } from 'node:child_process';
 import { windowsJobCommand } from './windows-job.ts';
 
+export const TOOLCHAIN_ENV_KEYS = ['HOME', 'USERPROFILE', 'APPDATA', 'LOCALAPPDATA', 'XDG_CONFIG_HOME', 'XDG_CACHE_HOME', 'GOTOOLCHAIN', 'GOENV', 'GOWORK', 'GOPROXY', 'GOSUMDB', 'GOVCS', 'CGO_ENABLED', 'GO111MODULE', 'GOOS', 'GOARCH', 'GOCACHE', 'GOPATH', 'GOMODCACHE', 'ZIG_GLOBAL_CACHE_DIR', 'ZIG_LOCAL_CACHE_DIR', 'ZIG_LIB_DIR', 'DEVELOPER_DIR', 'SDKROOT'] as const;
+export type ToolchainProcessEnvironment = Partial<Record<typeof TOOLCHAIN_ENV_KEYS[number], string>>;
 export interface ProcessOptions {
   cwd: string; stdin?: string; timeoutMs: number; outputLimitBytes: number; signal?: AbortSignal;
+  /** Host-owned toolchain settings only. Never exposed in RunRequest or inherited wholesale. */
+  env?: ToolchainProcessEnvironment;
 }
 export interface ProcessResult { code: number | null; stdout: string; stderr: string; reason?: 'timeout' | 'cancelled' | 'output_limit' | 'spawn_error'; durationMs: number; }
 
@@ -27,13 +31,21 @@ export function runProcess(executable: string, args: string[], options: ProcessO
   return new Promise(resolve => {
     if (options.signal?.aborted) return resolve({ code: null, stdout: '', stderr: '', reason: 'cancelled', durationMs: 0 });
     const env: NodeJS.ProcessEnv = { PATH: process.platform === 'win32' ? `${process.env.SystemRoot}\\System32` : '/usr/bin:/bin', HOME: options.cwd, TMPDIR: options.cwd, TMP: options.cwd, TEMP: options.cwd, LANG: 'en_US.UTF-8', PYTHONIOENCODING: 'utf-8' };
+    for (const [key, value] of Object.entries(options.env ?? {})) {
+      if (!(TOOLCHAIN_ENV_KEYS as readonly string[]).includes(key) || typeof value !== 'string' || value.includes('\0')) {
+        return resolve({ code: null, stdout: '', stderr: 'Refused an unsupported host toolchain environment setting.', reason: 'spawn_error', durationMs: performance.now() - started });
+      }
+      env[key] = value;
+    }
     if (process.platform === 'win32') { env.SystemRoot = process.env.SystemRoot; env.WINDIR = process.env.WINDIR; }
     const launch = process.platform === 'win32' ? windowsJobCommand(executable, args)
       : { executable: '/bin/sh', args: ['-c', POSIX_LAUNCH_SCRIPT, 'algopractice-launcher', executable, ...args] };
     const child = spawn(launch.executable, launch.args, { cwd: options.cwd, env, shell: false, detached: process.platform !== 'win32', windowsHide: true,
       stdio: ['pipe', 'pipe', 'pipe', process.platform === 'win32' ? 'ignore' : 'pipe'] });
     child.stdio[3]?.on('error', () => {});
-    let stdout = Buffer.alloc(0), stderr = Buffer.alloc(0), seen = 0, finished = false;
+    // Append bounded chunks, then concatenate once. Recopying the entire prefix on
+    // each chunk becomes quadratic during a vendor stdlib bootstrap's warnings.
+    let stdout: Buffer[] = [], stderr: Buffer[] = [], seen = 0, finished = false;
     let reason: ProcessResult['reason'];
     const killGroup = () => {
       if (!child.pid) return;
@@ -51,12 +63,12 @@ export function runProcess(executable: string, args: string[], options: ProcessO
     const capture = (stream: 'stdout' | 'stderr', chunk: Buffer) => {
       const remaining = Math.max(0, options.outputLimitBytes - seen);
       const kept = chunk.subarray(0, remaining); seen += chunk.length;
-      if (stream === 'stdout') stdout = Buffer.concat([stdout, kept]); else stderr = Buffer.concat([stderr, kept]);
+      if (kept.length) { if (stream === 'stdout') stdout.push(kept); else stderr.push(kept); }
       if (seen > options.outputLimitBytes) stop('output_limit');
     };
     child.stdout!.on('data', c => capture('stdout', c)); child.stderr!.on('data', c => capture('stderr', c));
     child.stdin!.on('error', () => {}); child.stdin!.end(options.stdin ?? '');
-    child.on('error', error => { reason = 'spawn_error'; const message = process.platform === 'win32' && (error as NodeJS.ErrnoException).code === 'ENOENT' ? `Windows process helper is unavailable; run npm install or reinstall the desktop application. ${error.message}` : error.message; stderr = Buffer.from(message).subarray(0, options.outputLimitBytes); });
+    child.on('error', error => { reason = 'spawn_error'; const message = process.platform === 'win32' && (error as NodeJS.ErrnoException).code === 'ENOENT' ? `Windows process helper is unavailable; run npm install or reinstall the desktop application. ${error.message}` : error.message; stderr = [Buffer.from(message).subarray(0, options.outputLimitBytes)]; });
     // Parent completion must also remove ordinary background descendants still holding pipes open.
     child.on('exit', killGroup);
     child.on('close', code => {
@@ -64,7 +76,7 @@ export function runProcess(executable: string, args: string[], options: ProcessO
       clearTimeout(timer); options.signal?.removeEventListener('abort', abort);
       // Streaming decode omits a truncated final code point instead of expanding it to U+FFFD.
       const decode=(buffer:Buffer)=>new TextDecoder('utf-8').decode(buffer,{stream:true});
-      let out=decode(stdout),err=decode(stderr);
+      let out=decode(Buffer.concat(stdout)),err=decode(Buffer.concat(stderr));
       // Invalid UTF-8 expands to replacement characters. Bound the decoded strings as well.
       if(Buffer.byteLength(out)+Buffer.byteLength(err)>options.outputLimitBytes){
         reason ??= 'output_limit';

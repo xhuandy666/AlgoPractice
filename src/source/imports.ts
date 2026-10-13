@@ -8,6 +8,7 @@ import { parseLosslessJSON } from './json.ts';
 import { typedValue } from './problem-content.ts';
 import { LeetCodeCnSourceAdapter } from './index.ts';
 import type { FetchOptions, ImportInput, ImportPreview, ImportPreviewItem, ParsedImport } from './types.ts';
+import { LANGUAGES } from '../shared/languages.ts';
 
 const MAX_IMPORT_BYTES = 4 * 1024 * 1024;
 function invalid(message: string): never { throw new SourceError('INVALID_IMPORT', message); }
@@ -67,7 +68,7 @@ function fileCases(value: unknown, mode: 'function' | 'acm', adapter?: Adapter):
   });
 }
 function contentEntry(raw: ObjectValue, reference: ReturnType<typeof parseSource> | undefined): ProblemContent | undefined {
-  const hasContent = ['description', 'adapter', 'cases', 'starter', 'python', 'java'].some(key => raw[key] !== undefined && raw[key] !== '');
+  const hasContent = ['description', 'adapter', 'cases', 'starter', ...LANGUAGES].some(key => raw[key] !== undefined && raw[key] !== '');
   if (!hasContent) return undefined;
   if (!nonempty(raw.title)) return invalid('包含完整内容的文件题目需要 title。');
   if (reference && reference.kind !== 'problem') return invalid('完整题目内容不能关联到题单 URL。');
@@ -77,7 +78,7 @@ function contentEntry(raw: ObjectValue, reference: ReturnType<typeof parseSource
   if (mode === 'acm' && adapter) return invalid('ACM 模式不使用函数 adapter。');
   const starterRaw = raw.starter === undefined ? {} : record(raw.starter); if (!starterRaw) return invalid('starter 必须为对象。');
   const starter: ProblemContent['starter'] = {};
-  for (const language of ['python', 'java'] as const) { const code = starterRaw[language] ?? raw[language]; if (code !== undefined && code !== '') starter[language] = text(code, `${language} starter`); }
+  for (const language of LANGUAGES) { const code = starterRaw[language] ?? raw[language]; if (code !== undefined && code !== '') starter[language] = text(code, `${language} starter`); }
   const cases = fileCases(raw.cases, mode, adapter);
   const rawId = raw.id === undefined ? createHash('sha256').update(stable(raw)).digest('hex').slice(0, 24) : text(raw.id, 'id', 200);
   if (!/^[A-Za-z0-9_.:-]+$/.test(rawId)) return invalid('文件 id 仅允许字母、数字、点、下划线、冒号和短横线。');
@@ -101,7 +102,7 @@ export function parseImportInput(input: ImportInput): ParsedImport {
     const csv = parseCSV(input.text); if (!csv.length) return invalid('CSV 文件为空。');
     const headers = csv[0].map(value => value.trim().toLowerCase());
     if (new Set(headers).size !== headers.length || headers.some(h => !h)) return invalid('CSV 表头不得为空或重复。');
-    const known = new Set(['url', 'link', 'id', 'title', 'difficulty', 'tags', 'chapter', 'description', 'python', 'java', 'mode']);
+    const known = new Set(['url', 'link', 'id', 'title', 'difficulty', 'tags', 'chapter', 'description', ...LANGUAGES, 'mode']);
     const ignored = headers.filter(h => !known.has(h)); if (ignored.length) parsed.warnings.push(`忽略未识别的 CSV 列：${ignored.join('、')}`);
     rows = csv.slice(1).map((row, index) => {
       if (row.length !== headers.length) return { __csvError: `CSV 数据行 ${index + 2} 列数与表头不符。` };

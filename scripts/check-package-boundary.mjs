@@ -13,9 +13,9 @@ export async function checkPackageBoundary(root = process.cwd()) {
     for (const entry of await readdir(directory, { withFileTypes: true })) {
       const path = join(directory, entry.name), name = relative(output, path).replaceAll('\\', '/');
       if (entry.isSymbolicLink()) throw new Error(`Unexpected link in application payload: ${name}`);
-      if (/(^|\/)(?:\.aoci|\.runtime|\.local|docs|runtimes|credentials|backups)(\/|$)/i.test(name)
-        || /(^|\/)(?:aoci(?:\.(?:meta|code))?\.txt|AGENTS\.md|python(?:3(?:\.\d+)?)?(?:\.exe)?|java(?:c)?(?:\.exe)?|libjvm\.[^/]+)$/i.test(name)
-        || /\.(?:sqlite(?:-wal|-shm)?|algobak|tar(?:\.gz)?|tgz|zip)$/i.test(name)) throw new Error(`Private data or a language runtime entered application payload: ${name}`);
+      if (/(^|\/)(?:\.aoci|\.runtime|\.local|\.toolchain-cache|\.algopractice-cache|docs|runtimes|credentials|backups)(\/|$)/i.test(name)
+        || /(^|\/)(?:aoci(?:\.(?:meta|code))?\.txt|AGENTS\.md|python(?:3(?:\.\d+)?)?(?:\.exe)?|java(?:c)?(?:\.exe)?|go(?:\.exe)?|zig(?:\.exe)?|clang(?:\+\+)?(?:\.exe)?|g\+\+(?:\.exe)?|libjvm\.[^/]+)$/i.test(name)
+        || /\.(?:sqlite(?:-wal|-shm)?|algobak|tar(?:\.(?:gz|xz))?|tgz|zip)$/i.test(name)) throw new Error(`Private data or a language runtime entered application payload: ${name}`);
       if (entry.isDirectory()) await visit(path); else count++;
     }
   }

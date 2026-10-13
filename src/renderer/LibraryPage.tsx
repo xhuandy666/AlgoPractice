@@ -6,12 +6,14 @@ import { capability, difficultyLabel, sourceLabel } from '../shared/presentation
 import { dateTime, errorText, Statement } from './ui';
 import { Hot100Card } from './Hot100Card';
 import { HelpHint } from './HelpHint';
+import { LANGUAGES, languageLabel, type Language } from '../shared/languages';
 
 export function LibraryPage({ api, data, onOpen, onImport, onChanged, onError }: {
   api: DesktopBridge | undefined; data: LibraryIndex; onOpen: (id: string, source?: PracticeNavigationSource) => void; onImport: (url?: string) => void; onChanged: () => Promise<void>; onError: (error: string) => void;
 }) {
   const [query, setQuery] = useState(''); const [listId, setListId] = useState(''); const [chapterId, setChapterId] = useState('');
   const [difficulty, setDifficulty] = useState(''); const [support, setSupport] = useState('');
+  const [language, setLanguage] = useState<Language | ''>('');
   const [busy, setBusy] = useState(''); const [refresh, setRefresh] = useState<PreparedProblemRefresh | null>(null);
   const [page, setPage] = useState(0);
   const list = data.lists.find(item => item.id === listId);
@@ -19,11 +21,11 @@ export function LibraryPage({ api, data, onOpen, onImport, onChanged, onError }:
   const [resultSource, setResultSource] = useState<PracticeNavigationSource | null>(null);
   const [loading, setLoading] = useState(true);
   useEffect(() => { let alive = true; setLoading(true); const timer = setTimeout(() => {
-    const filter: ProblemPageFilter = { search: query, listId: listId || undefined, chapterId: chapterId || undefined, difficulty: difficulty || undefined, support: support as 'runnable' | 'reading' || undefined, offset: page * 30, limit: 30 };
-    const label = `${list?.title ?? '全部题库'}${query || chapterId || difficulty || support ? ' · 当前筛选' : ''}`;
+    const filter: ProblemPageFilter = { search: query, listId: listId || undefined, chapterId: chapterId || undefined, difficulty: difficulty || undefined, language: language || undefined, support: support as 'runnable' | 'reading' || undefined, offset: page * 30, limit: 30 };
+    const label = `${list?.title ?? '全部题库'}${query || chapterId || difficulty || support || language ? ' · 当前筛选' : ''}`;
     const request = api ? api.problemPage(filter) : Promise.resolve({ items: data.problems.filter(p => !query || p.content.title.includes(query)), total: data.totalProblems, offset: 0, limit: 30, hasMore: false });
     void request.then(value => { if (alive) { setResult(value); setResultSource(api ? makeLibraryPracticeSource(filter, label) : makeFrozenPracticeSource(value.items.map(item => item.id), '预览题库')); if (page > 0 && !value.items.length) setPage(Math.max(0, Math.ceil(value.total / 30) - 1)); } }).catch(error => { if (alive) onError(errorText(error)); }).finally(() => { if (alive) setLoading(false); });
-  }, query ? 150 : 0); return () => { alive = false; clearTimeout(timer); }; }, [api, data, query, listId, chapterId, difficulty, support, page]);
+  }, query ? 150 : 0); return () => { alive = false; clearTimeout(timer); }; }, [api, data, query, listId, chapterId, difficulty, support, language, page]);
   const totalPages = Math.max(1, Math.ceil(result.total / 30)); const safePage = page;
   const open = (id: string) => onOpen(id, resultSource ?? makeFrozenPracticeSource([id], '当前题目'));
   const operation = async (key: string, action: () => Promise<void>) => { setBusy(key); try { await action(); } catch (error) { onError(errorText(error)); } finally { setBusy(''); } };
@@ -35,6 +37,7 @@ export function LibraryPage({ api, data, onOpen, onImport, onChanged, onError }:
       <label>题库范围<select value={listId} onChange={event => { setListId(event.target.value); setChapterId(''); setPage(0); }}><option value="">全部题目 · {data.totalProblems}</option>{data.lists.map(item => <option key={item.id} value={item.id}>{item.title} · {item.items.length}</option>)}</select></label>
       <label>难度<select value={difficulty} onChange={event => { setDifficulty(event.target.value); setPage(0); }}><option value="">全部难度</option>{['基础', '简单', '中等', '困难'].map(value => <option key={value}>{value}</option>)}</select></label>
       <label>内容状态<select value={support} onChange={event => { setSupport(event.target.value); setPage(0); }}><option value="">全部状态</option><option value="runnable">本地可运行</option><option value="reading">尚未准备运行</option></select></label>
+      <label>语言模板<select aria-label="题库语言" value={language} onChange={event => { setLanguage(event.target.value as Language | ''); setPage(0); }}><option value="">全部语言</option>{LANGUAGES.map(id => <option key={id} value={id}>{languageLabel(id)}</option>)}</select></label>
     </div>
     {list && <div className="list-context"><div><div className="heading-with-help"><h3>{list.title}</h3><HelpHint label="题单管理说明">移出题单仅解除当前题单关联，题目、草稿和练习档案仍保留在本机。</HelpHint></div><p>{list.chapters.length} 个章节 · {list.items.length} 个条目 · 更新于 {dateTime(list.updatedAt)}</p></div><label><span className="sr-only">章节</span><select aria-label="章节" value={chapterId} onChange={event => { setChapterId(event.target.value); setPage(0); }}><option value="">全部章节</option>{list.chapters.map(chapter => <option key={chapter.id} value={chapter.id}>{chapter.title}</option>)}</select></label>{list.sourceUrl && <button className="text-button" onClick={() => onImport(list.sourceUrl)}>预览题单更新</button>}</div>}
     <div className="table-caption"><span>{result.total} 道题目{loading ? ' · 正在读取…' : ''}</span></div>
@@ -43,11 +46,13 @@ export function LibraryPage({ api, data, onOpen, onImport, onChanged, onError }:
       {result.items.map((problem, index) => {
         const item = problem.listItem;
         const content = problem.content; const available = problem.capability;
+        const hasCppTemplate = problem.capabilities.cppTemplate ?? problem.capabilities.cpp;
+        const missingNewTemplates = !problem.capabilities.go || !hasCppTemplate;
         return <div className="problem-table-row" role="row" key={item?.key ?? problem.id}>
           <div role="cell" className="problem-name"><span className="row-index">{safePage * 30 + index + 1}</span><div><button className="title-button" onClick={() => open(problem.id)}>{content.title}</button><p>{content.tags.slice(0, 3).join(' · ') || sourceLabel(content.source)}{content.source === 'local' && content.tags.length > 0 ? ' · 自建样例' : ''}</p></div></div>
           <span role="cell" className="difficulty-text">{difficultyLabel(content.difficulty)}</span>
-          <span role="cell" className={available.canRun ? 'availability success-text' : 'availability muted'}>{available.label}{content.media?.complete === false && <small>图示未完整缓存</small>}</span>
-          <div role="cell" className="row-actions"><button className="text-button" onClick={() => open(problem.id)}>{available.canRun ? '练习' : '读题'}</button>{content.sourceUrl && <button disabled={!api || !!busy} onClick={() => operation(problem.id, async () => setRefresh(await api!.previewProblemRefresh(problem.id)))}>{busy === problem.id ? '正在读取…' : '刷新题面'}</button>}{list && item && <button disabled={!api || !!busy} onClick={() => operation(item.key, async () => { await api!.detachListItem(list.id, item.key, list.revision); await onChanged(); })}>移出题单</button>}</div>
+          <span role="cell" className={available.canRun ? 'availability success-text' : 'availability muted'}>{available.label}<small>{LANGUAGES.filter(id => id === 'cpp' ? hasCppTemplate : problem.capabilities[id]).map(languageLabel).join(' / ') || '暂无语言模板'}</small>{content.media?.complete === false && <small>图示未完整缓存</small>}</span>
+          <div role="cell" className="row-actions"><button className="text-button" onClick={() => open(problem.id)}>{available.canRun ? '练习' : '读题'}</button>{(content.sourceUrl || (content.source === 'local' && missingNewTemplates)) && <button disabled={!api || !!busy} title={content.sourceUrl ? '主动读取线上题面和语言模板，确认后保存新版本；不覆盖旧练习或个人代码。' : '从随应用提供的本地演示补全模板，不联网。'} onClick={() => operation(problem.id, async () => setRefresh(await api!.previewProblemRefresh(problem.id)))}>{busy === problem.id ? '正在读取…' : missingNewTemplates ? '补全语言模板' : '刷新题面'}</button>}{list && item && <button disabled={!api || !!busy} onClick={() => operation(item.key, async () => { await api!.detachListItem(list.id, item.key, list.revision); await onChanged(); })}>移出题单</button>}</div>
         </div>;
       })}
     </div>

@@ -50,6 +50,7 @@ test('payload boundaries reject traversal, duplicate paths, private data and bun
   assert.doesNotThrow(() => assertSafePaths(['题炼.app/', '题炼.app/Contents/Resources/app.asar', '题炼.app/Contents/Frameworks/Electron Framework.framework/Versions/A/Libraries/libffmpeg.dylib']));
   for (const path of ['/absolute', '../outside', 'resources/../outside', 'C:\\outside', 'resources/.aoci/state', 'resources/.mcp.json', 'resources/.env', 'resources/backups/old.algobak', 'resources/learning.sqlite-wal', 'resources/python3.14', 'resources/java.exe', 'resources/libjvm.dylib', 'dist/aoci.code.txt', 'dist/AGENTS.md', 'dist/old.zip', 'dist/logs/trace']) assert.throws(() => assertSafePaths([path]), path);
   assert.throws(() => assertSafePaths(['dist/file', 'dist/file']));
+  for (const name of ['resources/go.exe', 'resources/zig', 'resources/clang++', 'dist/.toolchain-cache/receipt.json', 'dist/.algopractice-cache/receipt.json', 'dist/toolchain.tar.xz']) assert.throws(() => assertSafePaths([name]), name);
   assert.throws(() => assertSafePaths([]));
   assert.doesNotThrow(() => assertSafePaths(['release/AlgoPractice-0.90.0-win-x64.zip'], false));
 });
@@ -94,10 +95,11 @@ test('source inputs are rehashed from current files using the build provenance c
   assert.ok(inputs.every(item => !item.path.startsWith('.local/') && !item.path.startsWith('.aoci/')));
 });
 
-test('six standalone runtime archives are pinned to trusted HTTPS sources with unique names', () => {
+test('twelve standalone runtime archives are pinned to family-specific official HTTPS sources', () => {
   const assets: { language: string; target: string; name: string; sha256: string; size: number }[] = runtimeAssets(manifest);
-  assert.equal(assets.length, 6); assert.equal(new Set(assets.map(asset => asset.name)).size, 6);
+  assert.equal(assets.length, 12); assert.equal(new Set(assets.map(asset => asset.name)).size, 12);
   assert.equal(assets.filter(asset => asset.language === 'python').length, 3);
+  for (const language of ['java', 'go', 'cpp']) assert.equal(assets.filter(asset => asset.language === language).length, 3);
   assert.ok(assets.every(asset => asset.size > 0 && /^[a-f0-9]{64}$/.test(asset.sha256)));
   assert.ok(assets.every(asset => asset.name.startsWith(`AlgoPractice-runtime-${asset.language}-${asset.target}.`)));
   const target = manifest.python.targets['darwin-arm64'];
@@ -105,22 +107,34 @@ test('six standalone runtime archives are pinned to trusted HTTPS sources with u
     const changed = structuredClone(manifest); changed.python.targets['darwin-arm64'] = { ...target, ...patch };
     assert.throws(() => runtimeAssets(changed));
   }
+  for (const language of ['go', 'cpp']) for (const url of ['https://github.com/unsafe.tar.gz', 'https://ziglang.org.evil.example/download/tool.tar.xz', 'https://dl.google.com/elsewhere/tool.tar.gz']) {
+    const changed = structuredClone(manifest); changed[language].targets['darwin-arm64'].url = url;
+    assert.throws(() => runtimeAssets(changed));
+  }
 });
 
-test('release command enumerates exactly 14 known assets and can only create a draft at the verified commit', () => {
+test('release command derives all 20 known assets and can only create a draft at the verified commit', () => {
   const names: string[] = expectedReleaseAssets(pkg.version, manifest);
-  assert.equal(names.length, 14); assert.equal(new Set(names).size, 14);
+  assert.equal(names.length, 20); assert.equal(new Set(names).size, 20);
   assert.equal(names.filter(name => name.startsWith('AlgoPractice-0.90.0-')).length, 6);
-  assert.equal(names.filter(name => name.startsWith('AlgoPractice-runtime-')).length, 6);
+  assert.equal(names.filter(name => name.startsWith('AlgoPractice-runtime-')).length, 12);
   assert.equal(names.filter(name => name.endsWith('.dmg')).length, 2);
   assert.equal(names.filter(name => name.endsWith('-win-x64.exe')).length, 1);
   const files = names.map(name => `/isolated-assets/${name}`);
-  const args: string[] = releaseCreateArguments(configuration, files, '/isolated-notes/release.md');
-  assert.deepEqual(args.slice(-14), files);
+  const args: string[] = releaseCreateArguments(configuration, files, '/isolated-notes/release.md', manifest);
+  assert.deepEqual(args.slice(-20), files);
   assert.ok(args.includes('--draft')); assert.equal(args[args.indexOf('--target') + 1], sha);
   for (const flag of ['--latest', '--clobber', '--generate-notes', '--prerelease']) assert.ok(!args.includes(flag));
-  assert.throws(() => releaseCreateArguments(configuration, files.slice(1), '/notes'));
-  assert.throws(() => releaseCreateArguments(configuration, [...files.slice(1), files[1]], '/notes'));
+  assert.throws(() => releaseCreateArguments(configuration, files.slice(1), '/notes', manifest));
+  assert.throws(() => releaseCreateArguments(configuration, [...files.slice(1), files[1]], '/notes', manifest));
+  assert.throws(() => releaseCreateArguments(configuration, ['unexpected.exe', ...files.slice(1)], '/notes', manifest));
+});
+
+test('historical two-language manifests retain their fourteen-asset contract without hard-coded counts', () => {
+  const oldManifest = { schemaVersion: manifest.schemaVersion, python: manifest.python, java: manifest.java };
+  const names: string[] = expectedReleaseAssets(pkg.version, oldManifest);
+  assert.equal(runtimeAssets(oldManifest).length, 6); assert.equal(names.length, 14);
+  assert.doesNotThrow(() => releaseCreateArguments(configuration, names.map(name => `/isolated-old-assets/${name}`), '/notes', oldManifest));
 });
 
 test('release lookup includes untagged drafts across pages and rejects incomplete or duplicate identities', () => {

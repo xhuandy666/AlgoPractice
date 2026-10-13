@@ -4,7 +4,7 @@ import { createRequire } from 'node:module';
 import { randomUUID } from 'node:crypto';
 import { isDeepStrictEqual } from 'node:util';
 import { cp, mkdir, mkdtemp, readFile, readdir, writeFile } from 'node:fs/promises';
-import { join, resolve } from 'node:path';
+import { join, resolve, sep } from 'node:path';
 import { tmpdir } from 'node:os';
 import { setTimeout as delay } from 'node:timers/promises';
 
@@ -22,8 +22,8 @@ delete env.ELECTRON_RUN_AS_NODE;
 const report = {
   directory, dataDirectory, runtimeDirectory, platform: process.platform, arch: process.arch,
   build: JSON.parse(await readFile(join(launchDirectory, 'dist/build-info.json'), 'utf8')).sourceHash,
-  assertions: [], rendererErrors: [], networkAttempts: [],
-  limitations: ['Missing-runtime workflow only; no Python/JDK download or executable was provided.',
+  assertions: [], rendererErrors: [], networkAttempts: [], newLanguagePreparation: [],
+  limitations: ['Missing-runtime workflow only; no Python/JDK/Go/C++ download or executable was provided.',
     'Network guards cover renderer HTTP and main-process Fetch after Playwright attachment; this is not an OS network sandbox.',
     'Real successful runtime installation, code execution, signing and other OS architectures are separate validations.'],
 };
@@ -104,16 +104,25 @@ const codes = {
   'python:acm': 'import sys\n# PYTHON_ACM_DRAFT\nprint(sum(map(int, sys.stdin.read().split())))\n',
   'java:acm': 'import java.util.Scanner;\npublic class Main {\n    public static void main(String[] args) {\n        // JAVA_ACM_DRAFT\n        Scanner input = new Scanner(System.in);\n        int sum = 0;\n        while (input.hasNextInt()) sum += input.nextInt();\n        System.out.println(sum);\n    }\n}\n',
 };
+const newLanguageCodes = {
+  go: 'func arrayTotal(nums []int) int {\n    // GO_MISSING_RUNTIME_DRAFT\n    total := 0\n    for _, value := range nums {\n        total += value\n    }\n    return total\n}\n',
+  cpp: '#include <vector>\nclass Solution {\npublic:\n    int arrayTotal(std::vector<int>& nums) {\n        // CPP_MISSING_RUNTIME_DRAFT\n        int total = 0;\n        for (int value : nums) total += value;\n        return total;\n    }\n};\n',
+};
 let expectedJavaConfig, expectedPythonConfig;
 try {
   await launch();
   const environment = await api('environment');
   assert.equal(resolve(environment.dataDirectory), dataDirectory);
   assert.equal(environment.runtimeStates.python.status, 'missing'); assert.equal(environment.runtimeStates.java.status, 'missing');
+  assert.equal(environment.runtimeStates.go.status, 'missing'); assert.equal(environment.runtimeStates.cpp.status, 'missing');
+  for (const language of ['python', 'java', 'go', 'cpp']) {
+    assert.equal(typeof environment.runtimeStates[language].path, 'string');
+    assert.ok(resolve(environment.runtimeStates[language].path).startsWith(`${runtimeDirectory}${sep}`), `${language} probes only the deliberately absent override root, not a host toolchain`);
+  }
   assert.equal(environment.autoInstallRuntimes, false);
   assert.deepEqual(environment.installations, {});
   assert.deepEqual(await app.evaluate(() => globalThis.onboardingHttpAttempts), []);
-  pass('Fresh install detects two missing environments without a download or automatic opt-in');
+  pass('Fresh install detects four missing environments without a download, host-toolchain fallback or automatic opt-in');
   const reminders = await api('reminderState'); await api('saveReminderSettings', { ...reminders.settings, enabled: false });
   await openProblem('数组求和');
   await saveCode('python', 'function', codes['python:function']);
@@ -166,6 +175,57 @@ try {
   assert.equal(await page.locator('.runtime-preparation').getByRole('button', { name: '安装并运行', exact: true }).count(), 0);
   await page.locator('.runtime-preparation').getByRole('button', { name: '暂不安装', exact: true }).click();
   pass('Editing code or changing language does not retain an executable old request');
+  // Exercise the two new language gates through their real UI. Do not click an
+  // installer or provide a runtime: a missing environment must stay preparation-only.
+  for (const language of ['go', 'cpp']) {
+    const label = language === 'go' ? 'Go' : 'C++';
+    await saveCode(language, 'function', newLanguageCodes[language]);
+    const beforeRuns = await api('runPage', { limit: 100, includeQueued: true }); assert.equal(beforeRuns.total, 0);
+    const beforeHttp = await app.evaluate(() => globalThis.onboardingHttpAttempts.length); assert.equal(beforeHttp, 0);
+    await page.getByRole('button', { name: '运行', exact: true }).click();
+    const preparation = page.locator('.runtime-preparation');
+    await preparation.getByRole('heading', { name: `${label} 运行环境未就绪`, exact: true }).waitFor();
+    const installAndRun = preparation.getByRole('button', { name: '安装并运行', exact: true });
+    await installAndRun.waitFor(); assert.equal(await installAndRun.isEnabled(), true, 'Installation is available but requires an explicit click');
+    assert.equal(await preparation.getByRole('button', { name: '使用已有环境', exact: true }).isEnabled(), true);
+    const currentEnvironment = await api('environment');
+    assert.equal(currentEnvironment.runtimeStates[language].status, 'missing'); assert.equal(currentEnvironment.autoInstallRuntimes, false);
+    assert.deepEqual(currentEnvironment.installations, {}); assert.ok(currentEnvironment.runtimeStates[language].artifact);
+    await preparation.locator('.runtime-artifact-details').getByText(currentEnvironment.runtimeStates[language].artifact.version, { exact: true }).waitFor();
+    await preparation.getByText('更多安装选项', { exact: true }).click();
+    assert.equal(await preparation.getByRole('button', { name: '导入匹配的离线包', exact: true }).isEnabled(), true);
+    assert.equal(await preparation.getByLabel('运行时自动安装缺失的语言环境', { exact: false }).isChecked(), false);
+    const pendingWorkspace = await api('workspace', 'array-total', language, 'practice', 'function');
+    assert.deepEqual(await api('aiRequests', pendingWorkspace.attempt.id), []);
+    assert.equal((await api('runPage', { limit: 100, includeQueued: true })).total, beforeRuns.total);
+    assert.equal(await app.evaluate(() => globalThis.onboardingHttpAttempts.length), beforeHttp);
+    await page.screenshot({ path: join(directory, `missing-${language}-runtime-preparation.png`), fullPage: true });
+    const editedCode = `${newLanguageCodes[language]}// ${language.toUpperCase()}_EDITED_DURING_PREPARATION\n`;
+    await pasteCode(editedCode); newLanguageCodes[language] = editedCode;
+    await preparation.getByRole('button', { name: '安装环境', exact: true }).waitFor();
+    assert.equal(await preparation.getByRole('button', { name: '安装并运行', exact: true }).count(), 0);
+    await until(async () => (await draft(language, 'function'))?.code === editedCode, `${label} edit invalidates pending execution and saves its own draft`);
+    const otherLanguage = language === 'go' ? 'cpp' : 'go';
+    await choose('编程语言', otherLanguage);
+    assert.equal(await preparation.getByRole('button', { name: '安装并运行', exact: true }).count(), 0);
+    await preparation.getByRole('button', { name: '暂不安装', exact: true }).click();
+    assert.equal(await page.locator('.runtime-preparation').count(), 0);
+    assert.equal((await api('runPage', { limit: 100, includeQueued: true })).total, beforeRuns.total);
+    assert.deepEqual(await api('aiRequests', pendingWorkspace.attempt.id), []);
+    assert.equal(await app.evaluate(() => globalThis.onboardingHttpAttempts.length), beforeHttp);
+    assert.deepEqual((await api('environment')).installations, {});
+    assert.equal((await draft(language, 'function')).code, editedCode);
+    report.newLanguagePreparation.push({ language, label, artifactVersion: currentEnvironment.runtimeStates[language].artifact.version,
+      missing: true, installationRequiredExplicitClick: true, editedIntentInvalidated: true, changedLanguageIntentInvalidated: true,
+      dismissedWithoutInstall: true, runCount: beforeRuns.total, httpCount: beforeHttp });
+    pass(`${label} selection and Run show the correct missing-environment prompt; edit/switch invalidate the old intent and dismissal creates no run, AI failure or download`);
+  }
+  assert.equal(report.newLanguagePreparation.length, 2);
+  // Restore the exact selector state expected by the original Python/Java scenarios.
+  await choose('编程语言', 'java'); await choose('答题格式', 'acm');
+  assert.deepEqual((await draft('java', 'acm')).testConfig, expectedJavaConfig);
+  assert.deepEqual((await draft('python', 'acm')).testConfig, expectedPythonConfig);
+  assert.deepEqual(await readdir(runtimeDirectory), []);
   await openProblem('输入输出练习');
   assert.equal(await page.getByRole('combobox', { name: '答题格式', exact: true }).inputValue(), 'acm');
   assert.equal(await page.getByRole('combobox', { name: '答题格式', exact: true }).locator('option[value=function]').evaluate(option => option.disabled), true);
@@ -232,11 +292,14 @@ try {
   assert.equal(await page.getByRole('combobox', { name: '答题格式', exact: true }).inputValue(), 'acm');
   assert.equal(await page.locator('.runtime-preparation').count(), 0);
   for (const [key, code] of Object.entries(codes)) { const [language, format] = key.split(':'); assert.equal((await draft(language, format)).code, code); }
+  for (const [language, code] of Object.entries(newLanguageCodes)) assert.equal((await draft(language, 'function')).code, code);
+  for (const language of ['python', 'java', 'go', 'cpp']) assert.equal((await api('environment')).runtimeStates[language].status, 'missing');
   assert.deepEqual((await draft('java', 'acm')).testConfig, expectedJavaConfig);
   assert.deepEqual((await draft('python', 'acm')).testConfig, expectedPythonConfig);
   assert.deepEqual(await readdir(runtimeDirectory), []);
   assert.deepEqual(report.rendererErrors, []);
   pass('Restart preserves four drafts, test configs and last format, but never replays pending code or resumes downloads');
+  pass('Restart also preserves Go/C++ edited drafts while all four environments remain missing and no new-language install or pending run is resumed');
   report.result = 'passed';
 } catch (error) {
   report.result = 'failed'; report.failure = String(error.stack || error); process.exitCode = 1;
