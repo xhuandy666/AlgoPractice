@@ -5,9 +5,34 @@ import path from 'node:path';
 import os from 'node:os';
 import { resolveRuntime, runtimeDiscoveryPaths } from '../../src/runner/runtime-discovery.ts';
 import { inspectRuntime, type RuntimeInspection } from '../../src/runner/runtime-inspect.ts';
+import { defaultRuntimePath, runtimeCompilationRoot } from '../../src/runner/runtime-paths.ts';
 import type { Language } from '../../src/runner/types.ts';
 
 const result = (language: Language, executable: string, status: RuntimeInspection['status']): RuntimeInspection => ({ language, executable, status, runtimeVersion: status === 'ready' ? 'Python 3.14.7' : '', diagnostics: [] });
+
+test('trusted test executable reuses its compilation root, never an unrelated selected installation', () => {
+  const root = path.join(os.tmpdir(), 'owned-runtime-root'), testRoot = path.join(os.tmpdir(), 'trusted-test-runtime');
+  for (const language of ['python', 'java', 'go', 'cpp'] as const) {
+    const executable = defaultRuntimePath(language, testRoot);
+    assert.equal(runtimeCompilationRoot(language, executable, root, testRoot), path.resolve(testRoot));
+    assert.equal(runtimeCompilationRoot(language, executable, root), root);
+    assert.equal(runtimeCompilationRoot(language, defaultRuntimePath(language, path.join(testRoot, 'other')), root, testRoot), root);
+    assert.equal(runtimeCompilationRoot(language, path.relative(process.cwd(), executable), root, testRoot), root);
+    assert.equal(runtimeCompilationRoot(language, executable.toUpperCase(), root, testRoot), process.platform === 'win32' ? path.resolve(testRoot) : root);
+  }
+});
+test('resolver forwards the same trusted compilation root for test override and exact explicit selection', async () => {
+  const root = path.join(os.tmpdir(), 'owned-runtime-root'), testRoot = path.join(os.tmpdir(), 'trusted-test-runtime');
+  for (const language of ['go', 'cpp'] as const) {
+    const executable = defaultRuntimePath(language, testRoot), unrelated = defaultRuntimePath(language, path.join(os.tmpdir(), 'selected-system-runtime'));
+    for (const explicitPath of [undefined, executable, unrelated]) {
+      const calls: { executable: string; root?: string }[] = [];
+      const resolution = await resolveRuntime(language, { root, testRoot, explicitPath, inspect: async (inspectedLanguage, options) => { calls.push({ executable: options!.runtimePath!, root: options!.root }); return result(inspectedLanguage, options!.runtimePath!, 'ready'); } });
+      assert.equal(resolution.source, explicitPath ? 'explicit' : 'test-override');
+      assert.deepEqual(calls, [{ executable: explicitPath ?? executable, root: explicitPath === unrelated ? root : path.resolve(testRoot) }]);
+    }
+  }
+});
 
 test('PATH discovery excludes relative paths, project executables and macOS installer launchers', async () => {
   const candidates = await runtimeDiscoveryPaths('python', { platform: 'darwin', home: '/home/person', cwd: '/work/project', env: { PATH: ':/work/project/bin:.:relative:/usr/bin:/opt/tools:/opt/tools' } });

@@ -14,6 +14,7 @@ import { deflateSync } from 'node:zlib';
 import { runCode, runnerDriverVersion } from '../runner/index';
 import { inspectRuntime, recoverRuntimeInstallations } from '../runner/managed-runtime';
 import { RuntimeManager } from '../runner/runtime-manager';
+import { runtimeCompilationRoot } from '../runner/runtime-paths';
 import { RunPreparations } from './run-preparation';
 import { selectPracticeFormat } from './practice-format';
 import { assertAnswerFormat, resolvePracticeSpec, defaultAcmTestConfig, validateAcmTestConfig, type AnswerFormat, type AcmTestConfig } from '../shared/answer-format';
@@ -79,6 +80,7 @@ function scopeValue(value: unknown): string { return value === undefined ? 'prac
 function problemValue(value: unknown) { const p = store.getProblem(idValue(value)); if (!p) throw new Error('题目尚未导入。'); return p; }
 function codeValue(value: unknown): string { if (typeof value !== 'string' || Buffer.byteLength(value) > 1048576) throw new Error('代码必须是小于 1 MiB 的文本。'); return value; }
 function inspectSelectedRuntime(language: Language, signal?: AbortSignal) { return runtimes.inspect(language, { explicitPath: config.runtimes[language], testRoot: process.env.ALGOPRACTICE_RUNTIME_DIR, signal }); }
+function compilationRootFor(language: Language, executable: string): string { return runtimeCompilationRoot(language, executable, runtimes.root, process.env.ALGOPRACTICE_RUNTIME_DIR); }
 function invalidateRuntimeState(language: Language): void {
   runtimeStateEpochs.set(language, (runtimeStateEpochs.get(language) ?? 0) + 1);
   runtimeStates.delete(language); runtimeChecks.delete(language);
@@ -351,7 +353,7 @@ else {
         interviews.runTarget(sessionId, problemKey, supplement);
         const stored=store.saveRun({id:runId,attemptId:item.attemptId,code,testSuiteVersion:createHash('sha256').update(JSON.stringify([problem.cases,problem.acmCompare??'normalized'])).digest('hex'),testSnapshot:jsonValue({cases:problem.cases,acmCompare:problem.acmCompare??'normalized',interviewSupplement:supplement}),adapterVersion:createHash('sha256').update(JSON.stringify([language,runnerDriverVersion(language),problem.adapter??{mode:'acm'}])).digest('hex'),runtimeVersion:runtime.runtimeVersion});
         let result:RunResult;
-        try { result=await runCode({language,code,mode:problem.mode,adapter:problem.adapter,cases:problem.cases,acmCompare:problem.acmCompare,runtimePath:runtime.executable,timeoutMs:10000,outputLimitBytes:1048576},{signal:controller.signal,runId,runtimeRoot:runtimes.root,onEvent:event=>{if(!win.isDestroyed())win.webContents.send('runner:event',event);}}); }
+        try { result=await runCode({language,code,mode:problem.mode,adapter:problem.adapter,cases:problem.cases,acmCompare:problem.acmCompare,runtimePath:runtime.executable,timeoutMs:10000,outputLimitBytes:1048576},{signal:controller.signal,runId,runtimeRoot:compilationRootFor(language,runtime.executable),onEvent:event=>{if(!win.isDestroyed())win.webContents.send('runner:event',event);}}); }
         catch { result={status:'internal_error',diagnostics:[{phase:'run',source:'runner',message:'运行未完成，快照已经保存。'}],stdout:'',stderr:'',caseResults:[],durationMs:0,runtimeVersion:'unknown',hostPlatform:`${process.platform}-${process.arch}`,executionScope:'local-user-code-not-sandboxed'}; }
         const row=store.finishRun(stored.id,{status:result.status,result:jsonValue(result),runtimeVersion:result.runtimeVersion});interviews.tick();changed();return toArchive(row);
       })().finally(()=>{release();if(activeRun?.id===runId)activeRun=null;});
@@ -505,7 +507,7 @@ else {
         let result: RunResult;
         try {
           result = await runCode({ language, code, mode: problem.mode, adapter: problem.adapter, cases: problem.cases, acmCompare: problem.acmCompare, runtimePath: executable, timeoutMs: 10000, outputLimitBytes: 1048576 },
-            { signal: controller.signal, runId, runtimeRoot: runtimes.root, onEvent: event => { if (!win.isDestroyed()) win.webContents.send('runner:event', event); } });
+            { signal: controller.signal, runId, runtimeRoot: compilationRootFor(language, executable), onEvent: event => { if (!win.isDestroyed()) win.webContents.send('runner:event', event); } });
         } catch {
           result = { status: 'internal_error', diagnostics: [{ phase: 'run', source: 'runner', message: '运行器未正常返回结果；代码快照已保存。' }], stdout: '', stderr: '', caseResults: [], durationMs: 0,
             runtimeVersion: versionText, hostPlatform: `${process.platform}-${process.arch}`, executionScope: 'local-user-code-not-sandboxed' };
@@ -543,7 +545,7 @@ else {
       if (result.canceled) return false;
       guardEnvironmentMutation(language);
       const executable = result.filePaths[0];
-      const inspection = await inspectRuntime(language, { root: runtimes.root, runtimePath: executable });
+      const inspection = await inspectRuntime(language, { root: compilationRootFor(language, executable), runtimePath: executable });
       if (inspection.status !== 'ready') throw new Error(inspection.diagnostics.map(diagnostic => diagnostic.message).join('\n') || '运行时不可用。');
       guardEnvironmentMutation(language);
       saveConfig({ ...config, runtimes: { ...config.runtimes, [language]: executable } });

@@ -2,7 +2,7 @@ import { createHash } from 'node:crypto';
 import { lstat, mkdir, readFile, realpath, stat, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { runProcess, type ToolchainProcessEnvironment } from './process.ts';
-import { defaultRuntimePath, runtimeStorageRoot } from './runtime-paths.ts';
+import { defaultRuntimePath, runtimeStorageRoot, sameRuntimePath } from './runtime-paths.ts';
 import type { RuntimeInspection } from './runtime-inspect.ts';
 
 export type CompiledLanguage = 'go' | 'cpp';
@@ -36,7 +36,7 @@ export async function prepareCompilation(language: CompiledLanguage, inspection:
   const argsPrefix = language === 'go' ? ['build', '-trimpath', '-buildvcs=false'] : cppProfileArguments(inspection.compilerKind ?? 'zig');
   const profileId = createHash('sha256').update(JSON.stringify([1, language, executable, executableInfo.size, executableInfo.mtimeMs, inspection.version, inspection.compilerKind, process.platform, process.arch, argsPrefix])).digest('hex');
   const root = runtimeStorageRoot(options.root); await mkdir(root, { recursive: true }); await noLink(root);
-  const managed = path.resolve(inspection.executable) === path.resolve(defaultRuntimePath(language, root));
+  const managed = sameRuntimePath(inspection.executable, defaultRuntimePath(language, root));
   const base = managed ? path.join(root, language, '.algopractice-cache') : path.join(root, '.toolchain-cache', language);
   // Only app-private bytes are written, never a selected system installation.
   if (managed) await noLink(path.join(root, language));

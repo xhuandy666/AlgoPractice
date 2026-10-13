@@ -3,7 +3,7 @@ import { constants } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { runProcess } from './process.ts';
-import { compilerPath, defaultRuntimePath } from './runtime-paths.ts';
+import { compilerPath, defaultRuntimePath, sameRuntimePath } from './runtime-paths.ts';
 import { isLanguage } from '../shared/languages.ts';
 import { ensureToolchainReady } from './toolchain-prewarm.ts';
 import type { Diagnostic, Language } from './types.ts';
@@ -39,7 +39,7 @@ export async function inspectRuntime(language: Language, options: { root?: strin
   if (language === 'go' || language === 'cpp') {
     let probeDirectory: string | undefined;
     try {
-      if (options.prepare !== false && path.resolve(executable) === path.resolve(defaultRuntimePath(language, options.root))) {
+      if (options.prepare !== false && sameRuntimePath(executable, defaultRuntimePath(language, options.root))) {
         try {
           const marker = JSON.parse(await readFile(path.join(language === 'go' ? path.dirname(path.dirname(executable)) : path.dirname(executable), '.algopractice-runtime.json'), 'utf8'));
           if (marker.warmState === 'pending') return fail('error', 'Language environment setup is incomplete; wait for installation recovery or reinstall it.');

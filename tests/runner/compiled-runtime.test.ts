@@ -16,7 +16,13 @@ import { runProcess, type ToolchainProcessEnvironment } from '../../src/runner/p
 import { runtimeDiscoveryPaths } from '../../src/runner/runtime-discovery.ts';
 
 const temporary = () => mkdtemp(path.join(os.tmpdir(), 'algopractice-compiled-runtime-'));
+const standardCppLibraryArchive = (file: { path: string }) => /^(?:lib)?c\+\+\.(?:a|lib)$/i.test(path.basename(file.path));
+const archiveInventory = (files: { path: string }[]) => files.slice(0, 16).map(file => path.basename(file.path).slice(0, 120)).join(', ');
 function deferred<T>() { let resolve!: (value: T | PromiseLike<T>) => void, reject!: (reason?: unknown) => void; const promise = new Promise<T>((yes, no) => { resolve = yes; reject = no; }); return { promise, resolve, reject }; }
+test('stdlib deletion proof recognizes only actual libc++ archive basenames on both platforms', () => {
+  for (const name of ['libc++.a', 'c++.a', 'libc++.lib', 'c++.lib', 'C++.LIB']) assert.equal(standardCppLibraryArchive({ path: path.join('cache', name) }), true);
+  for (const name of ['libc++abi.a', 'libubsan_rt.a', 'unrelated.lib', 'c++.lib.txt']) assert.equal(standardCppLibraryArchive({ path: path.join('cache', name) }), false);
+});
 test('Go bootstrap explicitly includes the production function driver standard imports', () => {
   for (const dependency of ['encoding/json', 'fmt', 'math', 'math/big', 'os', 'reflect', 'runtime/debug', 'strconv', 'unicode/utf8']) assert.ok((GO_BOOTSTRAP_STANDARD_PACKAGES as readonly string[]).includes(dependency));
 });
@@ -103,9 +109,9 @@ test('Go inventory records only named standard exports, not private main or cach
     const cache = path.join(root, 'go-build'); await mkdir(cache);
     const standard = path.join(cache, 'standard-d'), main = path.join(cache, 'main-d'); await writeFile(standard, 'export'); await writeFile(main, 'main');
     const profile = { profileRoot: root, profileId: 'synthetic', env: { GOCACHE: cache } } as CompilationProfile;
-    assert.deepEqual(await goStandardLibraryInventory(profile, `${standard}\n\n${standard}\n`), [{ path: 'go-build/standard-d', size: 6 }]);
+    assert.deepEqual(await goStandardLibraryInventory(profile, `${standard}\n\n${standard}\n`), [{ path: path.join('go-build', 'standard-d'), size: 6 }]);
     await assert.rejects(goStandardLibraryInventory(profile, `${path.join(root, 'external-d')}\n`), /outside/);
-    const receipt = { schema: 1, profileId: 'synthetic', inventoryKind: 'go-standard-exports-v1', requiredFiles: [{ path: 'go-build/standard-d', size: 6 }] };
+    const receipt = { schema: 1, profileId: 'synthetic', inventoryKind: 'go-standard-exports-v1', requiredFiles: [{ path: path.join('go-build', 'standard-d'), size: 6 }] };
     await writeFile(path.join(root, '.prepared.json'), JSON.stringify(receipt)); assert.equal(await cachedToolchainReceipt(profile, 'go'), undefined);
     receipt.inventoryKind = 'go-standard-exports-v2'; await writeFile(path.join(root, '.prepared.json'), JSON.stringify(receipt)); assert.ok(await cachedToolchainReceipt(profile, 'go'));
     const controller = new AbortController(); controller.abort(new Error('cancel exports'));
@@ -168,6 +174,28 @@ test('system Zig preparation writes only app-private caches and reuses the preci
     await writeFile(executable, 'changed synthetic compiler');
     assert.notEqual((await prepareCompilation('cpp', inspection, { cwd: root, root })).profileId, profile.profileId);
   } finally { await rm(root, { recursive: true, force: true }); await rm(system, { recursive: true, force: true }); }
+});
+test('Windows mixed-case managed compiler selection reuses the managed preparation cache', { skip: process.platform !== 'win32' }, async () => {
+  const root = await temporary();
+  try {
+    const executable = defaultRuntimePath('cpp', root); await mkdir(path.dirname(executable)); await writeFile(executable, 'synthetic compiler');
+    const inspection = { language: 'cpp' as const, executable: executable.toUpperCase(), status: 'ready' as const, version: '0.16.0', runtimeVersion: 'fixture', compilerKind: 'zig' as const, diagnostics: [] };
+    const mixedCase = await prepareCompilation('cpp', inspection, { cwd: root, root });
+    const exactCase = await prepareCompilation('cpp', { ...inspection, executable }, { cwd: root, root });
+    assert.equal(mixedCase.profileRoot, exactCase.profileRoot); assert.equal(mixedCase.profileId, exactCase.profileId);
+    assert.ok(mixedCase.profileRoot.startsWith(path.join(root, 'cpp', '.algopractice-cache')));
+  } finally { await rm(root, { recursive: true, force: true }); }
+});
+test('Windows mixed-case managed executable cannot bypass a pending installation marker', { skip: process.platform !== 'win32' }, async () => {
+  const root = await temporary();
+  try {
+    for (const language of ['go', 'cpp'] as const) {
+      const executable = defaultRuntimePath(language, root); await mkdir(path.dirname(executable), { recursive: true }); await writeFile(executable, 'must never execute');
+      await writeFile(path.join(root, language, '.algopractice-runtime.json'), JSON.stringify({ warmState: 'pending' }));
+      const inspection = await inspectRuntime(language, { root, runtimePath: executable.toUpperCase() });
+      assert.equal(inspection.status, 'error'); assert.match(inspection.diagnostics[0].message, /setup is incomplete/);
+    }
+  } finally { await rm(root, { recursive: true, force: true }); }
 });
 test('private compiler configuration refuses an external home symlink before any configuration write', { skip: process.platform === 'win32' }, async () => {
   const root = await temporary(), external = await temporary();
@@ -235,13 +263,14 @@ test('real cached C++ inspection repairs a deleted stdlib archive before normal-
     const first = await inspectRuntime('cpp', { root, runtimePath: executable }); assert.equal(first.status, 'ready', JSON.stringify(first));
     const readyAt = Date.now(), profile = await prepareCompilation('cpp', first, { cwd: root, root });
     const before = await cachedToolchainReceipt(profile, 'cpp'); assert.ok(before);
-    const library = before.requiredFiles.find(file => /(?:^|[\\/])libc\+\+\.a$/.test(file.path)); assert.ok(library, 'The proof must delete the actual libc++ archive.');
+    const library = before.requiredFiles.find(standardCppLibraryArchive);
+    assert.ok(library, `The proof must delete the actual libc++ archive; inventory: ${archiveInventory(before.requiredFiles)}`);
     const artifact = path.join(profile.profileRoot, library.path); await rm(artifact);
     assert.equal(await cachedToolchainReceipt(profile, 'cpp'), undefined);
     assert.ok(Date.now() - readyAt < 30000, 'The second inspection must enter the ready metadata cache branch.');
     const second = await inspectRuntime('cpp', { root, runtimePath: executable }); assert.equal(second.status, 'ready', JSON.stringify(second));
     const after = await cachedToolchainReceipt(profile, 'cpp'); assert.ok(after); assert.notEqual(after.compiledAt, before.compiledAt);
-    const rebuilt = after.requiredFiles.find(file => /(?:^|[\\/])libc\+\+\.a$/.test(file.path)); assert.ok(rebuilt); assert.equal((await stat(path.join(profile.profileRoot, rebuilt.path))).size, rebuilt.size);
+    const rebuilt = after.requiredFiles.find(standardCppLibraryArchive); assert.ok(rebuilt, `Rebuilt libc++ archive is missing; inventory: ${archiveInventory(after.requiredFiles)}`); assert.equal((await stat(path.join(profile.profileRoot, rebuilt.path))).size, rebuilt.size);
     const result = await runCode({ language: 'cpp', runtimePath: executable, mode: 'acm', code: '#include <bits/stdc++.h>\nint main(){std::vector<bool>b{true,false};try{throw std::runtime_error("synthetic");}catch(const std::exception&){std::cout<<b[0]<<"\\n";}}', cases: [{ stdin: '', expected: '1\n' }], outputLimitBytes: 65536, compileTimeoutMs: 30000 }, { runtimeRoot: root });
     assert.equal(result.status, 'passed', JSON.stringify(result)); assert.equal(result.stderr, '');
   } finally { await rm(root, { recursive: true, force: true }); }

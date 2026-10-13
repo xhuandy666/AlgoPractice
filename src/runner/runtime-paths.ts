@@ -8,4 +8,15 @@ export function defaultRuntimePath(language: Language, root = runtimeStorageRoot
   if (language === 'cpp') return path.join(root, 'cpp', process.platform === 'win32' ? 'zig.exe' : 'zig');
   return path.join(root, 'java', process.platform === 'darwin' ? 'Contents/Home/bin/java' : process.platform === 'win32' ? 'bin/java.exe' : 'bin/java');
 }
+/** Lexical host path equality only; realpath/link validation remains separate. */
+export function sameRuntimePath(first: string, second: string): boolean {
+  const normalize = (value: string) => process.platform === 'win32' ? path.win32.resolve(value).toLowerCase() : path.resolve(value);
+  return normalize(first) === normalize(second);
+}
+/** Reuse only the exact host-trusted test installation's preparation cache. */
+export function runtimeCompilationRoot(language: Language, executable: string, ownedRoot: string, testRoot?: string): string {
+  if (!testRoot || !path.isAbsolute(executable)) return ownedRoot;
+  const trustedRoot = runtimeStorageRoot(testRoot), expected = defaultRuntimePath(language, trustedRoot);
+  return sameRuntimePath(executable, expected) ? trustedRoot : ownedRoot;
+}
 export function compilerPath(executable: string): string { return path.join(path.dirname(executable), process.platform === 'win32' ? 'javac.exe' : 'javac'); }

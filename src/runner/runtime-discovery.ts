@@ -1,7 +1,7 @@
 import { lstat, readdir, realpath } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
-import { defaultRuntimePath } from './runtime-paths.ts';
+import { defaultRuntimePath, runtimeCompilationRoot } from './runtime-paths.ts';
 import { inspectRuntime, type RuntimeInspection } from './runtime-inspect.ts';
 import type { Language } from './types.ts';
 
@@ -97,7 +97,7 @@ export async function resolveRuntime(language: Language, options: DiscoveryOptio
   const inspected = new Set<string>();
   const finish = (inspection: RuntimeInspection, source: RuntimeSource, blockedByExplicit = false): RuntimeResolution => ({ ...inspection, source, blockedByExplicit, candidates });
   const probe = async (executable: string, source: RuntimeCandidate['source'], signal = options.signal) => {
-    const inspection = await inspect(language, { root: options.root, runtimePath: executable, signal });
+    const inspection = await inspect(language, { root: runtimeCompilationRoot(language, executable, options.root, options.testRoot), runtimePath: executable, signal });
     candidates.push({ executable, source, inspection }); inspected.add(path.resolve(executable));
     return inspection;
   };

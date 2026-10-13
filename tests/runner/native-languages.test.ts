@@ -107,7 +107,12 @@ for (const language of nativeLanguages) {
   });
   test(`${language}: ACM EOF Unicode and exact newline semantics`, { skip: skip(language) }, async () => {
     const code = language === 'go' ? 'package main\nimport("io";"os")\nfunc main(){io.Copy(os.Stdout,os.Stdin)}' : '#include <bits/stdc++.h>\nint main(){std::cout<<std::cin.rdbuf();}';
-    await check(language, { mode: 'acm', code, acmCompare: 'exact', cases: [{ stdin: '你好 🌳\n', expected: '你好 🌳\n' }, { stdin: '', expected: '' }] });
+    // Windows C++ CRT text streams expand LF to CRLF. Exact comparison must
+    // preserve that real output, not hide it through platform normalization.
+    const echoed = `你好 🌳${language === 'cpp' && process.platform === 'win32' ? '\r\n' : '\n'}`;
+    const echo = await check(language, { mode: 'acm', code, acmCompare: 'exact', cases: [{ stdin: '你好 🌳\n', expected: echoed }, { stdin: '', expected: '' }] });
+    assert.equal(echo.caseResults[0].actual, echoed);
+    if (language === 'cpp' && process.platform === 'win32') await check(language, { mode: 'acm', code, acmCompare: 'exact', cases: [{ stdin: '你好 🌳\n', expected: '你好 🌳\n' }] }, 'wrong_answer');
     await check(language, { mode: 'acm', code, acmCompare: 'exact', cases: [{ stdin: '42\n', expected: '42' }] }, 'wrong_answer');
   });
   test(`${language}: compiler errors point to original user line with Unicode/tab column`, { skip: skip(language) }, async () => {
