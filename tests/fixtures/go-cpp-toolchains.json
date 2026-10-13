@@ -1,0 +1,69 @@
+{
+  "schema": 1,
+  "purpose": "P0 candidates only; not the application's runtime manifest",
+  "metadataSources": {
+    "go": "https://go.dev/dl/?mode=json",
+    "zig": "https://ziglang.org/download/index.json"
+  },
+  "go": {
+    "version": "1.27.2",
+    "license": "BSD-3-Clause; retain upstream LICENSE and bundled notices",
+    "targets": {
+      "darwin-arm64": {
+        "url": "https://dl.google.com/go/go1.27.2.darwin-arm64.tar.gz",
+        "sha256": "76812b213b1b2302c978d28fa52fa92d541704b9e7d9d5db8002c50e4018c4c5",
+        "size": 68195916,
+        "prefix": "go",
+        "executable": "bin/go",
+        "target": "darwin/arm64"
+      },
+      "darwin-x64": {
+        "url": "https://dl.google.com/go/go1.27.2.darwin-amd64.tar.gz",
+        "sha256": "587b59182488b23aa6e5fc25110405a3e0e5b38ed2f5b2f46ed13c32aee356fe",
+        "size": 71695284,
+        "prefix": "go",
+        "executable": "bin/go",
+        "target": "darwin/amd64"
+      },
+      "win32-x64": {
+        "url": "https://dl.google.com/go/go1.27.2.windows-amd64.zip",
+        "sha256": "1314008898bd40df77af4b014f777f08873dbdfbcd3d92308728ee03304fe04f",
+        "size": 79008081,
+        "prefix": "go",
+        "executable": "bin/go.exe",
+        "target": "windows/amd64"
+      }
+    }
+  },
+  "zig": {
+    "version": "0.16.0",
+    "license": "MIT and bundled component licenses; retain LICENSE and lib notices",
+    "minimumHost": { "macos": "13.0", "windows": "10" },
+    "targets": {
+      "darwin-arm64": {
+        "url": "https://ziglang.org/download/0.16.0/zig-aarch64-macos-0.16.0.tar.xz",
+        "sha256": "b23d70deaa879b5c2d486ed3316f7eaa53e84acf6fc9cc747de152450d401489",
+        "size": 52238004,
+        "prefix": "zig-aarch64-macos-0.16.0",
+        "executable": "zig",
+        "target": "aarch64-macos.14.0-none"
+      },
+      "darwin-x64": {
+        "url": "https://ziglang.org/download/0.16.0/zig-x86_64-macos-0.16.0.tar.xz",
+        "sha256": "0387557ed1877bc6a2e1802c8391953baddba76081876301c522f52977b52ba7",
+        "size": 57396836,
+        "prefix": "zig-x86_64-macos-0.16.0",
+        "executable": "zig",
+        "target": "x86_64-macos.14.0-none"
+      },
+      "win32-x64": {
+        "url": "https://ziglang.org/download/0.16.0/zig-x86_64-windows-0.16.0.zip",
+        "sha256": "68659eb5f1e4eb1437a722f1dd889c5a322c9954607f5edcf337bc3684a75a7e",
+        "size": 97217739,
+        "prefix": "zig-x86_64-windows-0.16.0",
+        "executable": "zig.exe",
+        "target": "x86_64-windows-gnu"
+      }
+    }
+  }
+}
