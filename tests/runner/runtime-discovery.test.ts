@@ -17,7 +17,9 @@ test('trusted test executable reuses its compilation root, never an unrelated se
     assert.equal(runtimeCompilationRoot(language, executable, root, testRoot), path.resolve(testRoot));
     assert.equal(runtimeCompilationRoot(language, executable, root), root);
     assert.equal(runtimeCompilationRoot(language, defaultRuntimePath(language, path.join(testRoot, 'other')), root, testRoot), root);
-    assert.equal(runtimeCompilationRoot(language, path.relative(process.cwd(), executable), root, testRoot), root);
+    // Windows path.relative may return an absolute path across drives. Use an
+    // actually relative selection so this tests the absolute-path gate itself.
+    assert.equal(runtimeCompilationRoot(language, path.basename(executable), root, testRoot), root);
     assert.equal(runtimeCompilationRoot(language, executable.toUpperCase(), root, testRoot), process.platform === 'win32' ? path.resolve(testRoot) : root);
   }
 });
