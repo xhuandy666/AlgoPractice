@@ -1,4 +1,4 @@
-import type { Adapter, Language, TestCase } from '../runner/types';
+import type { Language, ProblemAdapter, TestCase } from '../runner/types';
 
 export type ProblemSource = 'local' | 'leetcode-cn' | 'file';
 
@@ -15,7 +15,7 @@ export interface ProblemContent {
   constraints: string[];
   mode: 'function' | 'acm';
   acmCompare?: 'normalized' | 'exact';
-  adapter?: Adapter;
+  adapter?: ProblemAdapter;
   cases: TestCase[];
   starter: Partial<Record<Language, string>>;
   supportReason?: string;

@@ -65,7 +65,7 @@ test('An empty request invokes the coach; a direct full-solution request works w
   const request = { ...input(), question: '请给我完整代码并解释' }, response = answer(request); response.completeSolution = { explanation: '累加后返回结果。', code: 'class Solution:\n    def solve(self, nums):\n        return sum(nums)\n' };
   const fixture = setup(async () => sseCompletion(JSON.stringify(response))), before = fixture.source.code;
   const result = await fixture.service.request(request); assert.equal(result.status, 'completed'); assert.equal(result.response?.completeSolution?.code, response.completeSolution.code);
-  assert.equal(result.snapshot.level, undefined); assert.equal(result.snapshot.unlockCompleteSolution, undefined);
+  assert.ok(!('level' in result.snapshot) && !('unlockCompleteSolution' in result.snapshot), 'new requests carry no help level');
   assert.equal((await fixture.service.preparePatch(result.id)).code, response.completeSolution.code); assert.equal(fixture.source.code, before);
 });
 test('Official results changing the context invalidate completed response cache', async () => {

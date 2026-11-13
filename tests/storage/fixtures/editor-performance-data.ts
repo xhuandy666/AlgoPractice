@@ -35,11 +35,11 @@ store.saveDraft({ problemId: problem.id, language: 'python', code }); store.clos
 const history = new DatabaseSync(file);
 try {
   history.exec('PRAGMA foreign_keys=ON; BEGIN IMMEDIATE');
-  const insertRun = history.prepare('INSERT INTO runs VALUES (?,?,?,?,?,?,?,?,?,?,?,?)');
+  const insertRun = history.prepare('INSERT INTO runs VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)');
   for (let index = 0; index < 20; index++) {
     const result = { status: 'passed', diagnostics: [], durationMs: 2, stdout: '', stderr: '', runtimeVersion: 'synthetic-performance-fixture', hostPlatform: 'synthetic',
       executionScope: 'local-user-code-not-sandboxed', caseResults: [{ index: 0, status: 'passed', actual: 3, expected: 3, stdout: '', stderr: '', durationMs: 1 }] };
-    insertRun.run(`perf-run-${index}`, attempt.id, code, hashCode(code), 'fixture-suite', '{}', 'fixture-adapter', 'fixture-runtime', 'passed', JSON.stringify(result), now, now);
+    insertRun.run(`perf-run-${index}`, attempt.id, code, hashCode(code), 'fixture-suite', '{}', 'native-samples', 'fixture-adapter', 'fixture-runtime', 'passed', JSON.stringify(result), now, now);
   }
   history.exec('COMMIT');
 } finally { history.close(); }

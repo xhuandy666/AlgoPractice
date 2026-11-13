@@ -17,7 +17,7 @@ await mkdir('dist/assets', { recursive: true });
 await copyFile('build/icon.png', 'dist/assets/icon.png');
 const moduleIds = new Set([...Object.keys(main.metafile.inputs), ...Object.keys(preload.metafile.inputs)]);
 for (const result of Array.isArray(renderer) ? renderer : [renderer]) for (const output of result.output ?? []) if (output.type === 'chunk') for (const id of Object.keys(output.modules)) moduleIds.add(id);
-const packagePaths = new Set(['node_modules/@fontsource/inter', 'node_modules/@fontsource/space-grotesk', 'node_modules/@fontsource/jetbrains-mono', 'node_modules/electron', 'node_modules/monaco-editor/node_modules/marked']);
+const packagePaths = new Set(['node_modules/@fontsource/nunito', 'node_modules/@fontsource/jetbrains-mono', 'node_modules/electron', 'node_modules/monaco-editor/node_modules/marked']);
 for (let id of moduleIds) {
   id = relative(root, resolve(id)).replaceAll('\\', '/');
   const offset = id.lastIndexOf('node_modules/'); if (offset < 0) continue;

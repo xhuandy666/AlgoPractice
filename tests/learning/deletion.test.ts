@@ -1,12 +1,14 @@
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
-import { mkdtempSync, readFileSync, readdirSync, rmSync } from 'node:fs';
+import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import { test, type TestContext } from 'node:test';
 import { PracticeStore, hashCode, type Attempt } from '../../src/storage/practice-store.ts';
 import type { AiRequestSeed, AiResponse } from '../../src/shared/ai.ts';
+import { restoreBackup } from '../restore-backup.ts';
+import { SCHEMA_VERSION } from '../../src/storage/schema.ts';
 
 function fixture(t: TestContext) {
   const directory = mkdtempSync(join(tmpdir(), 'algopractice-p3-deletion-')), dbPath = join(directory, 'practice.sqlite');
@@ -17,18 +19,21 @@ function fixture(t: TestContext) {
 function addAttachment(store: PracticeStore, name = '历史附件.txt') {
   return store.registerAttachment({ hash: hashCode(name), name, mimeType: 'text/plain', size: Buffer.byteLength(name), createdAt: new Date().toISOString() });
 }
-const answer: AiResponse = { schemaVersion: 1, kind: 'hint', level: 'L1', title: '提示', explanation: '保持循环不变量。', nextSteps: [], evidence: [], inferences: [], patch: null, completeSolution: null, noteDraft: null };
+const answer: AiResponse = { schemaVersion: 2, kind: 'hint', title: '提示', explanation: '保持循环不变量。', nextSteps: [], evidence: [], inferences: [], patch: null, completeSolution: null, noteDraft: null };
 const completed = { status: 'completed' as const, response: answer, error: null, usage: null, cachedFromRequestId: null };
 function aiSeed(attempt: Attempt, id: string): AiRequestSeed {
   const snapshot: AiRequestSeed['snapshot'] = {
     policyVersion: 'test-policy', promptVersion: 'test-prompt', attemptId: attempt.id, problemId: attempt.problemId, problemVersion: attempt.problemVersion,
     language: attempt.language, mode: attempt.mode, isActive: true, draftScopeId: attempt.draftScopeId, draftRevision: 1, code: 'print(1)', codeHash: hashCode('print(1)'),
-    kind: 'hint', level: 'L1', question: '给我方向', unlockCompleteSolution: false, runId: null, run: null,
+    kind: 'hint', question: '给我方向', runId: null, run: null,
     provider: { id: 'fixture', baseUrl: 'http://127.0.0.1:9999/v1', model: 'fixture', temperature: 0, maxOutputTokens: 100, timeoutMs: 1000, jsonMode: true, includeUsage: false },
-    messages: [{ role: 'user', content: '给我方向' }], selectedNoteIds: [], selectedConversationIds: [], clippedFields: [],
+    messages: [{ role: 'user', content: '给我方向' }], clippedFields: [],
   };
   return { id, attemptId: attempt.id, snapshot, requestHash: createHash('sha256').update(JSON.stringify(snapshot)).digest('hex') };
 }
+/** Problem p1's review journal, oldest first. */
+const reviewEvents = (store: PracticeStore) => store.getProblemReviewDetail('p1', { limit: 100 }).events.items
+  .slice().sort((a, b) => a.observedAt.localeCompare(b.observedAt) || a.createdAt.localeCompare(b.createdAt));
 function graph(store: PracticeStore) {
   const original = store.startAttempt({ problemId: 'p1', language: 'python', problemVersion: 'v1' }), file = addAttachment(store);
   const sourceSeed = aiSeed(original, 'source-ai'); store.beginAIRequest(sourceSeed); store.finishAIRequest(sourceSeed.id, completed);
@@ -37,16 +42,16 @@ function graph(store: PracticeStore) {
   const note = store.confirmNote({ requestId: 'note-confirm', noteId: draftNote.id, version: 1, expectedVersion: 1 });
   store.recordActivity({ requestId: 'active-sample', attemptId: original.id, durationMs: 10000, occurredAt: new Date().toISOString() });
   store.markAIHelpShown(original.id); store.dismissAIHelp(original.id);
-  const run = store.saveRun({ id: 'source-run', attemptId: original.id, code: 'print(1)', testSuiteVersion: 'suite', adapterVersion: 'adapter', runtimeVersion: 'python', status: 'passed', result: { status: 'passed' } });
+  const run = store.saveRun({ id: 'source-run', attemptId: original.id, code: 'print(1)', testSuiteVersion: 'suite', expectedOutputSource: 'native-samples', adapterVersion: 'adapter', runtimeVersion: 'python', status: 'passed', result: { status: 'passed' } });
   const ended = store.finishAttempt(original.id, { code: 'print(1)' });
-  const item = store.addReviewItem({ problemId: 'p1', target: 'rewrite', language: 'python' });
-  const reviewInput = { requestId: 'original-rating', itemId: item.id, attemptId: original.id, rating: 3 as const };
-  const review = store.recordReview(reviewInput); store.correctReview({ requestId: 'correct-rating', eventId: review.event.id, rating: 4 });
+  store.addProblemReview('p1');
+  const reviewInput = { requestId: 'original-rating', problemId: 'p1', attemptId: original.id, rating: 3 as const };
+  const review = store.recordProblemReview(reviewInput); store.correctProblemReview({ requestId: 'correct-rating', eventId: review.event.id, rating: 4 });
   const child = store.restoreRunAsDraft(run.id, { requestId: 'child-finished' }), finishedChild = store.finishAttempt(child.attempt.id, { code: child.draft.code });
   const activeChild = store.restoreRunAsDraft(run.id, { requestId: 'child-active' });
   const cachedSeed = { ...aiSeed(activeChild.attempt, 'other-attempt-cache'), requestHash: sourceSeed.requestHash };
   store.beginAIRequest(cachedSeed); const cached = store.finishAIRequest(cachedSeed.id, { ...completed, cachedFromRequestId: sourceSeed.id });
-  return { ended, run, note, file, reviewItem: store.getReviewItem(item.id)!, reviewInput, review, finishedChild, activeChild, cached };
+  return { ended, run, note, file, reviewPlan: store.getProblemReview('p1')!, reviewInput, review, finishedChild, activeChild, cached };
 }
 function rows(db: DatabaseSync, preV8 = false) {
   const tables = db.prepare("SELECT name FROM sqlite_schema WHERE type = 'table' AND name NOT LIKE 'sqlite_%' ORDER BY name").all();
@@ -57,27 +62,19 @@ function rows(db: DatabaseSync, preV8 = false) {
     return row;
   })]));
 }
-function legacyV3(dbPath: string, populatedPath: string) {
-  const db = new DatabaseSync(dbPath); db.exec('PRAGMA journal_mode = WAL; PRAGMA foreign_keys = ON; PRAGMA wal_autocheckpoint = 0;');
-  db.exec(readFileSync(new URL('../storage/fixtures/p3-schema.sql', import.meta.url), 'utf8'));
-  db.prepare('ATTACH DATABASE ? AS populated').run(populatedPath); db.exec('BEGIN IMMEDIATE; PRAGMA defer_foreign_keys = ON;');
-  for (const { name } of db.prepare("SELECT name FROM main.sqlite_schema WHERE type = 'table' AND name NOT LIKE 'sqlite_%'").all()) {
-    const columns = db.prepare(`PRAGMA main.table_info("${name}")`).all().map(row => `"${row.name}"`).join(',');
-    db.exec(`INSERT INTO main."${name}" (${columns}) SELECT ${columns} FROM populated."${name}"`);
-  }
-  db.exec('COMMIT; DETACH DATABASE populated;'); return db;
-}
 
 test('deleting a finished archive detaches provenance and preserves every rating, note version and draft', t => {
   const { store, dbPath } = fixture(t), value = graph(store), raw = new DatabaseSync(dbPath);
   try {
-    const drafts = raw.prepare('SELECT * FROM drafts ORDER BY scope_id').all(), events = store.listReviewEvents(value.reviewItem.id), notes = store.listNoteVersions(value.note.id);
+    const drafts = raw.prepare('SELECT * FROM drafts ORDER BY scope_id').all(), events = reviewEvents(store), notes = store.listNoteVersions(value.note.id);
     assert.equal(store.deleteEndedAttempt(value.ended.id), true); assert.equal(store.deleteEndedAttempt(value.ended.id), false, 'a lost deletion response can be retried safely');
     assert.equal(store.getAttempt(value.ended.id), undefined); assert.equal(store.getRun(value.run.id), undefined);
     assert.deepEqual(store.listAIRequests(value.ended.id), []); assert.deepEqual(store.getAttemptNoteVersions(value.ended.id), []);
-    assert.deepEqual(store.getReviewItem(value.reviewItem.id), value.reviewItem, 'deletion must never reschedule FSRS');
-    assert.deepEqual(store.listReviewEvents(value.reviewItem.id), events.map(event => ({ ...event, attemptId: null })));
-    assert.deepEqual(store.recordReview(value.reviewInput).event, { ...value.review.event, attemptId: null }, 'feedback request deduplication survives source deletion');
+    assert.deepEqual(store.getProblemReview('p1'), value.reviewPlan, 'deletion must never reschedule FSRS');
+    const detached = <T extends { attemptId: string | null; sourceDeleted: boolean }>(event: T): T => event.attemptId === value.ended.id ? { ...event, attemptId: null, sourceDeleted: true } : event;
+    assert.deepEqual(reviewEvents(store), events.map(detached));
+    // The retry returns the journal's event: detached, with the corrected rating (4) as its effective rating.
+    assert.deepEqual(store.recordProblemReview(value.reviewInput).event, detached({ ...value.review.event, effectiveRating: 4 }), 'feedback request deduplication survives source deletion');
     assert.deepEqual(store.listNoteVersions(value.note.id), notes.map(note => ({ ...note, aiRequestId: null })));
     assert.equal(store.getNote(value.note.id)?.confirmed?.origin, 'ai'); assert.deepEqual(store.listAttachmentReferences(), [value.file]);
     assert.deepEqual(store.getAttempt(value.finishedChild.id), { ...value.finishedChild, restoredFromRunId: null });
@@ -87,8 +84,8 @@ test('deleting a finished archive detaches provenance and preserves every rating
     assert.equal(raw.prepare('SELECT COUNT(*) AS count FROM draft_restorations').get()?.count, 0);
     assert.equal(store.getArchiveStatistics().activeMs, 0); assert.equal(store.getArchiveStatistics().reviewedItems, 0, 'first assessment is retained but is not a review completion');
     assert.deepEqual(store.listAttachmentDeletionCandidates(), [], 'archive note links do not own independent note files');
-    const corrected = store.correctReview({ requestId: 'after-delete-correction', eventId: value.review.event.id, rating: 3 });
-    assert.equal(corrected.event.attemptId, null); assert.ok(corrected.item.card); assert.equal(corrected.item.card.reps, 1); store.integrityCheck();
+    const corrected = store.correctProblemReview({ requestId: 'after-delete-correction', eventId: value.review.event.id, rating: 3 });
+    assert.equal(corrected.event.attemptId, null); assert.ok(corrected.plan.card); assert.equal(corrected.plan.card.reps, 1); store.integrityCheck();
   } finally { raw.close(); }
 });
 
@@ -113,7 +110,7 @@ test('archive deletion rolls back all detachments on a write error and on a defe
   } finally { raw.close(); }
 });
 
-test('schema 10 permits only nonempty provenance to become null while all immutable content stays protected', t => {
+test('provenance may only become null while all immutable content stays protected', t => {
   const { store, dbPath } = fixture(t), value = graph(store), raw = new DatabaseSync(dbPath);
   try {
     const cases = [
@@ -134,46 +131,14 @@ test('schema 10 permits only nonempty provenance to become null while all immuta
   } finally { raw.close(); }
 });
 
-test('a real schema 3 WAL database upgrades to 10 only after an unchanged schema 3 backup is published', t => {
-  const { store, directory, dbPath } = fixture(t), value = graph(store), legacyPath = join(directory, 'legacy-v3.sqlite'), legacy = legacyV3(legacyPath, dbPath);
-  try {
-    const before = rows(legacy), upgraded = new PracticeStore(legacyPath);
-    try {
-      assert.ok(upgraded.migrationBackupPath?.includes('.before-v10-')); assert.equal(legacy.prepare('PRAGMA user_version').get()?.user_version, 10);
-      const after = rows(legacy, true); assert.deepEqual(Object.fromEntries(Object.keys(before).map(name => [name, after[name]])), before);
-      assert.equal(legacy.prepare('SELECT COUNT(*) AS count FROM problem_review_migrations').get()!.count, 1);
-      const backup = new DatabaseSync(upgraded.migrationBackupPath!, { readOnly: true });
-      try { assert.equal(backup.prepare('PRAGMA user_version').get()?.user_version, 3); assert.deepEqual(rows(backup), before); } finally { backup.close(); }
-      assert.equal(PracticeStore.inspectBackupSnapshot(upgraded.migrationBackupPath!).schemaVersion, 3); assert.deepEqual(PracticeStore.inspectBackupSnapshot(upgraded.migrationBackupPath!).attachments, [value.file]);
-      assert.equal(upgraded.deleteEndedAttempt(value.ended.id), true); upgraded.integrityCheck();
-      const restoredPath = join(directory, 'restored-v3.sqlite'); PracticeStore.restoreBackup(upgraded.migrationBackupPath!, restoredPath); const restored = new PracticeStore(restoredPath);
-      try { assert.ok(restored.migrationBackupPath); assert.equal(restored.getAttempt(value.ended.id)?.id, value.ended.id); restored.integrityCheck(); } finally { restored.close(); }
-    } finally { upgraded.close(); }
-  } finally { legacy.close(); }
-});
-
-test('a failed schema 3 to 10 migration restores every original trigger and row and keeps its pre-migration backup', t => {
-  const { store, directory, dbPath } = fixture(t); graph(store);
-  const legacyPath = join(directory, 'failed-v3.sqlite'), legacy = legacyV3(legacyPath, dbPath);
-  try {
-    legacy.exec('CREATE TABLE attachment_deletion_candidates (injected_conflict TEXT)');
-    const beforeRows = rows(legacy), beforeSchema = legacy.prepare('SELECT name, sql FROM sqlite_schema ORDER BY name').all();
-    assert.throws(() => new PracticeStore(legacyPath), /Schema v10 migration failed/); assert.equal(legacy.prepare('PRAGMA user_version').get()?.user_version, 3);
-    assert.deepEqual(rows(legacy), beforeRows); assert.deepEqual(legacy.prepare('SELECT name, sql FROM sqlite_schema ORDER BY name').all(), beforeSchema);
-    const backupName = readdirSync(directory).find(name => name.startsWith('failed-v3.sqlite.before-v10-') && name.endsWith('.sqlite')); assert.ok(backupName);
-    const backup = new DatabaseSync(join(directory, backupName!), { readOnly: true });
-    try { assert.equal(backup.prepare('PRAGMA user_version').get()?.user_version, 3); assert.deepEqual(rows(backup), beforeRows); } finally { backup.close(); }
-  } finally { legacy.close(); }
-});
-
-test('a deleted archive stays deleted after schema 10 backup and restore while retained learning data remains exact', async t => {
+test('a deleted archive stays deleted after backup and restore while retained learning data remains exact', async t => {
   const { store, directory } = fixture(t), value = graph(store); store.deleteEndedAttempt(value.ended.id);
-  const note = store.getNote(value.note.id), card = store.getReviewItem(value.reviewItem.id), backupPath = join(directory, 'after-delete.sqlite'); await store.backupTo(backupPath);
-  assert.equal(PracticeStore.inspectBackupSnapshot(backupPath).schemaVersion, 10); assert.deepEqual(PracticeStore.inspectBackupSnapshot(backupPath).attachments, [value.file]);
-  const restoredPath = join(directory, 'restored.sqlite'); PracticeStore.restoreBackup(backupPath, restoredPath); const restored = new PracticeStore(restoredPath);
+  const note = store.getNote(value.note.id), plan = store.getProblemReview('p1'), backupPath = join(directory, 'after-delete.sqlite'); await store.backupTo(backupPath);
+  assert.equal(PracticeStore.inspectBackupSnapshot(backupPath).schemaVersion, SCHEMA_VERSION); assert.deepEqual(PracticeStore.inspectBackupSnapshot(backupPath).attachments, [value.file]);
+  const restoredPath = join(directory, 'restored.sqlite'); restoreBackup(backupPath, restoredPath); const restored = new PracticeStore(restoredPath);
   try {
-    assert.equal(restored.migrationBackupPath, null); assert.equal(restored.getAttempt(value.ended.id), undefined);
-    assert.deepEqual(restored.getNote(value.note.id), note); assert.deepEqual(restored.getReviewItem(value.reviewItem.id), card);
+    assert.equal(restored.getAttempt(value.ended.id), undefined);
+    assert.deepEqual(restored.getNote(value.note.id), note); assert.deepEqual(restored.getProblemReview('p1'), plan);
     assert.deepEqual(restored.getDraft('p1', 'python', value.activeChild.draft.scopeId), value.activeChild.draft); restored.integrityCheck();
   } finally { restored.close(); }
 });
@@ -242,29 +207,4 @@ test('copied Markdown attachment URLs protect the other note and are included in
   assert.equal(store.saveNote(copiedInput).latestVersion, 1, 'registration must not change request idempotency');
   const extra = store.saveNote({ requestId: 'non-exact-url', kind: 'topic', subjectId: 'C', title: '只是文本', markdown: `[不是内部附件](${url}/extra) [未知](algopractice://app/attachment/${'f'.repeat(64)})` });
   assert.deepEqual(extra.current.attachmentHashes, []); assert.match(extra.current.markdown, /extra/);
-});
-
-test('schema 3 migration and existing schema 4 reopening repair historical Markdown-only references idempotently', t => {
-  const { store, directory, dbPath } = fixture(t), file = addAttachment(store), raw = new DatabaseSync(dbPath);
-  const note = store.saveNote({ requestId: 'historical-url', kind: 'topic', subjectId: 'B', title: '历史复制', markdown: `[附件](algopractice://app/attachment/${file.hash})` });
-  const legacyPath = join(directory, 'markdown-v3.sqlite'), legacy = legacyV3(legacyPath, dbPath);
-  try {
-    legacy.prepare('DELETE FROM note_attachment_refs WHERE note_id = ?').run(note.id);
-    assert.deepEqual(PracticeStore.inspectBackupSnapshot(legacyPath).attachments, [file], 'old snapshots must inspect actual historical Markdown too');
-    const upgraded = new PracticeStore(legacyPath);
-    try {
-      assert.deepEqual(upgraded.getNote(note.id)?.current.attachmentHashes, [file.hash]);
-      assert.deepEqual(PracticeStore.inspectBackupSnapshot(upgraded.migrationBackupPath!).attachments, [file]);
-      assert.deepEqual(upgraded.deleteNoteWithAttachmentCandidates(note.id, 1).attachments, [file]); upgraded.integrityCheck();
-    } finally { upgraded.close(); }
-    raw.prepare('DELETE FROM note_attachment_refs WHERE note_id = ?').run(note.id);
-    raw.prepare('INSERT INTO attachment_deletion_candidates VALUES (?, ?, ?, ?, ?)').run(file.hash, file.name, file.mimeType, file.size, file.createdAt);
-    raw.close(); store.close(); const repaired = new PracticeStore(dbPath);
-    try {
-      assert.equal(repaired.migrationBackupPath, null); assert.deepEqual(repaired.getNote(note.id)?.current.attachmentHashes, [file.hash]);
-      assert.deepEqual(repaired.listAttachmentDeletionCandidates(), []); repaired.integrityCheck();
-    } finally { repaired.close(); }
-    const again = new PracticeStore(dbPath);
-    try { assert.deepEqual(again.getNote(note.id)?.current.attachmentHashes, [file.hash]); again.integrityCheck(); } finally { again.close(); }
-  } finally { if (raw.isOpen) raw.close(); legacy.close(); }
 });

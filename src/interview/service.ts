@@ -27,7 +27,7 @@ export class InterviewService {
     if (active?.mode === 'strict' && !strictChannels.has(channel)) throw new Error('严格面试进行中，不能访问旧答案、笔记、标签或解题帮助。');
     if (active && ['backup:restore','interview:preview','company:preview','company:commit','company:select-file','company:complete'].includes(channel)) throw new Error('请先结束当前面试。');
     if (active && ['interview:get','interview:save','interview:finish','interview:coach','interview:run'].includes(channel) && args[0] !== active.id) throw new Error('只能访问当前面试。');
-    // Legacy workbench/restore/patch entry points cannot mutate an interview-owned scope or final snapshot.
+    // Workbench, restore and patch entry points cannot mutate an interview-owned scope or final snapshot.
     if (['draft:save','practice:start','practice:workspace','draft:load','run:history','runner:run','runner:prepare'].includes(channel)) {
       const scope = channel === 'draft:save' || channel === 'runner:run' || channel === 'runner:prepare' ? args[3] : args[2];
       if (typeof scope === 'string' && /^(interview|interview-recap):/.test(scope)) throw new Error('面试草稿请通过面试工作台操作。');
@@ -115,7 +115,7 @@ export class InterviewService {
   }
   runTarget(key:string,problemId:string,supplement:boolean){this.tick();const session=this.#session(key),item=session.items.find(i=>i.problem.id===id(problemId));if(!item)throw new Error('题目不属于本场。');if(Boolean(session.endedAt)!==supplement)throw new Error(session.endedAt?'面试已结束，请选择冻结快照补测。':'本场尚未结束。');return {session,item,code:(supplement?item.final!:item.accepted).code};}
   recordHelp(kind:string,reference:string|null){const active=this.active();if(!active||active.mode!=='coached')return; const last=active.help.at(-1);if(last?.kind===kind&&last.reference===reference)return;active.help.push({at:iso(this.#now()),kind,reference});this.options.store().updateInterview(active);}
-  addReview(key:string,problemId:string){this.tick();const session=this.#session(key);if(!session.endedAt||!session.items.some(i=>i.problem.id===id(problemId)))throw new Error('请先结束本场，再加入复习。');return this.options.store().addReviewItem({problemId,language:session.pool.rules.language,target:'rewrite'});}
+  addReview(key:string,problemId:string){this.tick();const session=this.#session(key);if(!session.endedAt||!session.items.some(i=>i.problem.id===id(problemId)))throw new Error('请先结束本场，再加入复习。');return this.options.store().addProblemReview(problemId);}
   view(key:string):InterviewView {
     this.tick();const session=this.#session(key),store=this.options.store();const active=store.getActiveInterview();if(active?.mode==='strict'&&active.id!==key)throw new Error('严格模式无法访问历史面试。');
     const items=session.items.map(item=>{

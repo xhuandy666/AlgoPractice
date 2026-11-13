@@ -1,11 +1,16 @@
-import type { Adapter, Language, ValueType, WireValue } from './types.ts';
+import type { Adapter, Language, ProblemAdapter, ValueType, WireValue } from './types.ts';
 
 /** Capabilities describe the portable local function protocol, not official judge support. */
 export function supportsValueType(language: Language, type: ValueType): boolean {
   if (typeof type !== 'string') return supportsValueType(language, 'array' in type ? type.array : type.list);
   return !(language === 'cpp' && type === 'bigint');
 }
-export function supportsAdapter(language: Language, adapter: Adapter): boolean {
+/** True when the type is `wanted` or an array or list of it, at any depth. */
+export const containsValueType = (type: ValueType | 'void', wanted: ValueType): boolean =>
+  typeof type === 'string' ? type === wanted : containsValueType('array' in type ? type.array : type.list, wanted);
+export function supportsAdapter(language: Language, adapter: ProblemAdapter): boolean {
+  if (adapter.kind === 'design') return [...adapter.constructorParams, ...adapter.methods.flatMap(method => method.returns === 'void' ? method.params : [...method.params, method.returns])]
+    .every(type => supportsValueType(language, type));
   return adapter.params.every(type => supportsValueType(language, type)) && (adapter.returns === 'void' || supportsValueType(language, adapter.returns));
 }
 

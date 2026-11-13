@@ -14,7 +14,6 @@ import { advanceReviewCard, localDate, newReviewCard, PROBLEM_FSRS_PARAMETERS, P
 
 type Row = Record<string, string | number | null>;
 type Transaction = <T>(operation: () => T) => T;
-export const REVIEW_MERGE_STRATEGY = 'problem-review-merge-v1';
 export const reviewDigest = (value: string) => createHash('sha256').update(value).digest('hex');
 export const reviewIdentity = (problemId: string) => `pr-${reviewDigest(problemId)}`;
 function stableJson(value: unknown): string {
@@ -51,8 +50,7 @@ const PLAN_SELECT = `SELECT p.*,
   (SELECT COUNT(*) FROM problem_review_events e WHERE e.plan_id=p.id AND e.kind='review') AS observation_count,
   (SELECT e.observed_at FROM problem_review_effective_events e WHERE e.plan_id=p.id ORDER BY e.observed_at DESC,e.stable_key DESC LIMIT 1) AS last_reviewed_at,
   (SELECT e.effective_rating FROM problem_review_effective_events e WHERE e.plan_id=p.id ORDER BY e.observed_at DESC,e.stable_key DESC LIMIT 1) AS latest_rating,
-  (SELECT COUNT(*) FROM review_daily_ac_opportunities o WHERE o.problem_id=p.problem_id AND o.state IN ('pending','claimed','skipped')) AS pending_count,
-  (SELECT COUNT(DISTINCT l.old_item_id) FROM review_legacy_links l WHERE l.plan_id=p.id) AS legacy_count
+  (SELECT COUNT(*) FROM review_daily_ac_opportunities o WHERE o.problem_id=p.problem_id AND o.state IN ('pending','claimed','skipped')) AS pending_count
   FROM problem_review_plans p`;
 
 /** One connection, one surrounding Store transaction: no independent writer or renderer-provided AC evidence. */
@@ -65,15 +63,10 @@ export class ProblemReviewRepository {
       dueAt: row.due_at as string | null, scheduledAt: row.scheduled_at as string | null, suspended: row.suspended === 1,
       algorithmVersion: String(row.algorithm_version), revision: Number(row.revision), createdAt: String(row.created_at), updatedAt: String(row.updated_at),
       lastReviewedAt: row.last_reviewed_at as string | null, latestRating: row.latest_rating as ReviewRating | null,
-      observationCount: Number(row.observation_count ?? 0), pendingAssessmentCount: Number(row.pending_count ?? 0), legacyItemCount: Number(row.legacy_count ?? 0) };
+      observationCount: Number(row.observation_count ?? 0), pendingAssessmentCount: Number(row.pending_count ?? 0) };
   }
   getProblemReview(problemId: string): ProblemReviewPlan | undefined {
     const row = this.db.prepare(`${PLAN_SELECT} WHERE p.problem_id=?`).get(problemId) as Row | undefined;
-    return row ? this.plan(row) : undefined;
-  }
-  resolveProblemReview(idOrProblem: string): ProblemReviewPlan | undefined {
-    const row = this.db.prepare(`${PLAN_SELECT} WHERE p.id=? OR p.problem_id=? OR p.id=(SELECT plan_id FROM review_legacy_links WHERE old_item_id=? LIMIT 1)`)
-      .get(idOrProblem, idOrProblem, idOrProblem) as Row | undefined;
     return row ? this.plan(row) : undefined;
   }
   listProblemReviews(): ProblemReviewPlan[] { return (this.db.prepare(`${PLAN_SELECT} ORDER BY p.due_at IS NULL,p.due_at,p.problem_id`).all() as Row[]).map(row => this.plan(row)); }
@@ -83,8 +76,8 @@ export class ProblemReviewRepository {
       const existing = this.getProblemReview(problemId); if (existing) return existing;
       if (!this.db.prepare('SELECT 1 FROM problems WHERE id=?').get(problemId)) throw new Error('题目不存在。');
       this.db.prepare(`INSERT INTO problem_review_plans
-        (id,problem_id,legacy_anchor,initial_anchor,card_json,algorithm_version,parameters_json,due_at,scheduled_at,suspended,revision,created_at,updated_at)
-        VALUES (?,?,NULL,NULL,NULL,?,?,NULL,NULL,0,1,?,?)`)
+        (id,problem_id,initial_anchor,card_json,algorithm_version,parameters_json,due_at,scheduled_at,suspended,revision,created_at,updated_at)
+        VALUES (?,?,NULL,NULL,?,?,NULL,NULL,0,1,?,?)`)
         .run(reviewIdentity(problemId), problemId, PROBLEM_FSRS_VERSION, JSON.stringify(PROBLEM_FSRS_PARAMETERS), created, created);
       return this.getProblemReview(problemId)!;
     });
@@ -113,22 +106,16 @@ export class ProblemReviewRepository {
   private event(row: Row): ProblemReviewEvent {
     const originalId = row.kind === 'correction' ? String(row.corrects_event_id) : String(row.id);
     const effective = this.db.prepare('SELECT effective_rating,is_initial FROM problem_review_effective_events WHERE id=?').get(originalId) as Row | undefined;
-    const legacy = (this.db.prepare('SELECT old_event_id FROM review_legacy_links WHERE event_id=? AND old_event_id<>\'\' ORDER BY old_sequence,old_event_id').all(originalId) as Row[]).map(item => String(item.old_event_id));
     return { id: String(row.id), requestId: String(row.request_id), planId: String(row.plan_id), problemId: String(row.problem_id),
       kind: row.kind as ProblemReviewEvent['kind'], source: row.source as ProblemReviewEvent['source'], rating: Number(row.rating) as ReviewRating,
       effectiveRating: Number(effective?.effective_rating ?? row.rating) as ReviewRating, observedAt: String(row.observed_at), createdAt: String(row.created_at),
       learningDate: String(row.learning_date), timeZone: String(row.time_zone), correctsEventId: row.corrects_event_id as string | null,
       algorithmVersion: String(row.algorithm_version), attemptId: row.attempt_id as string | null, opportunityId: row.opportunity_id as string | null,
-      sourceDeleted: row.source_deleted === 1, isInitialAssessment: row.kind === 'review' && effective?.is_initial === 1, legacySourceEventIds: legacy };
+      sourceDeleted: row.source_deleted === 1, isInitialAssessment: row.kind === 'review' && effective?.is_initial === 1 };
   }
   getProblemReviewEvent(id: string): ProblemReviewEvent | undefined {
-    let row = this.db.prepare('SELECT * FROM problem_review_events WHERE id=?').get(id) as Row | undefined;
-    if (!row) row = this.db.prepare('SELECT e.* FROM problem_review_events e JOIN review_legacy_links l ON l.event_id=e.id WHERE l.old_event_id=? LIMIT 1').get(id) as Row | undefined;
+    const row = this.db.prepare('SELECT * FROM problem_review_events WHERE id=?').get(id) as Row | undefined;
     return row ? this.event(row) : undefined;
-  }
-  listProblemReviewEvents(idOrProblem: string): ProblemReviewEvent[] {
-    const plan = this.resolveProblemReview(idOrProblem); if (!plan) return [];
-    return (this.db.prepare('SELECT * FROM problem_review_events WHERE plan_id=? ORDER BY sequence').all(plan.id) as Row[]).map(row => this.event(row));
   }
   getProblemReviewRequest(requestId: string): ProblemReviewResult | null {
     text(requestId, '请求身份'); const row = this.db.prepare('SELECT event_id FROM problem_review_requests WHERE request_id=?').get(requestId) as Row | undefined;
@@ -148,9 +135,8 @@ export class ProblemReviewRepository {
   private schedule(planId: string, observations: Row[]) {
     const plan = this.db.prepare('SELECT * FROM problem_review_plans WHERE id=?').get(planId) as Row;
     if (plan.algorithm_version !== PROBLEM_FSRS_VERSION || String(plan.parameters_json) !== JSON.stringify(PROBLEM_FSRS_PARAMETERS)) throw new Error('不支持该复习算法或参数，历史未改变。');
-    if (!observations.length) return { card: null, anchor: plan.legacy_anchor as string | null };
-    const first = String(observations[0].observed_at);
-    const anchor = plan.legacy_anchor && String(plan.legacy_anchor) < first ? String(plan.legacy_anchor) : first;
+    if (!observations.length) return { card: null, anchor: null };
+    const anchor = String(observations[0].observed_at);
     let card = newReviewCard(anchor);
     for (const event of observations) {
       if (event.algorithm_version !== PROBLEM_FSRS_VERSION) throw new Error('不支持历史观察的算法版本。');
@@ -177,7 +163,7 @@ export class ProblemReviewRepository {
     learningDate: string; timeZone: string; source: 'manual' | 'official'; attemptId?: string | null; opportunityId?: string | null }): ProblemReviewResult {
     const prior = this.prior(input.requestId, input.hash); if (prior) return prior;
     const occupied = this.dayEvent(input.problemId, input.learningDate);
-    if (occupied) throw new Error(`这道题当天已有自评，请修改已有记录（${occupied}）。`);
+    if (occupied) throw new Error(`本题当天已有自评，请修改已有记录（${occupied}）。`);
     const plan = this.addProblemReview(input.problemId);
     this.validateAttempt(input.attemptId ?? undefined, input.problemId);
     const id = `review-${reviewDigest(input.requestId)}`, created = reviewTimestamp();
@@ -186,7 +172,7 @@ export class ProblemReviewRepository {
       VALUES (?,?,?,?,?,'review',?,?,?,?,?,?,NULL,?,?,?,?,?)`)
       .run(id, input.requestId, this.nextSequence(), plan.id, input.problemId, input.source, input.rating, input.observedAt, input.learningDate, input.timeZone, created,
         PROBLEM_FSRS_VERSION, input.attemptId ?? null, input.opportunityId ?? null, id, input.source === 'official' && input.attemptId === null ? 1 : 0);
-    this.db.prepare('INSERT INTO problem_review_day_assessments VALUES (?,?,?,?,0)').run(input.problemId, input.learningDate, input.timeZone, id);
+    this.db.prepare('INSERT INTO problem_review_day_assessments VALUES (?,?,?,?)').run(input.problemId, input.learningDate, input.timeZone, id);
     this.db.prepare('INSERT INTO problem_review_requests VALUES (?,?,?)').run(input.requestId, input.hash, id);
     this.replayProblemReview(input.problemId);
     this.db.prepare("UPDATE review_daily_ac_opportunities SET state='assessed',assessment_event_id=? WHERE problem_id=? AND learning_date=? AND state IN ('pending','claimed','skipped')")
@@ -213,15 +199,6 @@ export class ProblemReviewRepository {
       return this.writeObservation({ ...input, hash, observedAt, learningDate: draft?.learningDate ?? localDate(observedAt, timeZone), timeZone, source: 'manual' });
     });
   }
-  recordCompatibleReview(input: { requestId: string; itemId: string; rating: ReviewRating; reviewedAt?: string; attemptId?: string }): ProblemReviewResult {
-    text(input.requestId, '请求身份'); rating(input.rating);
-    return this.transaction(() => {
-      const hash = inputHash(input), prior = this.prior(input.requestId, hash); if (prior) return prior;
-      const plan = this.resolveProblemReview(input.itemId); if (!plan) throw new Error('复习计划不存在。');
-      const at = reviewTimestamp(input.reviewedAt), timeZone = this.settings().timeZone;
-      return this.writeObservation({ ...input, problemId: plan.problemId, hash, observedAt: at, learningDate: localDate(at, timeZone), timeZone, source: 'manual' });
-    });
-  }
   correctProblemReview(input: ProblemReviewCorrectionInput): ProblemReviewResult {
     fields(input, ['requestId', 'eventId', 'rating']); text(input.requestId, '请求身份'); text(input.eventId, '原评分身份'); rating(input.rating);
     return this.transaction(() => {
@@ -246,7 +223,7 @@ export class ProblemReviewRepository {
       acceptedAt: String(row.accepted_at), officialSubmissionId: String(row.official_submission_id), submissionRecordId: row.submission_record_id as string | null,
       attemptId: row.attempt_id as string | null, problemVersion: String(row.problem_version), codeHash: String(row.code_hash),
       state: row.state as ReviewOpportunity['state'], claimedAt: row.claimed_at as string | null, skippedAt: row.skipped_at as string | null,
-      assessmentEventId: row.assessment_event_id as string | null, sourceDeleted: row.source_deleted === 1, historicalBaseline: row.historical_baseline === 1, createdAt: String(row.created_at) };
+      assessmentEventId: row.assessment_event_id as string | null, sourceDeleted: row.source_deleted === 1, createdAt: String(row.created_at) };
   }
   private getOpportunity(id: string): ReviewOpportunity | null {
     const row = this.db.prepare('SELECT * FROM review_daily_ac_opportunities WHERE id=?').get(id) as Row | undefined;
@@ -268,7 +245,7 @@ export class ProblemReviewRepository {
     const items = (this.db.prepare(`SELECT * FROM review_daily_ac_opportunities ${condition} ORDER BY accepted_at DESC,id LIMIT ? OFFSET ?`).all(...values, bounds.limit, bounds.offset) as Row[]).map(row => this.opportunity(row));
     return pageResult(items, total, bounds);
   }
-  registerReviewAccepted(localRecordId: string, historical = false, historicalTimeZone?: string): ReviewOpportunity | null {
+  registerReviewAccepted(localRecordId: string): ReviewOpportunity | null {
     text(localRecordId, '官方记录身份');
     return this.transaction(() => {
       const previous = this.getReviewOpportunityForSubmission(localRecordId); if (previous) return previous;
@@ -276,18 +253,18 @@ export class ProblemReviewRepository {
       if (!row || row.status !== 'completed' || !row.submission_id || !row.finished_at) return null;
       const result = JSON.parse(String(row.result_json)); if (result?.status !== 'accepted') return null;
       if (!/^\d{1,30}$/.test(String(row.submission_id)) || reviewDigest(String(row.code)) !== row.code_hash) throw new Error('官方通过的可信快照无效。');
-      const acceptedAt = reviewTimestamp(String(row.finished_at)), timeZone = historicalTimeZone ?? this.settings().timeZone;
+      const acceptedAt = reviewTimestamp(String(row.finished_at)), timeZone = this.settings().timeZone;
       const day = localDate(acceptedAt, timeZone), problemId = String(row.problem_id);
       const occupied = this.db.prepare('SELECT * FROM review_daily_ac_opportunities WHERE problem_id=? AND learning_date=?').get(problemId, day) as Row | undefined;
       if (occupied) return this.opportunity(occupied);
-      const plan = historical ? this.getProblemReview(problemId) : this.addProblemReview(problemId);
-      const event = this.dayEvent(problemId, day), state = historical ? 'historical' : event ? 'assessed' : 'pending';
+      const plan = this.addProblemReview(problemId);
+      const event = this.dayEvent(problemId, day), state = event ? 'assessed' : 'pending';
       const id = `ac-${reviewDigest(`${problemId}\0${day}`)}`;
       this.db.prepare(`INSERT INTO review_daily_ac_opportunities
-        (id,plan_id,problem_id,learning_date,time_zone,accepted_at,official_submission_id,submission_record_id,attempt_id,problem_version,code_hash,state,claimed_at,skipped_at,assessment_event_id,historical_baseline,source_deleted,created_at)
-        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,NULL,NULL,?,?,0,?)`)
-        .run(id, plan?.id ?? null, problemId, day, timeZone, acceptedAt, row.submission_id, localRecordId, row.attempt_id, row.problem_version, row.code_hash,
-          state, state === 'assessed' ? event : null, Number(historical), reviewTimestamp());
+        (id,plan_id,problem_id,learning_date,time_zone,accepted_at,official_submission_id,submission_record_id,attempt_id,problem_version,code_hash,state,claimed_at,skipped_at,assessment_event_id,source_deleted,created_at)
+        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,NULL,NULL,?,0,?)`)
+        .run(id, plan.id, problemId, day, timeZone, acceptedAt, row.submission_id, localRecordId, row.attempt_id, row.problem_version, row.code_hash,
+          state, state === 'assessed' ? event : null, reviewTimestamp());
       return this.getOpportunity(id);
     });
   }
@@ -295,7 +272,7 @@ export class ProblemReviewRepository {
     text(id, '自评资格身份'); const claimedAt = reviewTimestamp(at);
     return this.transaction(() => {
       const opportunity = this.getOpportunity(id);
-      if (!opportunity || opportunity.state !== 'pending' || opportunity.claimedAt || opportunity.historicalBaseline) return null;
+      if (!opportunity || opportunity.state !== 'pending' || opportunity.claimedAt) return null;
       const existing = this.dayEvent(opportunity.problemId, opportunity.learningDate);
       if (existing) { this.db.prepare("UPDATE review_daily_ac_opportunities SET state='assessed',assessment_event_id=? WHERE id=?").run(existing, id); return null; }
       if (opportunity.learningDate !== localDate(claimedAt, this.settings().timeZone)) return null;
@@ -316,7 +293,7 @@ export class ProblemReviewRepository {
     return this.transaction(() => {
       const hash = inputHash({ operation: 'official', ...input }), prior = this.prior(input.requestId, hash); if (prior) return prior;
       const opportunity = this.getOpportunity(input.opportunityId);
-      if (!opportunity || opportunity.historicalBaseline) throw new Error('该记录不能新增官方通过自评。');
+      if (!opportunity) throw new Error('该记录不能新增官方通过自评。');
       if (opportunity.submissionRecordId) {
         const row = this.db.prepare('SELECT s.*,a.problem_id,a.problem_version FROM official_submissions s JOIN attempts a ON a.id=s.attempt_id WHERE s.id=?').get(opportunity.submissionRecordId) as Row | undefined;
         if (!row || row.status !== 'completed' || JSON.parse(String(row.result_json))?.status !== 'accepted' || row.submission_id !== opportunity.officialSubmissionId
@@ -337,7 +314,7 @@ export class ProblemReviewRepository {
   private assessmentContext(input: ProblemReviewPreviewInput, at?: string) {
     const source = input.source ?? 'manual'; const observed = reviewTimestamp(at), timeZone = this.settings().timeZone;
     if (source === 'official') { const opportunity = this.getOpportunity(input.opportunityId ?? '');
-      if (!opportunity || opportunity.problemId !== input.problemId || opportunity.historicalBaseline) throw new Error('官方自评资格无效。');
+      if (!opportunity || opportunity.problemId !== input.problemId) throw new Error('官方自评资格无效。');
       return { source, observedAt: opportunity.acceptedAt, learningDate: opportunity.learningDate, timeZone: opportunity.timeZone, original: null };
     }
     if (source === 'correction') { const original = this.getProblemReviewEvent(input.eventId ?? '');
@@ -364,7 +341,7 @@ export class ProblemReviewRepository {
     observations.sort((a, b) => String(a.observed_at).localeCompare(String(b.observed_at)) || String(a.stable_key).localeCompare(String(b.stable_key)));
     const schedule = this.schedule(plan.id, observations);
     const assessedId = context.original?.id ?? previewId;
-    const isInitialAssessment = !observations.some(row => row.source === 'legacy') && observations[0]?.id === assessedId;
+    const isInitialAssessment = observations[0]?.id === assessedId;
     return { problemId: plan.problemId, learningDate: context.learningDate, timeZone: context.timeZone, observedAt: context.observedAt,
       dueAt: schedule.card!.due, currentDueAt: plan.dueAt, isInitialAssessment,
       conflictEventId: context.original || this.dayEvent(plan.problemId, context.learningDate)===previewId ? null : this.dayEvent(plan.problemId, context.learningDate),
@@ -457,31 +434,8 @@ export class ProblemReviewRepository {
       const settings = this.settings(), at = reviewTimestamp(), day = localDate(at, settings.timeZone);
       const total = Number(this.db.prepare('SELECT COUNT(*) AS count FROM problem_review_events WHERE plan_id=?').get(plan.id)!.count);
       const events = (this.db.prepare('SELECT * FROM problem_review_events WHERE plan_id=? ORDER BY observed_at DESC,sequence DESC LIMIT ? OFFSET ?').all(plan.id, bounds.limit, bounds.offset) as Row[]).map(row => this.event(row));
-      const itemIds = (this.db.prepare('SELECT DISTINCT old_item_id FROM review_legacy_links WHERE plan_id=? ORDER BY old_item_id').all(plan.id) as Row[]).map(row => String(row.old_item_id));
-      const report = this.db.prepare('SELECT report_json FROM problem_review_migrations WHERE strategy=?').get(REVIEW_MERGE_STRATEGY);
-      const conflict = report ? JSON.parse(String(report.report_json)).conflicts.some((value: { problemId: string }) => value.problemId === problemId) : false;
-      const legacyTotal = Number(this.db.prepare("SELECT COUNT(*) AS count FROM review_legacy_links WHERE plan_id=? AND old_event_id<>''").get(plan.id)!.count);
-      const legacySources = (this.db.prepare(`SELECT e.*,i.target,i.language FROM review_legacy_links l
-        JOIN review_events e ON e.id=l.old_event_id JOIN review_items i ON i.id=e.item_id
-        WHERE l.plan_id=? AND l.old_event_id<>'' ORDER BY l.old_sequence DESC,e.id LIMIT ? OFFSET ?`).all(plan.id, bounds.limit, bounds.offset) as Row[]).map(row => ({
-          itemId: String(row.item_id), eventId: String(row.id), target: String(row.target), language: String(row.language),
-          kind: row.kind as 'review' | 'correction', rating: Number(row.rating) as ReviewRating, observedAt: String(row.reviewed_at), createdAt: String(row.created_at),
-          correctsEventId: row.corrects_event_id as string | null, algorithmVersion: String(row.algorithm_version), attemptId: row.attempt_id as string | null,
-        }));
-      // The legacy identity CHECK/UNIQUE admits at most concept + Python + Java: compact snapshots,
-      // not problem bodies or source code. Keep original due/parameters visible, not just their IDs.
-      const legacyPlans = (this.db.prepare('SELECT * FROM review_items WHERE problem_id=? ORDER BY target,language,id').all(problemId) as Row[]).map(row => ({
-        id: String(row.id), target: String(row.target), language: String(row.language), initialCard: JSON.parse(String(row.initial_card_json)),
-        card: JSON.parse(String(row.card_json)), algorithmVersion: String(row.algorithm_version), parameters: JSON.parse(String(row.parameters_json)),
-        dueAt: String(row.due_at), scheduledAt: row.scheduled_at as string | null, suspended: row.suspended === 1,
-        createdAt: String(row.created_at), updatedAt: String(row.updated_at),
-      }));
       return { plan, item: this.listItem(plan, at, day, settings.timeZone), events: pageResult(events, total, bounds),
-        legacySources: pageResult(legacySources, legacyTotal, bounds),
-        legacyPlans,
-        opportunities: this.reviewOpportunities({ problemId, limit: 100 }),
-        migration: { strategy: itemIds.length ? REVIEW_MERGE_STRATEGY : null, itemIds, conflict,
-          historicalObservations: Number(this.db.prepare("SELECT COUNT(*) AS count FROM problem_review_events WHERE plan_id=? AND kind='review' AND source='legacy'").get(plan.id)!.count) } };
+        opportunities: this.reviewOpportunities({ problemId, limit: 100 }) };
     });
   }
   private draft(row: Row): ReviewAssessmentDraft {
@@ -508,7 +462,7 @@ export class ProblemReviewRepository {
       if (current && input.expectedRevision !== current.revision) throw new Error('自评草稿已变化，请恢复最新版本。');
       if (current && (current.problemId !== input.problemId || current.source !== input.source || current.opportunityId !== (input.opportunityId ?? null)
         || current.eventId !== (input.eventId ?? null) || current.requestId !== input.requestId)) throw new Error('草稿的来源与请求身份不能改变。');
-      if (current?.resolvedEventId) throw new Error('这次自评已经保存，请查看结果。');
+      if (current?.resolvedEventId) throw new Error('本次自评已保存，请查看结果。');
       if (current?.submittedAt) {
         if (current.rating !== input.rating || input.submitted === false) throw new Error('已发送的自评不能改变评级，请查询原请求。');
         return current;
@@ -612,7 +566,7 @@ export class ProblemReviewRepository {
       const index = session.problemIds.indexOf(input.problemId);
       if (index < 0 || index > session.position) throw new Error('会话位置已变化，请重新读取当前题目。');
       if (index < session.position) return this.refreshSession(session);
-      if (!input.skipped && !this.dayEvent(input.problemId, localDate(reviewTimestamp(), this.settings().timeZone))) throw new Error('请先自评，或明确跳过这道题。');
+      if (!input.skipped && !this.dayEvent(input.problemId, localDate(reviewTimestamp(), this.settings().timeZone))) throw new Error('请先自评，或明确跳过本题。');
       const skipped = input.skipped ? [...new Set([...session.skippedProblemIds, input.problemId])] : session.skippedProblemIds;
       this.db.prepare('UPDATE review_sessions SET position=position+1,skipped_json=?,updated_at=? WHERE id=?').run(JSON.stringify(skipped), reviewTimestamp(), session.id);
       return this.refreshSession(this.session(this.db.prepare('SELECT * FROM review_sessions WHERE id=?').get(session.id) as Row));

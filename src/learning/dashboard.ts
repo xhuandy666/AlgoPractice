@@ -1,21 +1,17 @@
 import type { DatabaseSync } from 'node:sqlite';
 import { archiveDateBoundary } from '../shared/archive-date.ts';
-import type { LearningDashboard, LearningDay, LearningSettings, ReviewEvent, ReviewItem } from '../shared/learning.ts';
+import type { LearningDashboard, LearningDay, LearningSettings } from '../shared/learning.ts';
 import { localDate } from './fsrs.ts';
+import { attemptCompletionsSql } from './verdicts.ts';
 
 type Row = Record<string, string | number | null>;
 const DAY_MS = 86400000;
 function shiftDay(date: string, amount: number): string { return new Date(Date.parse(`${date}T12:00:00.000Z`) + amount * DAY_MS).toISOString().slice(0, 10); }
 
 /** Small daily aggregates only: no problem bodies, code, run output, or guessed historical time. */
-export function learningDashboard(db: DatabaseSync, settings: LearningSettings, reviewItems: () => ReviewItem[], month: string | undefined, at: string): LearningDashboard {
+export function learningDashboard(db: DatabaseSync, settings: LearningSettings, at: string): LearningDashboard {
   const date = localDate(at, settings.timeZone), from = shiftDay(date, -365), to = date;
-  month ??= date.slice(0, 7);
-  if (typeof month !== 'string' || !/^\d{4}-(0[1-9]|1[0-2])$/.test(month)) throw new Error('复习月份无效。');
-  const monthStart = `${month}-01`;
-  const nextMonth = new Date(`${month}-01T12:00:00.000Z`); nextMonth.setUTCMonth(nextMonth.getUTCMonth() + 1);
-  const monthEnd = nextMonth.toISOString().slice(0, 10);
-  const days: LearningDay[] = Array.from({ length: 366 }, (_, i) => ({ date: shiftDay(from, i), activeMs: 0, completedAttempts: 0, completedProblems: 0, reviewCount: 0 }));
+  const days: LearningDay[] = Array.from({ length: 366 }, (_, i) => ({ date: shiftDay(from, i), activeMs: 0, completedProblems: 0, reviewCount: 0 }));
   // Precompute 367 boundaries once. The SQL callback then performs only a binary search, not an Intl
   // format for every activity pulse. Local day lengths can be 23/25 hours or even zero after a zone jump.
   const boundaries = [...days.map(day => Date.parse(archiveDateBoundary(day.date, settings.timeZone))), Date.parse(archiveDateBoundary(date, settings.timeZone, true))];
@@ -42,25 +38,22 @@ export function learningDashboard(db: DatabaseSync, settings: LearningSettings, 
     UNION ALL SELECT last_day AS day_index, SUM(end_ms - dashboard_boundary(last_day)) AS duration
       FROM parts WHERE first_day <> last_day GROUP BY last_day`).all(boundaries[0], endMs, start, at) as Row[];
   for (const row of activity) if (days[Number(row.day_index)]) days[Number(row.day_index)].activeMs += Number(row.duration);
-  const completed = db.prepare(`SELECT dashboard_day_index(ended_at) AS day_index, COUNT(*) AS attempts, COUNT(DISTINCT problem_id) AS problems
-    FROM attempts WHERE ended_at >= ? AND ended_at <= ? GROUP BY day_index`).all(start, at) as Row[];
-  for (const row of completed) if (days[Number(row.day_index)]) Object.assign(days[Number(row.day_index)], { completedAttempts: Number(row.attempts), completedProblems: Number(row.problems) });
-  const completedProblems = Number(db.prepare('SELECT COUNT(DISTINCT problem_id) AS count FROM attempts WHERE ended_at >= ? AND ended_at <= ?').get(start, at)!.count);
+  // One pass over the completions: per-day distinct problems and the window's distinct total.
+  const perDay = new Map<number, Set<string>>(), everyProblem = new Set<string>();
+  for (const row of db.prepare(`SELECT dashboard_day_index(completed_at) AS day_index, problem_id
+    FROM (${attemptCompletionsSql()}) WHERE completed_at >= ? AND completed_at <= ?`).all(start, at) as Row[]) {
+    const problem = String(row.problem_id), dayIndex = Number(row.day_index);
+    everyProblem.add(problem); if (!perDay.has(dayIndex)) perDay.set(dayIndex, new Set()); perDay.get(dayIndex)!.add(problem);
+  }
+  for (const [dayIndex, problems] of perDay) if (days[dayIndex]) days[dayIndex].completedProblems = problems.size;
+  const completedProblems = everyProblem.size;
   const dates = new Map(days.map(day => [day.date, day]));
   for (const row of db.prepare(`SELECT learning_date AS date, COUNT(DISTINCT problem_id) AS count
     FROM problem_review_effective_events WHERE is_initial=0 AND learning_date>=? AND learning_date<=? AND observed_at<=?
     GROUP BY learning_date`).all(from, to, at) as Row[]) {
     const day = dates.get(String(row.date)); if (day) day.reviewCount = Number(row.count);
   }
-  const reviewEvents = (db.prepare(`SELECT * FROM problem_review_effective_events
-    WHERE learning_date>=? AND learning_date<? AND observed_at<=? ORDER BY observed_at,stable_key`).all(monthStart, monthEnd, at) as Row[]).map(row => ({
-      id: String(row.id), requestId: String(row.request_id), itemId: String(row.plan_id), kind: 'review' as const,
-      rating: Number(row.effective_rating) as ReviewEvent['rating'], reviewedAt: String(row.observed_at), createdAt: String(row.created_at),
-      correctsEventId: null, algorithmVersion: String(row.algorithm_version), attemptId: row.attempt_id as string | null,
-      learningDate: String(row.learning_date), isInitialAssessment: row.is_initial === 1,
-    }));
   return { date, timeZone: settings.timeZone, dailyPracticeGoal: settings.dailyPracticeGoal, from, to, days,
-    totals: { activeMs: days.reduce((total, day) => total + day.activeMs, 0), completedAttempts: days.reduce((total, day) => total + day.completedAttempts, 0),
-      completedProblems, activeDays: days.filter(day => day.activeMs > 0 || day.completedAttempts > 0 || day.reviewCount > 0).length },
-    reviewItems: reviewItems(), reviewEvents };
+    totals: { activeMs: days.reduce((total, day) => total + day.activeMs, 0),
+      completedProblems, activeDays: days.filter(day => day.activeMs > 0 || day.completedProblems > 0 || day.reviewCount > 0).length } };
 }

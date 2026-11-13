@@ -178,7 +178,7 @@ try {
   await panel.getByText('通过', { exact: true }).first().waitFor();
   pass('Pending to Accepted passes real IPC/SQLite; duplicate request ID sends one POST; numeric-string counts are retained independently of local results');
 
-  const ratingDialog = page.getByRole('dialog', { name: '这次通过时表现如何', exact: true });
+  const ratingDialog = page.getByRole('dialog', { name: '本次解答表现如何', exact: true });
   await ratingDialog.waitFor({ timeout: 20000 });
   assert.equal(await ratingDialog.locator('input[type="radio"]:checked').count(), 0, 'official Accepted is not an automatic mastery rating');
   await shot('official-first-accepted-rating.png');

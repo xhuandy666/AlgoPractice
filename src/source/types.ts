@@ -1,6 +1,5 @@
 import type { ProblemContent } from '../shared/library.ts';
 import type { ObjectValue } from './errors.ts';
-import type { OfficialLanguageSlug } from '../shared/languages.ts';
 
 export type SourceKind = 'study-plan' | 'public-list' | 'problem';
 export interface SourceReference { provider: 'leetcode-cn'; kind: SourceKind; slug: string; canonicalUrl: string; sourceKey: string; }
@@ -20,21 +19,12 @@ export interface SourcePlan {
   pagination: 'all-members-embedded-in-one-response' | 'offset-pages-verified';
   observation: Observation; observations?: Observation[]; visibility?: 'public' | 'private'; sourceRevision?: string;
 }
-export interface SourceProblemMetadata {
-  source: SourceReference; problem: ProblemReference;
-  fields: { statement: boolean; translatedStatement: boolean; functionMetadata: boolean; sampleCases: boolean };
-  functionSignature: { name: string | null; parameterTypes: string[]; returnType: string | null } | null;
-  templates: Array<{ language: OfficialLanguageSlug; characterCount: number; sha256: string }>;
-  observation: Observation;
-  limitation: 'metadata-only; no statement, sample text, or template body retained';
-}
 export interface SourceProblemContent {
   content: ProblemContent; reference: SourceReference; capability: 'link-only' | 'statement-only' | 'execution-only' | 'sample-verified';
   warnings: string[]; observation: Observation; rawMetadata: ObjectValue | null;
 }
 export interface SourceAdapter {
   fetchPlan(input: string | SourceReference, options?: FetchOptions): Promise<SourcePlan>;
-  fetchProblem(input: string | SourceReference, options?: FetchOptions): Promise<SourceProblemMetadata>;
 }
 export interface FetchOptions { signal?: AbortSignal; }
 export type ImportInput = { kind: 'url' | 'links' | 'csv' | 'json'; text: string; name?: string };

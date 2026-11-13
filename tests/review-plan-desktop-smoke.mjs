@@ -453,7 +453,7 @@ try {
   pass('Skewed renderer clocks, lost draft/freeze/assessment replies, failed clock/draft readbacks and full restart recover the original request without duplicate observations');
   await close(); await launch(join(directory, 'empty-data')); await nav('复习计划');
   const emptyReviews = page.getByRole('region', { name: '复习计划', exact: true });
-  await emptyReviews.getByRole('heading', { name: '还没有复习题目', exact: true }).waitFor();
+  await emptyReviews.getByRole('heading', { name: '暂无复习题目', exact: true }).waitFor();
   assert.equal((await api('reviewPlan', { view: 'all' })).summary.totalCount, 0);
   assert.equal(await emptyReviews.getByRole('button', { name: '开始今日复习', exact: true }).isDisabled(), true);
   assert.equal(await page.getByRole('dialog').count(), 0);

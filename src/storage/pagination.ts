@@ -17,4 +17,7 @@ export function searchText(value: string | undefined): string {
 export const literalLike = (value: string) => `%${value.replace(/[\\%_]/g, match => `\\${match}`)}%`;
 
 // ECMAScript String.trim whitespace; SQLite trim() alone removes only ASCII spaces.
+/** SQL: the snapshot's adapter (function or design) uses bigint anywhere, which C++ cannot run portably. Every text value
+ * in an adapter is a type except these names and markers, so the whole adapter tree is searched for both shapes. */
+export const SQL_ADAPTER_BIGINT = "EXISTS(SELECT 1 FROM json_tree(v.snapshot_json, '$.adapter') t WHERE t.type = 'text' AND t.value = 'bigint' AND COALESCE(t.key, '') NOT IN ('method', 'className', 'name', 'kind', 'end'))";
 export const SQL_TRIM_WHITESPACE = 'char(9,10,11,12,13,32,160,5760,8192,8193,8194,8195,8196,8197,8198,8199,8200,8201,8202,8232,8233,8239,8287,12288,65279)';

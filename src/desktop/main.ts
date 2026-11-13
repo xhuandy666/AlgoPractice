@@ -1,12 +1,14 @@
 import { OfficialService } from './official-service';
 import type { OfficialSubmitInput } from '../shared/official';
 import { setWindowsJobHelperPath } from '../runner/windows-job';
-import { startupFailure } from './startup-errors';
+import { isDatabaseCorruption, startupFailure } from './startup-errors';
+import { requestIntegrityCheck } from './database-health';
+import { openWithRecovery } from './database-recovery';
 import { InterviewService } from '../interview/service';
 import type { InterviewRules } from '../shared/interview';
 import { app, BrowserWindow, dialog, ipcMain, Menu, nativeImage, net, Notification, powerMonitor, protocol, session, shell, Tray } from 'electron';
 import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync, statSync } from 'node:fs';
-import { basename, extname, join, resolve, sep } from 'node:path';
+import { basename, extname, isAbsolute, join, resolve, sep } from 'node:path';
 import { createHash, randomUUID } from 'node:crypto';
 import { pathToFileURL } from 'node:url';
 import { DatabaseSync } from 'node:sqlite';
@@ -17,36 +19,41 @@ import { RuntimeManager } from '../runner/runtime-manager';
 import { runtimeCompilationRoot } from '../runner/runtime-paths';
 import { RunPreparations } from './run-preparation';
 import { selectPracticeFormat } from './practice-format';
-import { assertAnswerFormat, resolvePracticeSpec, defaultAcmTestConfig, validateAcmTestConfig, type AnswerFormat, type AcmTestConfig } from '../shared/answer-format';
+import { assertAnswerFormat, resolvePracticeSpec, defaultAcmTestConfig, nativeExpectedOutputSource, validateAcmTestConfig, type AnswerFormat, type AcmTestConfig } from '../shared/answer-format';
 import type { RuntimeState } from '../shared/runtime';
 import { PracticeStore, testConfigDigest, type JsonValue, type StoredRun } from '../storage/practice-store';
-import { LeetCodeCnSourceAdapter, parseSource, SourceError } from '../source/index';
+import { parseSource, SourceError } from '../source/index';
 import { demoProblems } from '../shared/demo-problems';
 import { demoContent, capability } from '../shared/presentation';
 import { LearningController } from './learning-controller';
-import { MaintenanceGate } from './maintenance-gate';
+import { MaintenanceGate, SAVE_CHANNELS } from './maintenance-gate';
 import type { SaveSubmissionRemarkInput, SubmissionHistoryFilter, SubmissionHistorySource } from '../shared/submission-history';
 import { recoverInterruptedRestore } from './backup-service';
 import type { ProblemPageFilter, NotePageFilter, AttemptPageFilter, RunPageFilter } from '../shared/learning';
 import type { Page, DraftOptions, RunOptions } from '../shared/bridge';
 import { ImportService } from './import-service';
+import { cachedMediaType } from './media-cache';
 import { SourceSession } from './source-session';
 import { createLogger } from './logger';
-import type { EnvironmentInfo, RunArchive, RuntimeProgress, WorkspaceData } from '../shared/bridge';
-import type { LibraryProblem, ImportJob } from '../shared/library';
+import { RendererRecovery } from './renderer-recovery';
+import { createFatalErrorHandlers } from './fatal-errors';
+import type { EnvironmentInfo, RunArchive, WorkspaceData } from '../shared/bridge';
+import type { ImportJob } from '../shared/library';
 import type { ImportInput } from '../source/index';
 import type { Language, RunResult } from '../runner/types';
 import { LANGUAGES, LANGUAGE_DETAILS, isLanguage, languageLabel } from '../shared/languages';
 
-// Keep the existing learning-data directory when the display name changes.
-app.setPath('userData', process.env.ALGOPRACTICE_DATA_DIR ? resolve(process.env.ALGOPRACTICE_DATA_DIR) : join(app.getPath('appData'), 'AlgoPractice'));
-// The internal name also identifies existing macOS Keychain credentials.
+// This version keeps its data in its own folder. Versions 0.x used appData/AlgoPractice; that folder (database, backups,
+// backup copies, credentials, runtimes) is never read, changed or removed.
+app.setPath('userData', process.env.ALGOPRACTICE_DATA_DIR ? resolve(process.env.ALGOPRACTICE_DATA_DIR) : join(app.getPath('appData'), 'TiLian'));
+// The internal name names the single-instance lock and the macOS Keychain entry.
 app.setName('AlgoPractice');
 const applicationIconPath = join(__dirname, 'assets', 'icon.png');
 app.setAboutPanelOptions({ applicationName: '题炼', applicationVersion: app.getVersion(), iconPath: applicationIconPath });
 app.setAppUserModelId('local.algopractice.desktop');
 if (process.platform === 'win32' && app.isPackaged) setWindowsJobHelperPath(join(process.resourcesPath, 'windows-job-helper.exe'));
 protocol.registerSchemesAsPrivileged([{ scheme: 'algopractice', privileges: { standard: true, secure: true, supportFetchAPI: true, corsEnabled: true } }]);
+const APP_URL = 'algopractice://app/index.html';
 let win: BrowserWindow;
 let tray: Tray;
 let store: PracticeStore;
@@ -62,6 +69,12 @@ let log: ReturnType<typeof createLogger> = () => {};
 let quitting = false;
 let readyToQuit = false;
 let closePending = false;
+const rendererRecovery = new RendererRecovery();
+/** Shown once the reloaded page has finished loading; null when there is nothing to explain. */
+let rendererNotice: string | null = null;
+let reloadWhenIdleTimer: ReturnType<typeof setInterval> | null = null;
+let crashPromptOpen = false;
+let unresponsivePrompt: AbortController | null = null;
 let activeRun: { id: string; identity: { problemId: string; language: Language; code: string; scopeId: string; version: string | undefined; optionsKey?: string }; controller: AbortController; promise: Promise<RunArchive> } | null = null;
 let runtimes: RuntimeManager;
 const preparations = new RunPreparations();
@@ -70,10 +83,41 @@ const runtimeChecks = new Map<Language, Promise<RuntimeState>>();
 const runtimeStateEpochs = new Map<Language, number>();
 let runtimeNotices: string[] = [];
 let reminderTimer: ReturnType<typeof setTimeout> | null = null;
-let config: { runtimes: Partial<Record<Language, string>>; reminder: { dueAt: string; deliveredAt?: string } | null; autoInstallRuntimes?: boolean; answerFormats?: Record<string, AnswerFormat> };
+let config: { runtimes: Partial<Record<Language, string>>; reminder: { dueAt: string; deliveredAt?: string } | null; autoInstallRuntimes?: boolean; answerFormats?: Record<string, AnswerFormat>;
+  /** Device-specific folder for copies of the automatic backups; never part of a backup. */
+  backupMirror?: { directory: string; installId: string };
+  /** Kept when copies are turned off, so turning them on again keeps managing (and pruning) the same copies. */
+  backupInstallId?: string };
 let configPath: string;
+// Registered after the state above exists. With a listener of the app's own, Electron no longer shows its default
+// stack-trace dialog and keeps running in an unknown state.
+const fatalErrors = createFatalErrorHandlers({
+  log: (event, fields) => log(event, fields),
+  quit: () => { if (!app.isReady()) throw new Error('The app is not ready.'); app.quit(); },
+  exit: code => {
+    try { store?.close(); } catch { /* WAL with synchronous=FULL keeps committed data without a clean close. */ }
+    try { dialog.showErrorBox('题炼遇到内部错误', '题炼未能正常退出，已强制结束。已保存的草稿、运行记录和学习数据均已保留，可重新打开继续使用。'); } catch { /* Exiting anyway. */ }
+    app.exit(code);
+  },
+});
+process.on('uncaughtException', (error, origin) => fatalErrors.uncaughtException(error, origin));
+process.on('unhandledRejection', reason => fatalErrors.unhandledRejection(reason));
+/** After the normal quit path finished: say what happened and let the user reopen the app. */
+function reportFatalExit() {
+  try {
+    const response = dialog.showMessageBoxSync({ type: 'error', title: '题炼遇到内部错误', message: '题炼遇到内部错误，已停止运行。',
+      detail: '已保存的草稿、运行记录和学习数据均已保留，可重新打开继续使用。如反复出现，请保留数据目录中的 logs 文件夹以便排查；日志只记录事件类型，不含代码、题目或 Key。',
+      buttons: ['重新打开', '退出'], defaultId: 0, cancelId: 1 });
+    if (response === 0) app.relaunch();
+  } catch { /* Exiting anyway. */ }
+}
 const jsonValue = (value: unknown): JsonValue => JSON.parse(JSON.stringify(value)) as JsonValue;
 function saveConfig(next = config) { const temporary = configPath + '.partial'; writeFileSync(temporary, JSON.stringify(next, null, 2), { mode: 0o600 }); renameSync(temporary, configPath); config = next; }
+/** config.json is hand-editable; anything but an absolute folder and an 8-hex install id means no copies. */
+function validMirrorSetting(value: unknown): { directory: string; installId: string } | null {
+  const setting = value as { directory?: unknown; installId?: unknown } | null | undefined;
+  return setting && typeof setting.directory === 'string' && isAbsolute(setting.directory) && typeof setting.installId === 'string' && /^[a-f0-9]{8}$/.test(setting.installId) ? { directory: setting.directory, installId: setting.installId } : null;
+}
 function languageValue(value: unknown): Language { if (!isLanguage(value)) throw new Error('仅支持 Python、Java、Go 或 C++。'); return value; }
 function idValue(value: unknown): string { if (typeof value !== 'string' || !value.trim() || value.length > 512 || value.includes('\0')) throw new Error('标识无效。'); return value; }
 function scopeValue(value: unknown): string { return value === undefined ? 'practice' : idValue(value); }
@@ -120,11 +164,7 @@ function publicJob(job: ImportJob) { return { ...job, input: '' }; }
 function workspace(id: string, language: Language, scope = 'practice', requested?: AnswerFormat): WorkspaceData {
   const format = selectedFormat(id, language, scope, requested);
   const current = problemValue(id); const attempt = store.getActiveAttempt(id, language, 'practice', scope, format) ?? null;
-  let problem = attempt ? store.getProblem(id, attempt.problemVersion) ?? current : current;
-  if (!problem.content.descriptionFormat) {
-    const legacy = demoProblems.find(p => p.id === id);
-    if (legacy) problem = { ...problem, content: { ...demoContent(legacy), ...problem.content } };
-  }
+  const problem = attempt ? store.getProblem(id, attempt.problemVersion) ?? current : current;
   const runs = attempt ? store.listRunPage({ attemptId: attempt.id, limit: 20 }) : null;
   const draft = store.getDraft(id, language, scope, format) ?? null;
   const spec = resolvePracticeSpec(problem.content, problem.version, format, draft?.testConfig ?? undefined);
@@ -136,6 +176,19 @@ function beginPractice(id: string, language: Language, scope = 'practice', forma
   if (!state.attempt) store.startAttempt({ problemId: id, language, problemVersion: state.problem.version, problemSnapshot: jsonValue(state.problem.content), draftScopeId: scope, answerFormat: state.spec!.answerFormat, specVersion: state.spec!.specVersion });
   return workspace(id, language, scope, state.spec!.answerFormat);
 }
+/** Identities stored with every run snapshot. Interview and practice runs must compute them the same way, or identical
+ * tests and drivers would look different. */
+function testSuiteVersion(problem: { cases: unknown; acmCompare?: unknown }): string {
+  return createHash('sha256').update(JSON.stringify([problem.cases, problem.acmCompare ?? 'normalized'])).digest('hex');
+}
+function adapterVersion(language: Language, problem: { adapter?: unknown }): string {
+  return createHash('sha256').update(JSON.stringify([language, runnerDriverVersion(language), problem.adapter ?? { mode: 'acm' }])).digest('hex');
+}
+/** Stored when the runner threw instead of returning a result; the code snapshot is already saved. */
+function runnerFailure(message: string, runtimeVersion: string): RunResult {
+  return { status: 'internal_error', diagnostics: [{ phase: 'run', source: 'runner', message }], stdout: '', stderr: '', caseResults: [], durationMs: 0,
+    runtimeVersion, hostPlatform: `${process.platform}-${process.arch}`, executionScope: 'local-user-code-not-sandboxed' };
+}
 function preparationIdentity(state: WorkspaceData, language: Language, code: string, scope: string) {
   return JSON.stringify([state.problem.id, state.problem.version, language, state.spec!.answerFormat, state.spec!.specVersion, scope, state.attempt?.id, state.attempt?.isActive, state.draft?.revision ?? 0, code, state.spec!.content.cases, state.spec!.content.acmCompare ?? 'normalized']);
 }
@@ -143,8 +196,8 @@ function toArchive(row: StoredRun): RunArchive {
   let testConfig: AcmTestConfig | undefined;
   if (row.answerFormat === 'acm') {
     const snapshot = row.testSnapshot as unknown as { cases?: AcmTestConfig['cases']; acmCompare?: AcmTestConfig['compare'] };
-    try { testConfig = validateAcmTestConfig({ version: 1, cases: Array.isArray(snapshot) ? snapshot : snapshot?.cases, compare: snapshot?.acmCompare ?? 'normalized' }); }
-    catch { /* Legacy snapshots may not contain enough evidence to compare current tests. */ }
+    try { testConfig = validateAcmTestConfig({ version: 1, cases: snapshot?.cases, compare: snapshot?.acmCompare ?? 'normalized' }); }
+    catch { /* A snapshot that is not a valid ACM test configuration has nothing to compare against. */ }
   }
   const result = row.status === 'interrupted' ? {
     status: 'interrupted', diagnostics: [{ phase: 'run', message: '应用中断，未取得完整结果。代码快照已保留。' }],
@@ -153,7 +206,7 @@ function toArchive(row: StoredRun): RunArchive {
   } : row.result;
   return { id: row.id, attemptId: row.attemptId, problemId: row.problemId, problemVersion: row.problemVersion, code: row.code, language: row.language, createdAt: row.createdAt,
     answerFormat: row.answerFormat, specVersion: row.specVersion, testConfigDigest: row.testConfigDigest,
-    testConfig,
+    testConfig, expectedOutputSource: row.expectedOutputSource,
     result: result as unknown as RunArchive['result'] };
 }
 function reveal(page?: Page) { if (win.isDestroyed()) return; win.show(); win.focus(); if (page) win.webContents.send('app:navigate', page); }
@@ -190,12 +243,91 @@ function trayImage() {
   if (process.platform === 'darwin') icon.setTemplateImage(true); return icon;
 }
 function trusted(event: Electron.IpcMainInvokeEvent | Electron.IpcMainEvent) {
-  if (event.sender !== win.webContents || event.senderFrame !== win.webContents.mainFrame || event.senderFrame?.url !== 'algopractice://app/index.html') throw new Error('IPC 来源无效。');
+  if (event.sender !== win.webContents || event.senderFrame !== win.webContents.mainFrame || event.senderFrame?.url !== APP_URL) throw new Error('IPC 来源无效。');
+}
+/** Everything below waited on the page that is gone; none of it can finish any more. True when a run was stopped. */
+function releaseRenderer(): boolean {
+  learning?.resetActivity();
+  preparations.cancel();
+  // A new page can neither reattach to a running job nor stop it; the run keeps its snapshot as cancelled.
+  const runStopped = Boolean(activeRun); activeRun?.controller.abort();
+  maintenanceAck?.reject(new Error('工作台意外退出，恢复已取消；请在重新打开后重试。'));
+  // A close the user asked for still hides the window; the page is reloaded behind it.
+  if (closePending) { closePending = false; if (!win.isDestroyed()) win.hide(); }
+  return runStopped;
+}
+function loadWorkbench() {
+  if (!win || win.isDestroyed() || quitting) return;
+  void win.loadURL(APP_URL).catch(() => log('renderer.reload-failed', { operation: 'load' }));
+}
+function reloadWhenIdle() {
+  if (reloadWhenIdleTimer) return;
+  reloadWhenIdleTimer = setInterval(() => {
+    if (maintenance.phase !== 'idle') return;
+    clearInterval(reloadWhenIdleTimer!); reloadWhenIdleTimer = null;
+    // A finished restore reloads the page itself.
+    if (!win.isDestroyed() && win.webContents.isCrashed()) loadWorkbench();
+  }, 500);
+}
+async function askAfterRepeatedCrashes() {
+  if (crashPromptOpen || win.isDestroyed()) return;
+  crashPromptOpen = true;
+  try {
+    // A message box without a parent window runs synchronously on macOS and would stall the main process.
+    win.show();
+    const { response } = await dialog.showMessageBox(win, { type: 'error', title: '工作台多次意外退出', message: '工作台在短时间内多次意外退出，已暂停自动重新打开。',
+      detail: '已保存的草稿、运行记录和学习数据均已保留。可重试；若仍然退出，请完全退出后重新打开题炼。', buttons: ['重新打开工作台', '完全退出'], defaultId: 0, cancelId: 1 });
+    if (response === 0) { if (maintenance.phase === 'idle') loadWorkbench(); else reloadWhenIdle(); }
+    else app.quit();
+  } finally { crashPromptOpen = false; }
+}
+function rendererGone(details: Electron.RenderProcessGoneDetails) {
+  const decision = rendererRecovery.gone({ quitting, windowDestroyed: win.isDestroyed(), maintenance: maintenance.phase !== 'idle' });
+  log('renderer.gone', { category: details.reason, result: decision.action });
+  if (decision.action === 'quit') { void stopAndQuit(); return; }
+  if (decision.action === 'ignore') return;
+  unresponsivePrompt?.abort(); unresponsivePrompt = null;
+  const runStopped = releaseRenderer();
+  if (decision.action === 'ask') { void askAfterRepeatedCrashes(); return; }
+  if (decision.notice) rendererNotice = `已保存的草稿、运行记录和学习数据均已保留；退出前几秒内的输入可能未保存。${runStopped ? '当时正在进行的运行已停止，可重新运行。' : ''}`;
+  if (decision.action === 'wait') reloadWhenIdle(); else loadWorkbench();
+}
+function rendererLoaded() {
+  const detail = rendererNotice; rendererNotice = null;
+  // Nobody was looking at a hidden window; there is nothing to explain.
+  if (!detail || win.isDestroyed() || !win.isVisible()) return;
+  void dialog.showMessageBox(win, { type: 'warning', title: '工作台已重新打开', message: '工作台意外退出，已自动重新打开。', detail, buttons: ['确定'] });
+}
+function rendererUnresponsive() {
+  if (unresponsivePrompt || quitting || win.isDestroyed()) return;
+  const prompt = new AbortController(); unresponsivePrompt = prompt;
+  log('renderer.unresponsive', {});
+  void dialog.showMessageBox(win, { signal: prompt.signal, type: 'warning', title: '工作台暂时无响应', message: '可继续等待、重新打开工作台，或停止任务并退出。',
+    detail: '重新打开或退出均会保留已保存的草稿与运行快照；最近几秒内的输入可能未保存。', buttons: ['继续等待', '重新打开工作台', '停止并退出'], defaultId: 0, cancelId: 0 }).then(({ response }) => {
+    if (unresponsivePrompt === prompt) unresponsivePrompt = null;
+    if (prompt.signal.aborted || win.isDestroyed()) return;
+    // The forced crash arrives as render-process-gone, which releases the old page's work and reloads.
+    if (response === 1) { rendererRecovery.expectReload(); win.webContents.forcefullyCrashRenderer(); }
+    else if (response === 2) { quitting = true; void stopAndQuit(); }
+  });
 }
 function handle(channel: string, handler: (...args: unknown[]) => unknown) { ipcMain.handle(channel, async (event, ...args) => {
-  trusted(event); if (quitting && !['draft:save', 'note:save', 'interview:save', 'submission:save-remark', 'problem-review:save-draft', 'problem-review:draft', 'problem-review:request', 'problem-review:time'].includes(channel)) throw new Error('应用正在退出。');
-  try { interviews?.assertChannel(channel, args); const epoch = interviews?.epoch ?? 0; const result = await maintenance.run(channel, () => handler(...args)); interviews?.assertResponse(channel, args, epoch); if (/^(note:|archive:|submission:|app:open|source:open)/.test(channel)) interviews?.recordHelp(channel, typeof args[0] === 'string' ? args[0].slice(0,512) : null); return result; } catch (error) { log('ipc.failed', { operation: channel, category: error instanceof SourceError ? error.code : error instanceof Error ? error.name : 'Error' }); throw error; }
+  trusted(event); if (quitting && !SAVE_CHANNELS.includes(channel)) throw new Error('应用正在退出。');
+  try { interviews?.assertChannel(channel, args); const epoch = interviews?.epoch ?? 0; const result = await maintenance.run(channel, () => handler(...args)); interviews?.assertResponse(channel, args, epoch); if (/^(note:|archive:|submission:|app:open|source:open)/.test(channel)) interviews?.recordHelp(channel, typeof args[0] === 'string' ? args[0].slice(0,512) : null); return result; } catch (error) { log('ipc.failed', { operation: channel, category: error instanceof SourceError ? error.code : error instanceof Error ? error.name : 'Error' }); if (isDatabaseCorruption(error)) databaseDamaged(channel); throw error; }
 }); }
+let damageNoticeShown = false;
+/** SQLite reported damage in the live database while the app was running. The next start checks the whole file before
+ * using it; until then everything keeps working as far as SQLite allows. */
+function databaseDamaged(operation: string) {
+  log('database.damage-reported', { operation });
+  try { requestIntegrityCheck(app.getPath('userData')); } catch { log('database.check-request-failed', { operation }); }
+  // Once per run, and only on a window the user is looking at; otherwise the next start's check is enough.
+  if (damageNoticeShown || quitting || !win || win.isDestroyed() || !win.isVisible()) return;
+  damageNoticeShown = true;
+  void dialog.showMessageBox(win, { type: 'error', title: '数据文件可能已损坏', message: '读取学习数据时，SQLite 报告数据库文件已损坏。',
+    detail: '建议重新启动题炼：启动时会完整检查数据文件；如确有损坏，可用最近的备份恢复，损坏的文件会先复制保留。在此之前，部分记录可能无法读取或保存。',
+    buttons: ['重新启动', '稍后'], defaultId: 0, cancelId: 1 }).then(({ response }) => { if (response === 0) { app.relaunch(); app.quit(); } });
+}
 async function stopAndQuit() {
   preparations.cancel(); activeRun?.controller.abort(); runtimes?.cancelAll();
   if (interviewTimer) clearInterval(interviewTimer);
@@ -217,7 +349,12 @@ else {
     if (!win || win.isDestroyed() || win.webContents.isCrashed() || win.webContents.isDestroyed()) { void stopAndQuit(); return; }
     closePending = true; win.webContents.send('app:closing');
   });
-  app.on('will-quit', () => { tray?.destroy(); store?.close(); });
+  app.on('will-quit', () => {
+    fatalErrors.settled();
+    tray?.destroy();
+    try { store?.close(); } catch { log('store.close-failed', { operation: 'quit' }); }
+    if (fatalErrors.fatal) reportFatalExit();
+  });
   app.on('activate', () => { if (win) reveal(); });
   void app.whenReady().then(async () => {
     // Packaged macOS apps use the signed bundle icon; source runs use Electron's Dock.
@@ -228,8 +365,21 @@ else {
     config = existsSync(configPath) ? JSON.parse(readFileSync(configPath, 'utf8')) : { runtimes: {}, reminder: null };
     if (!config || typeof config.runtimes !== 'object') throw new Error('设置文件不可读取；请保留文件以便恢复。');
     await recoverInterruptedRestore(dataDirectory);
-    store = new PracticeStore(join(dataDirectory, 'practice.sqlite')); const interrupted = store.recoverInterruptedRuns(); store.recoverImportJobs();
-    for (const demo of demoProblems) if (!store.getProblem(demo.id)) store.upsertProblem(demoContent(demo));
+    let interrupted = 0;
+    const opened = await openWithRecovery({ dataDirectory, appVersion: app.getVersion(), inspectSnapshot: PracticeStore.inspectBackupSnapshot, log,
+      open: () => {
+        const candidate = new PracticeStore(join(dataDirectory, 'practice.sqlite'));
+        try {
+          interrupted = candidate.recoverInterruptedRuns(); candidate.recoverImportJobs();
+          for (const demo of demoProblems) if (!candidate.getProblem(demo.id)) candidate.upsertProblem(demoContent(demo));
+          return candidate;
+        } catch (error) { candidate.close(); throw error; }
+      },
+      close: candidate => candidate.close(),
+      // The window does not exist yet; nothing else runs while this (on macOS synchronous) message box is open.
+      ask: async prompt => (await dialog.showMessageBox({ type: 'error', title: prompt.title, message: prompt.message, detail: prompt.detail, buttons: prompt.buttons, defaultId: prompt.defaultId, cancelId: prompt.cancelId, noLink: true })).response });
+    if ('quit' in opened) { readyToQuit = true; app.quit(); return; }
+    store = opened.store;
     sourceSession = new SourceSession();
     official = new OfficialService(store, sourceSession.officialJudge, { onUpdate: record => { if (win && !win.isDestroyed() && maintenance.phase === 'idle') { win.webContents.send('official:event', record); changed(); learning?.officialCompleted(record); } } });
     official.recover();
@@ -251,7 +401,7 @@ else {
       if (url.hostname === 'app' && request.method === 'GET' && /^\/media\/[a-f0-9]{64}$/.test(url.pathname)) {
         const imagePath = join(dataDirectory, 'media', url.pathname.slice('/media/'.length));
         if (!existsSync(imagePath)) return new Response('Not found', { status: 404 });
-        const bytes = readFileSync(imagePath); const mime = bytes[0] === 137 ? 'image/png' : bytes[0] === 255 ? 'image/jpeg' : bytes.toString('ascii', 0, 3) === 'GIF' ? 'image/gif' : 'image/webp';
+        const bytes = readFileSync(imagePath), mime = cachedMediaType(bytes).mime;
         return new Response(bytes, { headers: { 'Content-Type': mime, 'Cache-Control': 'public, max-age=31536000, immutable', 'X-Content-Type-Options': 'nosniff' } });
       }
       const target = resolve(rendererRoot, '.' + decodeURIComponent(url.pathname));
@@ -266,11 +416,11 @@ else {
     win.on('blur', () => learning?.resetActivity());
     win.on('hide', () => learning?.resetActivity());
     win.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
-    win.webContents.on('will-navigate', (event, url) => { if (url !== 'algopractice://app/index.html') event.preventDefault(); });
-    win.webContents.on('render-process-gone', () => { if (quitting) void stopAndQuit(); });
-    win.on('unresponsive', () => {
-      void dialog.showMessageBox(win, { type: 'warning', title: '工作台暂时没有响应', message: '可以继续等待，或停止任务并退出。退出会保留已保存的草稿与运行快照。', buttons: ['继续等待', '停止并退出'], defaultId: 0, cancelId: 0 }).then(({ response }) => { if (response === 1) { quitting = true; void stopAndQuit(); } });
-    });
+    win.webContents.on('will-navigate', (event, url) => { if (url !== APP_URL) event.preventDefault(); });
+    win.webContents.on('render-process-gone', (_event, details) => rendererGone(details));
+    win.webContents.on('did-finish-load', rendererLoaded);
+    win.on('unresponsive', rendererUnresponsive);
+    win.on('responsive', () => { unresponsivePrompt?.abort(); unresponsivePrompt = null; });
     win.on('close', event => {
       if (readyToQuit) return;
       event.preventDefault(); if (maintenance.phase !== 'idle') return;
@@ -279,7 +429,9 @@ else {
     });
     ipcMain.on('app:close-ready', event => { trusted(event); if (!closePending) return; closePending = false; if (quitting) void stopAndQuit(); else win.hide(); });
     ipcMain.on('app:maintenance-ready', (event, requestId, error) => { trusted(event); const ack = maintenanceAck; if (!ack || ack.id !== requestId) return; if (error) ack.reject(new Error('草稿未能完整保存，恢复已取消。')); else ack.resolve(); });
-    learning = new LearningController({ dataDirectory, version: app.getVersion(), window: win, store: () => store, handle, changed, reveal, interviewContext: context => interviews?.assertAiContext(context) ?? context, isIdle: () => !quitting && maintenance.phase === 'idle', allowAutomaticAi: () => !interviews?.starting && !interviews?.active(), allowReviewPrompt: () => !closePending && !interviews?.starting && !interviews?.active(), log,
+    learning = new LearningController({ dataDirectory, version: app.getVersion(), window: win, store: () => store, handle, changed, onDatabaseError: (error, operation) => { if (isDatabaseCorruption(error)) databaseDamaged(operation); },
+      backupMirror: { get: () => validMirrorSetting(config.backupMirror), installId: () => validMirrorSetting(config.backupMirror)?.installId ?? (/^[a-f0-9]{8}$/.test(config.backupInstallId ?? '') ? config.backupInstallId! : null),
+        set: value => { const { backupMirror: previous, ...rest } = config; const installId = value?.installId ?? validMirrorSetting(previous)?.installId ?? rest.backupInstallId; saveConfig({ ...rest, ...(value ? { backupMirror: value } : {}), ...(installId ? { backupInstallId: installId } : {}) }); } }, reveal, interviewContext: context => interviews?.assertAiContext(context) ?? context, isIdle: () => !quitting && maintenance.phase === 'idle', allowAutomaticAi: () => !interviews?.starting && !interviews?.active(), allowReviewPrompt: () => !closePending && !interviews?.starting && !interviews?.active(), log,
       lifecycle: {
         hasActiveInterview: () => Boolean(interviews?.active()),
         enterMaintenance: async () => {
@@ -297,15 +449,17 @@ else {
         closeDatabase: () => store.close(),
         openDatabase: () => { const reopened = new PracticeStore(join(dataDirectory, 'practice.sqlite')); try { reopened.integrityCheck(); store = reopened; official.rebind(store); official.recover(); importer = new ImportService(store, sourceSession.adapter, join(dataDirectory, 'media'), changed, log); learning.rebind(); } catch (error) { reopened.close(); throw error; } },
         clearCredentials: async () => { await learning.clearCredentials(); await sourceSession.clear(); },
-        leaveMaintenance: async restored => { maintenance.release(); await learning.resume(); if (restored) { await win.loadURL('algopractice://app/index.html'); } else win.webContents.send('app:maintenance-end'); },
+        leaveMaintenance: async restored => { maintenance.release(); await learning.resume(); if (restored) { await win.loadURL(APP_URL); } else win.webContents.send('app:maintenance-end'); },
       },
     });
     interviews = new InterviewService({ store: () => store, changed, beforeStart: async pool => {
       preparations.cancel();
-      if (runtimes.busy || activeRun || learning.backups.status().busy) throw new Error('请先等待运行、安装或备份结束。');
-      await official.pause(); await learning.ai.stopAll(); await importer.stop(); sourceSession.close();
+      const requireIdle = () => { if (runtimes.busy || activeRun || learning.backups.status().busy) throw new Error('请先等待运行、安装或备份结束。'); };
+      requireIdle();
       const runtime = await inspectSelectedRuntime(pool.rules.language);
       if (runtime.status !== 'ready') throw new Error('面试运行时未就绪，请先在运行环境中准备对应语言。');
+      requireIdle();
+      await official.pause(); await learning.ai.stopAll(); await importer.stop(); sourceSession.close();
     } });
     interviewTimer = setInterval(() => { try { if (maintenance.phase === 'idle') interviews.tick(); } catch { log('interview.tick-failed', { operation: 'deadline' }); } }, 250);
     powerMonitor.on('resume', () => { try { interviews.tick(true); } catch { log('interview.resume-failed', { operation: 'deadline' }); } });
@@ -351,10 +505,10 @@ else {
         const runtime = await inspectSelectedRuntime(language, controller.signal);
         if (controller.signal.aborted || runtime.status !== 'ready') throw new Error('面试运行环境未就绪；答案已保留，请检查运行环境。');
         interviews.runTarget(sessionId, problemKey, supplement);
-        const stored=store.saveRun({id:runId,attemptId:item.attemptId,code,testSuiteVersion:createHash('sha256').update(JSON.stringify([problem.cases,problem.acmCompare??'normalized'])).digest('hex'),testSnapshot:jsonValue({cases:problem.cases,acmCompare:problem.acmCompare??'normalized',interviewSupplement:supplement}),adapterVersion:createHash('sha256').update(JSON.stringify([language,runnerDriverVersion(language),problem.adapter??{mode:'acm'}])).digest('hex'),runtimeVersion:runtime.runtimeVersion});
+        const stored=store.saveRun({id:runId,attemptId:item.attemptId,code,testSuiteVersion:testSuiteVersion(problem),testSnapshot:jsonValue({cases:problem.cases,acmCompare:problem.acmCompare??'normalized',interviewSupplement:supplement}),expectedOutputSource:nativeExpectedOutputSource(problem.cases),adapterVersion:adapterVersion(language,problem),runtimeVersion:runtime.runtimeVersion});
         let result:RunResult;
         try { result=await runCode({language,code,mode:problem.mode,adapter:problem.adapter,cases:problem.cases,acmCompare:problem.acmCompare,runtimePath:runtime.executable,timeoutMs:10000,outputLimitBytes:1048576},{signal:controller.signal,runId,runtimeRoot:compilationRootFor(language,runtime.executable),onEvent:event=>{if(!win.isDestroyed())win.webContents.send('runner:event',event);}}); }
-        catch { result={status:'internal_error',diagnostics:[{phase:'run',source:'runner',message:'运行未完成，快照已经保存。'}],stdout:'',stderr:'',caseResults:[],durationMs:0,runtimeVersion:'unknown',hostPlatform:`${process.platform}-${process.arch}`,executionScope:'local-user-code-not-sandboxed'}; }
+        catch { result=runnerFailure('运行未完成，快照已经保存。','unknown'); }
         const row=store.finishRun(stored.id,{status:result.status,result:jsonValue(result),runtimeVersion:result.runtimeVersion});interviews.tick();changed();return toArchive(row);
       })().finally(()=>{release();if(activeRun?.id===runId)activeRun=null;});
       activeRun={id:runId,identity:{problemId:problemKey,language,code,scopeId:item.scopeId,version:item.problem.version},controller,promise};return promise;
@@ -379,7 +533,7 @@ else {
         installation: tasks[0] ? { language: tasks[0].language, progress: installations[tasks[0].language].progress } : null,
         installations, runtimeStates: byLanguage, autoInstallRuntimes: config.autoInstallRuntimes === true } satisfies EnvironmentInfo;
     });
-    handle('library:index', () => { const page = store.listProblemPage({ limit: 4 }); return { problems: page.items, totalProblems: page.total, lists: store.listLists(), jobs: store.listImportJobs().map(publicJob) }; });
+    handle('library:index', () => { const page = store.listProblemPage({ limit: 4 }); return { problems: page.items, totalProblems: page.total, lists: store.listLists(), jobs: store.listImportJobs().map(publicJob), progress: store.listProgress() }; });
     handle('library:page', filter => store.listProblemPage(filter as ProblemPageFilter));
     handle('note:page', filter => store.listNotePage(filter as NotePageFilter));
     handle('archive:page', filter => store.listAttemptPage(filter as AttemptPageFilter));
@@ -396,7 +550,7 @@ else {
       const key = idValue(id); const result = beginPractice(key, languageValue(lang), scopeValue(scope), formatValue(format)); const selected = result.spec!.answerFormat;
       preparations.cancel(); if (scopeValue(scope) === 'practice') saveConfig({ ...config, answerFormats: { ...config.answerFormats, [key]: selected } }); return result;
     });
-    handle('practice:finish', (id, code) => { preparations.cancel(); learning.ai.cancelAttempt(idValue(id)); const result = store.finishAttempt(idValue(id), { code: codeValue(code) }); changed(); return result; });
+    handle('practice:finish', (id, code) => { preparations.cancel(); learning.ai.cancelAttempt(idValue(id)); const result = store.finishAttempt(idValue(id), { code: codeValue(code) }); changed(); return { ...result, ...store.attemptCompletion(result.id) }; });
     handle('draft:load', (id, lang, scope, format) => store.getDraft(problemValue(id).id, languageValue(lang), scopeValue(scope), selectedFormat(idValue(id), languageValue(lang), scopeValue(scope), format)) ?? null);
     handle('draft:save', (id, lang, code, scope, input) => {
       if (input !== undefined && (!input || typeof input !== 'object' || Array.isArray(input))) throw new Error('草稿选项无效。');
@@ -405,11 +559,6 @@ else {
       return store.saveDraft({ problemId: key, language, code: codeValue(code), scopeId, answerFormat: state.spec!.answerFormat, specVersion: state.spec!.specVersion, testConfig: options.testConfig, expectedRevision: options.expectedRevision });
     });
     handle('run:history', (id, lang, scope) => workspace(idValue(id), languageValue(lang), scopeValue(scope)).history);
-    handle('archive:list', () => store.listAttempts().map(attempt => {
-      const runs = store.listRuns(attempt.id); const last = runs.filter(run => run.status !== 'queued').at(-1);
-      const snapshot = attempt.problemSnapshot as { title?: string } | null;
-      return { attempt, title: snapshot?.title || store.getProblem(attempt.problemId)?.content.title || attempt.problemId, runCount: runs.length, lastStatus: last?.status ?? null, activeMs: store.getArchiveStatistics({ attemptId: attempt.id }).activeMs, helpLevel: store.listAIRequests(attempt.id).filter(request => request.status === 'completed').map(request => request.snapshot.level ?? 'adaptive').sort().at(-1) ?? null };
-    }));
     handle('archive:get', id => { const attempt = store.getAttempt(idValue(id)); if (!attempt) throw new Error('练习档案不存在。'); return { attempt, runs: store.listRuns(attempt.id).filter(run => run.status !== 'queued').map(toArchive), aiRequests: store.listAIRequests(attempt.id), noteVersions: store.getAttemptNoteVersions(attempt.id), activeMs: store.getArchiveStatistics({ attemptId: attempt.id }).activeMs }; });
     handle('archive:restore', (id, request) => { const restored = store.restoreRunAsDraft(idValue(id), { requestId: idValue(request) }); changed(); return restored; });
     handle('import:preview', input => importer.prepare(input as ImportInput));
@@ -498,8 +647,8 @@ else {
         const state = beginPractice(problemId, language, scopeId, format); const problem = state.spec!.content; const attempt = state.attempt!;
         const executable = inspection.executable;
         const testsDigest = format === 'acm' ? testConfigDigest(state.draft?.testConfig ?? defaultAcmTestConfig(state.problem.content)) : null;
-        const snapshot = { id: runId, attemptId: attempt.id, code, testSuiteVersion: createHash('sha256').update(JSON.stringify([problem.cases, problem.acmCompare ?? 'normalized'])).digest('hex'),
-          testSnapshot: jsonValue({ cases: problem.cases, acmCompare: problem.acmCompare ?? 'normalized', answerFormat: format, specVersion: state.spec!.specVersion, testConfigDigest: testsDigest, expectedOutputSource: state.spec!.expectedOutputSource }), adapterVersion: createHash('sha256').update(JSON.stringify([language, runnerDriverVersion(language), problem.adapter ?? { mode: 'acm' }])).digest('hex'), runtimeVersion: inspection.runtimeVersion, answerFormat: format, specVersion: state.spec!.specVersion, testConfigDigest: testsDigest ?? undefined };
+        const snapshot = { id: runId, attemptId: attempt.id, code, testSuiteVersion: testSuiteVersion(problem),
+          testSnapshot: jsonValue({ cases: problem.cases, acmCompare: problem.acmCompare ?? 'normalized', answerFormat: format, specVersion: state.spec!.specVersion, testConfigDigest: testsDigest }), expectedOutputSource: state.spec!.expectedOutputSource, adapterVersion: adapterVersion(language, problem), runtimeVersion: inspection.runtimeVersion, answerFormat: format, specVersion: state.spec!.specVersion, testConfigDigest: testsDigest ?? undefined };
         const currentDraft = store.getDraft(problemId, language, scopeId, format);
         // A delayed run request must never replace a newer autosaved draft.
         const stored = !currentDraft || currentDraft.code === code ? store.beginRun({ ...snapshot, scopeId }) : store.saveRun(snapshot);
@@ -509,8 +658,7 @@ else {
           result = await runCode({ language, code, mode: problem.mode, adapter: problem.adapter, cases: problem.cases, acmCompare: problem.acmCompare, runtimePath: executable, timeoutMs: 10000, outputLimitBytes: 1048576 },
             { signal: controller.signal, runId, runtimeRoot: compilationRootFor(language, executable), onEvent: event => { if (!win.isDestroyed()) win.webContents.send('runner:event', event); } });
         } catch {
-          result = { status: 'internal_error', diagnostics: [{ phase: 'run', source: 'runner', message: '运行器未正常返回结果；代码快照已保存。' }], stdout: '', stderr: '', caseResults: [], durationMs: 0,
-            runtimeVersion: versionText, hostPlatform: `${process.platform}-${process.arch}`, executionScope: 'local-user-code-not-sandboxed' };
+          result = runnerFailure('运行器未正常返回结果；代码快照已保存。', versionText);
         }
         if (result.status === 'environment_error') invalidateRuntimeState(language);
         const archive = toArchive(store.finishRun(stored.id, { status: result.status, result: jsonValue(result), runtimeVersion: versionText }));
@@ -530,7 +678,7 @@ else {
       const language = languageValue(value), details = await runtimes.details(language);
       guardEnvironmentMutation(language);
       if (!details.managed.canUninstall) throw new Error('此托管环境正在使用或需要恢复，暂不能卸载。');
-      const result = await dialog.showMessageBox(win, { type: 'warning', title: '卸载托管环境', message: `仅卸载题炼管理的 ${languageLabel(language)} 环境？`, detail: '代码、题目、学习记录和你自行安装的环境不会删除。以后可以重新下载安装。', buttons: ['取消', '卸载'], defaultId: 0, cancelId: 0 });
+      const result = await dialog.showMessageBox(win, { type: 'warning', title: '卸载托管环境', message: `仅卸载题炼管理的 ${languageLabel(language)} 环境？`, detail: '代码、题目、学习记录及自行安装的环境不会删除，之后可重新下载安装。', buttons: ['取消', '卸载'], defaultId: 0, cancelId: 0 });
       if (result.response !== 1) return;
       guardEnvironmentMutation(language);
       await runtimes.uninstall(language);
@@ -568,17 +716,12 @@ else {
     });
     handle('reminder:schedule', value => { if (typeof value !== 'number' || !Number.isInteger(value) || value < 1 || value > 3600) throw new Error('提醒时间应在 1 到 3600 秒之间。'); saveConfig({ ...config, reminder: { dueAt: new Date(Date.now() + value * 1000).toISOString() } }); armReminder(); });
     handle('reminder:clear', () => { saveConfig({ ...config, reminder: null }); armReminder(); });
-    handle('source:probe', async value => {
-      if (typeof value !== 'string' || value.length > 2048) throw new Error('链接格式无效。');
-      try { const reference = parseSource(value); const adapter = sourceSession.adapter; return await (reference.kind === 'problem' ? adapter.fetchProblem(reference) : adapter.fetchPlan(reference)); }
-      catch (error) { if (error instanceof SourceError) return { error: error.toJSON() }; throw error; }
-    });
     handle('source:open', value => { if (typeof value !== 'string') throw new Error('链接格式无效。'); return shell.openExternal(parseSource(value).canonicalUrl); });
     powerMonitor.on('suspend', () => learning.resetActivity());
     powerMonitor.on('suspend', () => { try { interviews.suspend(); } catch { log('interview.suspend-failed', { operation: 'deadline' }); } });
     powerMonitor.on('resume', () => { learning.resetActivity(); if (maintenance.phase === 'idle') void learning.reminders.tick('resume'); if (config.reminder && new Date(config.reminder.dueAt).getTime() <= Date.now()) deliverReminder(); else armReminder(); });
     armReminder();
-    await win.loadURL('algopractice://app/index.html');
+    await win.loadURL(APP_URL);
     await learning.start();
   }).catch(error => { const failure = startupFailure(error, app.getPath('userData')); log('app.startup-failed', { category: failure.kind }); dialog.showErrorBox(failure.title, failure.message); readyToQuit = true; app.quit(); });
 }

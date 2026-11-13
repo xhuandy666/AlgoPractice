@@ -2,6 +2,7 @@ import { createHash } from 'node:crypto';
 import type { Adapter, TestCase, ValueType } from '../runner/types.ts';
 import { observedType, validateType } from '../runner/values.ts';
 import type { ProblemContent } from '../shared/library.ts';
+import { ACM_CASE_LIMIT, ACM_TEST_BYTES_LIMIT, acmCaseBytes } from '../shared/answer-format.ts';
 import { checkCancelled, nonempty, record, SourceError, type ObjectValue } from './errors.ts';
 import { parseSource } from './identify.ts';
 import { parseLosslessJSON } from './json.ts';
@@ -59,9 +60,17 @@ function fileAdapter(value: unknown): Adapter {
 function fileCases(value: unknown, mode: 'function' | 'acm', adapter?: Adapter): TestCase[] {
   if (value === undefined) return [];
   if (!Array.isArray(value) || value.length > 100) return invalid('cases 必须为最多 100 项的数组。');
+  if (mode === 'acm' && value.length > ACM_CASE_LIMIT) return invalid(`ACM 题最多 ${ACM_CASE_LIMIT} 组用例。`);
+  let acmBytes = 0;
   return value.map((entry, i) => {
     const test = record(entry); if (!test) return invalid(`用例 ${i + 1} 必须为对象。`);
-    if (mode === 'acm') { if (test.args !== undefined) return invalid('ACM 用例使用 stdin，不使用 args。'); return { stdin: test.stdin === undefined ? '' : text(test.stdin, 'stdin'), ...(Object.hasOwn(test, 'expected') ? { expected: text(test.expected, 'ACM expected') } : {}) }; }
+    if (mode === 'acm') {
+      if (test.args !== undefined) return invalid('ACM 用例使用 stdin，不使用 args。');
+      const parsed = { stdin: test.stdin === undefined ? '' : text(test.stdin, 'stdin'), ...(Object.hasOwn(test, 'expected') ? { expected: text(test.expected, 'ACM expected') } : {}) };
+      acmBytes += acmCaseBytes(parsed);
+      if (acmBytes > ACM_TEST_BYTES_LIMIT) return invalid('ACM 用例的输入输出总大小不能超过 1 MiB。');
+      return parsed;
+    }
     if (!adapter || !Array.isArray(test.args) || test.args.length !== adapter.params.length || test.stdin !== undefined) return invalid(`函数用例 ${i + 1} 的参数数量/格式不匹配。`);
     try { return { args: test.args.map((value, index) => typedValue(value, adapter.params[index])), ...(Object.hasOwn(test, 'expected') ? { expected: typedValue(test.expected, observedType(adapter)) } : {}) }; }
     catch { return invalid(`函数用例 ${i + 1} 不符合 adapter 类型；int64/bigint 必须保留十进制精度。`); }

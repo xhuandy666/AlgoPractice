@@ -100,7 +100,7 @@ try {
   await page.addStyleTag({ content: compiled.outputFiles.find(file => file.path.endsWith('.css')).text });
   await page.addStyleTag({ content: '#root{height:840px;padding:24px}.history-pane{height:790px;width:420px;display:flex;flex-direction:column;padding:16px;border:1px solid var(--color-rule)}@media(max-width:500px){#root{padding:8px;height:840px}.history-pane{width:100%;height:800px;padding:12px}}' });
   await page.addScriptTag({ content: compiled.outputFiles.find(file => file.path.endsWith('.js')).text });
-  await page.getByRole('button', { name: '给点提示', exact: true }).waitFor();
+  await page.getByRole('button', { name: '获取提示', exact: true }).waitFor();
   await wait(() => !document.querySelector('.ai-quick-actions button').disabled);
   assert.equal(await page.getByText('本次发送的上下文', { exact: true }).count(), 0);
   assert.equal(await page.getByLabel('搜索引用笔记').count(), 0);
@@ -113,7 +113,7 @@ try {
   await wait(() => window.fixture.pending.size === 1);
   let calls = await askCalls(); assert.equal(calls.length, 1); assert.equal(calls[0][1].kind, 'hint'); assert.equal(calls[0][1].question, '');
   assert.deepEqual(Object.keys(calls[0][1]).sort(), ['attemptId', 'kind', 'question', 'requestId']);
-  assert.equal(await page.locator('.ai-chat-user .ai-question').last().textContent(), '给点提示');
+  assert.equal(await page.locator('.ai-chat-user .ai-question').last().textContent(), '获取提示');
   assert.equal(await page.getByRole('button', { name: '停止 AI 请求', exact: true }).isVisible(), true);
   await finish(); assert.equal(await input.inputValue(), '先保留我的自由问题');
   pass('Hint shortcut sends an empty hint once per same-tick click pair and shows the optimistic user/progress without consuming typed text');
@@ -138,12 +138,12 @@ try {
   calls = await askCalls(); assert.equal(calls.at(-1)[1].kind, 'chat'); assert.equal(calls.at(-1)[1].question, question);
   await finish(); assert.equal(await input.inputValue(), '');
   const userTexts = await page.locator('.ai-chat-user .ai-question').allTextContents();
-  assert.deepEqual(userTexts, ['给点提示', '检查代码', question]);
+  assert.deepEqual(userTexts, ['获取提示', '检查代码', question]);
   pass('Shift+Enter inserts a newline, Chinese IME Enter does not send, plain Enter sends chat, and chronological rounds remain user then assistant');
 
   await input.fill('失败后保留的问题'); await input.press('Enter'); await wait(() => window.fixture.pending.size === 1); await finish(true);
   assert.equal(await input.inputValue(), '失败后保留的问题');
-  await page.getByRole('button', { name: '重试这次提问', exact: true }).click(); await wait(() => window.fixture.pending.size === 1); await finish();
+  await page.getByRole('button', { name: '重试本次提问', exact: true }).click(); await wait(() => window.fixture.pending.size === 1); await finish();
   await input.fill('请求启动失败仍保留'); await input.press('Enter'); await wait(() => window.fixture.pending.size === 1);
   await page.evaluate(() => window.fixture.reject()); await page.getByRole('alert').filter({ hasText: '草稿保存或请求启动失败' }).waitFor();
   assert.equal(await input.inputValue(), '请求启动失败仍保留');
@@ -175,12 +175,12 @@ try {
   pass('Note-draft generation and explicit saving remain available as secondary actions');
 
   await page.evaluate(() => window.fixture.officialFailure());
-  await page.locator('[data-request-id="failed-official"]').getByRole('button', { name: '重试这次提问', exact: true }).click();
+  await page.locator('[data-request-id="failed-official"]').getByRole('button', { name: '重试本次提问', exact: true }).click();
   await wait(() => window.fixture.pending.size === 1);
   const officialRetry = (await askCalls()).at(-1)[1]; assert.equal(officialRetry.kind, 'official-review'); assert.equal(officialRetry.officialSubmissionId, 'authored-submitted-code');
   await finish();
   await page.locator('[data-request-id="' + officialRetry.requestId + '"]').getByText('回答详情', { exact: true }).click();
-  await page.getByText('历史对话有部分省略；本次分析仍以本次代码快照为准。', { exact: true }).waitFor();
+  await page.getByText('部分历史对话未发送', { exact: true }).waitFor();
   pass('Official-analysis retry retains its immutable submission ID, and degraded history is disclosed only in answer details');
 
   await input.fill('同题还没发送的问题'); await page.evaluate(() => window.fixture.show('attempt-1', { hidden: true }));
@@ -225,7 +225,7 @@ try {
   await wait(() => window.fixture.pending.size === 1); await finish();
   assert.equal(await page.getByRole('button', { name: '预览修改建议', exact: true }).count(), 0);
   await page.evaluate(() => window.fixture.show('strict-attempt', { strict: true })); await page.getByText('严格面试进行中，AI 教练暂不可用。', { exact: true }).waitFor();
-  assert.equal(await page.getByRole('button', { name: '给点提示', exact: true }).isDisabled(), true); assert.equal(await input.isDisabled(), true);
+  assert.equal(await page.getByRole('button', { name: '获取提示', exact: true }).isDisabled(), true); assert.equal(await input.isDisabled(), true);
   await page.evaluate(() => window.fixture.show('unconfigured-attempt')); await page.evaluate(() => window.fixture.configure(false)); await page.getByRole('button', { name: '配置 AI', exact: true }).waitFor();
   assert.equal(await page.getByRole('button', { name: '检查代码', exact: true }).isDisabled(), true);
   await page.evaluate(() => window.fixture.configure(true)); await wait(() => !document.querySelector('.ai-quick-actions button').disabled);

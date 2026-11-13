@@ -2,18 +2,18 @@
 .help-hint .help-hint-button {
   display: inline-flex; align-items: center; justify-content: center;
   width: 24px; height: 24px; min-width: 24px; min-height: 24px; padding: 0; margin: 0;
-  border: 1px solid var(--color-control-rule); border-radius: 50%;
+  border: 2px solid var(--color-control-rule); border-radius: 50%;
   background: var(--color-surface); color: var(--color-ink-2);
-  font: 600 14px/1 var(--font-body); cursor: help; touch-action: manipulation;
+  font: 900 13px/1 var(--font-body); cursor: help; touch-action: manipulation;
 }
-.help-hint .help-hint-button:hover { color: var(--color-accent); background: var(--color-accent-soft); }
+.help-hint .help-hint-button:hover { color: var(--color-blue-deep); border-color: var(--color-blue); background: var(--color-blue-soft); }
 .help-hint .help-hint-button:focus-visible { outline: 2px solid var(--color-focus); outline-offset: 3px; }
 .help-hint-content {
-  position: fixed; inset: auto; margin: 0; padding: 10px 12px;
+  position: fixed; inset: auto; margin: 0; padding: 12px 14px;
   width: max-content; max-width: min(300px, calc(100vw - 16px));
-  border: 1px solid var(--color-control-rule); border-radius: var(--radius-sm);
-  background: var(--color-surface); color: var(--color-ink-2); box-shadow: var(--shadow-dialog);
-  font: 400 14px/1.55 var(--font-body); text-align: left; white-space: normal; overflow-wrap: anywhere;
+  border: 2px solid var(--color-rule); border-radius: var(--radius-md);
+  background: var(--color-surface); color: var(--color-ink-2); box-shadow: 0 4px 0 var(--color-rule), var(--shadow-dialog);
+  font: 700 14px/1.6 var(--font-body); text-align: left; white-space: normal; overflow-wrap: anywhere;
 }
 .control-with-help { display: flex; align-items: center; flex-wrap: wrap; gap: 4px; }
 .control-with-help > label { margin: 0; }

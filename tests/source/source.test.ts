@@ -121,20 +121,9 @@ test('rejects non-HTML, access challenge, and broken embedded JSON separately', 
   }
 });
 
-test('problem probe retains field evidence/signature/template digests, never copyrighted bodies', async () => {
-  const fixture = { ...question(), content: 'DO_NOT_RETAIN_BODY', translatedContent: 'DO_NOT_RETAIN_TRANSLATION', exampleTestcases: 'DO_NOT_RETAIN_SAMPLES',
-    metaData: JSON.stringify({ name: 'solve', params: [{ name: 'values', type: 'integer[]' }], return: { type: 'integer' } }),
-    codeSnippets: [{ langSlug: 'python3', code: 'DO_NOT_RETAIN_PYTHON' }, { langSlug: 'java', code: 'DO_NOT_RETAIN_JAVA' }] };
-  const result = await adapter({ question: fixture }).fetchProblem('https://leetcode.cn/problems/fixture-problem/');
-  assert.deepEqual(result.fields, { statement: true, translatedStatement: true, functionMetadata: true, sampleCases: true });
-  assert.deepEqual(result.functionSignature, { name: 'solve', parameterTypes: ['integer[]'], returnType: 'integer' });
-  assert.deepEqual(result.templates.map(x => x.language), ['python3', 'java']);
-  assert.equal(JSON.stringify(result).includes('DO_NOT_RETAIN'), false);
-});
-
 test('revalidates supplied reference URL and rejects wrong method kinds before fetching', async () => {
   const source = adapter({});
   await assertCode(source.fetchPlan('https://leetcode.cn/problems/two-sum/'), 'WRONG_SOURCE_KIND');
-  await assertCode(source.fetchProblem(planUrl), 'WRONG_SOURCE_KIND');
+  await assertCode(source.fetchProblemContent(planUrl), 'WRONG_SOURCE_KIND');
   await assertCode(source.fetchPlan({ ...parseSource(planUrl), canonicalUrl: 'https://evil.test/studyplan/fixture-plan/' }), 'UNSUPPORTED_SOURCE');
 });

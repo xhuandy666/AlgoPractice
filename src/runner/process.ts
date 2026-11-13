@@ -1,5 +1,19 @@
-import { spawn } from 'node:child_process';
+import { execFile, spawn } from 'node:child_process';
 import { createWindowsJobControl, windowsJobCommand } from './windows-job.ts';
+
+/** Resident bytes of every process in one group from `ps -A -o pgid=,rss=` (RSS in KiB on Linux and macOS).
+ * Null when the output has no readable row, so a broken or unexpected `ps` never stops a run. */
+export function groupResidentBytes(psOutput: string, groupId: number): number | null {
+  let total = 0, readable = false;
+  for (const line of psOutput.split('\n')) {
+    const match = /^\s*(\d+)\s+(\d+)\s*$/.exec(line);
+    if (!match) continue;
+    readable = true;
+    if (Number(match[1]) === groupId) total += Number(match[2]) * 1024;
+  }
+  return readable ? total : null;
+}
+const MEMORY_SAMPLE_MS = 200;
 
 export const TOOLCHAIN_ENV_KEYS = ['HOME', 'USERPROFILE', 'APPDATA', 'LOCALAPPDATA', 'XDG_CONFIG_HOME', 'XDG_CACHE_HOME', 'GOTOOLCHAIN', 'GOENV', 'GOWORK', 'GOPROXY', 'GOSUMDB', 'GOVCS', 'CGO_ENABLED', 'GO111MODULE', 'GOOS', 'GOARCH', 'GOCACHE', 'GOPATH', 'GOMODCACHE', 'ZIG_GLOBAL_CACHE_DIR', 'ZIG_LOCAL_CACHE_DIR', 'ZIG_LIB_DIR', 'DEVELOPER_DIR', 'SDKROOT'] as const;
 export type ToolchainProcessEnvironment = Partial<Record<typeof TOOLCHAIN_ENV_KEYS[number], string>>;
@@ -7,8 +21,11 @@ export interface ProcessOptions {
   cwd: string; stdin?: string; timeoutMs: number; outputLimitBytes: number; signal?: AbortSignal;
   /** Host-owned toolchain settings only. Never exposed in RunRequest or inherited wholesale. */
   env?: ToolchainProcessEnvironment;
+  /** Host-set cap on the resident memory of the whole process group, sampled every 200 ms (POSIX only for now;
+   * Windows runs are not capped until the Job helper limit can be verified on Windows). Never part of RunRequest. */
+  memoryLimitBytes?: number;
 }
-export interface ProcessResult { code: number | null; stdout: string; stderr: string; reason?: 'timeout' | 'cancelled' | 'output_limit' | 'spawn_error'; terminationError?: string; durationMs: number; }
+export interface ProcessResult { code: number | null; stdout: string; stderr: string; reason?: 'timeout' | 'cancelled' | 'output_limit' | 'memory_limit' | 'spawn_error'; terminationError?: string; durationMs: number; }
 
 // The detached shell and its guard share one process group. Only the guard inherits the child
 // end of fd 3; EOF means the owning Node/Electron process closed its end (including SIGKILL).
@@ -73,6 +90,21 @@ export async function runProcess(executable: string, args: string[], options: Pr
     // Close the gap between the initial aborted check and listener registration.
     if (options.signal?.aborted) abort();
     const timer = setTimeout(() => stop('timeout'), options.timeoutMs);
+    // A runaway allocation can exhaust the host within the time limit. The group leader is the launcher (detached),
+    // so its pgid covers the runtime and ordinary descendants. Sampling fails open: a missing or unreadable `ps`
+    // never fails a run, and a sample that returns after close is ignored because the pgid may be reused.
+    let sampling = false;
+    const memoryLimit = options.memoryLimitBytes, groupId = child.pid;
+    const memoryTimer = memoryLimit && process.platform !== 'win32' && groupId ? setInterval(() => {
+      if (sampling || finished || reason) return;
+      sampling = true;
+      execFile('/bin/ps', ['-A', '-o', 'pgid=,rss='], { timeout: 1000, maxBuffer: 4 * 1024 * 1024, env: { PATH: '/usr/bin:/bin', LANG: 'C' } }, (error, output) => {
+        sampling = false;
+        if (error || finished || reason) return;
+        const bytes = groupResidentBytes(String(output), groupId);
+        if (bytes !== null && bytes > memoryLimit) stop('memory_limit');
+      });
+    }, MEMORY_SAMPLE_MS) : undefined;
     const capture = (stream: 'stdout' | 'stderr', chunk: Buffer) => {
       const remaining = Math.max(0, options.outputLimitBytes - seen);
       const kept = chunk.subarray(0, remaining); seen += chunk.length;
@@ -83,10 +115,10 @@ export async function runProcess(executable: string, args: string[], options: Pr
     child.stdin!.on('error', () => {}); child.stdin!.end(options.stdin ?? '');
     child.on('error', error => { reason = 'spawn_error'; const message = process.platform === 'win32' && (error as NodeJS.ErrnoException).code === 'ENOENT' ? `Windows process helper is unavailable; run npm install or reinstall the desktop application. ${error.message}` : error.message; stderr = [Buffer.from(message).subarray(0, options.outputLimitBytes)]; });
     // Parent completion must also remove ordinary background descendants still holding pipes open.
-    child.on('exit', () => { if (process.platform !== 'win32') killGroup(); });
+    child.on('exit', () => { if (memoryTimer) clearInterval(memoryTimer); if (process.platform !== 'win32') killGroup(); });
     child.on('close', async code => {
       if (finished) return; finished = true;
-      clearTimeout(timer); if (terminationTimer) clearTimeout(terminationTimer); options.signal?.removeEventListener('abort', abort);
+      clearTimeout(timer); if (memoryTimer) clearInterval(memoryTimer); if (terminationTimer) clearTimeout(terminationTimer); options.signal?.removeEventListener('abort', abort);
       // Streaming decode omits a truncated final code point instead of expanding it to U+FFFD.
       const decode=(buffer:Buffer)=>new TextDecoder('utf-8').decode(buffer,{stream:true});
       let out=decode(Buffer.concat(stdout)),err=decode(Buffer.concat(stderr));

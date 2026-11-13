@@ -1,0 +1,59 @@
+/* Reward feedback: pointer-transparent overlay and level ring. */
+[data-rank] { --rank-color: #cd7f32; --rank-ink: #7a4a1c; --rank-glow: rgb(205 127 50 / 0.45); }
+[data-rank=silver] { --rank-color: #9aa5b8; --rank-ink: #4a5468; --rank-glow: rgb(154 165 184 / 0.45); }
+[data-rank=gold] { --rank-color: #ffc800; --rank-ink: #7a4d00; --rank-glow: rgb(255 200 0 / 0.5); }
+[data-rank=platinum] { --rank-color: #00c2a8; --rank-ink: #00665a; --rank-glow: rgb(0 194 168 / 0.45); }
+[data-rank=diamond] { --rank-color: #1cb0f6; --rank-ink: #0b5596; --rank-glow: rgb(28 176 246 / 0.45); }
+[data-rank=master] { --rank-color: #ce82ff; --rank-ink: #6b2fb3; --rank-glow: rgb(206 130 255 / 0.45); }
+[data-rank=king] { --rank-color: #ff4b4b; --rank-ink: #9c1c1c; --rank-glow: rgb(255 75 75 / 0.45); }
+
+.reward-layer, .reward-layer * { pointer-events: none; }
+.reward-layer { position: fixed; inset: 0; z-index: 2147483000; overflow: clip; }
+.reward-confetti { position: absolute; inset: 0; width: 100%; height: 100%; }
+
+.reward-hero { position: absolute; left: 50%; top: 42%; display: grid; justify-items: center; gap: 8px; text-align: center; transform: translate(-50%, -50%); animation: reward-hero-life var(--hero-duration, 1600ms) var(--ease-out) both; }
+.reward-hero::before { content: ''; position: absolute; inset: -110px -200px; z-index: -1; background: radial-gradient(closest-side, rgb(255 255 255 / 0.97) 52%, rgb(255 255 255 / 0.82) 72%, rgb(255 255 255 / 0)); }
+.reward-hero-mascot { position: relative; display: grid; place-items: center; animation: reward-pop 640ms var(--ease-spring) both; }
+.reward-hero-mascot .reward-hero-rays { display: block; inset: -30px; }
+.reward-hero-chip { position: absolute; right: -6px; bottom: 6px; display: grid; place-items: center; width: 48px; height: 48px; border: 4px solid #fff; border-radius: 50%; background: var(--color-accent-bright); color: #fff; box-shadow: 0 4px 0 var(--color-accent-bright-deep); animation: reward-pop 520ms var(--ease-spring) 280ms both; }
+.reward-hero-chip svg path { stroke-dasharray: 40; stroke-dashoffset: 40; animation: reward-draw 520ms var(--ease-out) 480ms forwards; }
+.reward-hero-badge { --hero-fill: var(--gradient-gold); --hero-ring: var(--color-gold); --hero-deep: var(--color-gold-deep); position: relative; display: grid; place-items: center; width: 120px; height: 120px; border-radius: 34px; color: var(--color-gold-ink); background: var(--hero-fill); box-shadow: 0 8px 0 var(--hero-deep); transform: rotate(-6deg); animation: reward-pop-tilt 640ms var(--ease-spring) both; }
+.reward-hero-badge > strong { position: relative; z-index: 1; font: 900 40px/1 var(--font-display); }
+.reward-hero-ring { position: absolute; inset: -6px; border-radius: 40px; border: 5px solid var(--hero-ring); animation: reward-ring 950ms var(--ease-out) 120ms both; }
+.reward-hero-rays { position: absolute; inset: -58px; border-radius: 50%; display: none; background: repeating-conic-gradient(from 0deg, rgb(255 200 0 / 0.5) 0 9deg, transparent 9deg 26deg); -webkit-mask: radial-gradient(closest-side, transparent 48%, black 54%, transparent 100%); mask: radial-gradient(closest-side, transparent 48%, black 54%, transparent 100%); animation: reward-rays 2600ms linear both; }
+.reward-hero[data-variant=level] .reward-hero-badge { --hero-fill: var(--rank-color); --hero-ring: var(--rank-color); --hero-deep: color-mix(in srgb, var(--rank-color) 70%, #000); color: #fff; }
+.reward-hero[data-variant=level] .reward-hero-badge > strong { font-size: 32px; text-shadow: 0 2px 0 rgb(0 0 0 / 0.2); }
+.reward-hero:is([data-variant=official], [data-variant=level]) .reward-hero-rays { display: block; }
+.reward-hero[data-variant=reviews] .reward-hero-chip { background: var(--color-flame); box-shadow: 0 4px 0 var(--color-flame-deep); }
+.reward-hero[data-variant=goal] .reward-hero-chip { background: var(--color-gold); color: var(--color-gold-ink); box-shadow: 0 4px 0 var(--color-gold-deep); }
+.reward-hero-title { margin-top: 10px; font: 900 34px/1.2 var(--font-display); color: var(--color-accent); animation: reward-rise 480ms var(--ease-spring) 160ms both; }
+.reward-hero:is([data-variant=official], [data-variant=level]) .reward-hero-title { color: var(--color-gold-ink); }
+.reward-hero-detail { font-size: 15px; font-weight: 800; color: var(--color-ink-2); animation: reward-rise 480ms var(--ease-out) 240ms both; }
+.reward-hero-combo { display: inline-flex; align-items: center; gap: 4px; padding: 5px 14px; border-radius: var(--radius-pill); background: var(--color-flame); color: #fff; font: 900 14px/1.4 var(--font-display); box-shadow: 0 3px 0 var(--color-flame-deep); animation: reward-pop 520ms var(--ease-spring) 360ms both; }
+
+.reward-toasts { position: absolute; top: 84px; left: 50%; display: grid; justify-items: center; gap: 8px; transform: translateX(-50%); }
+.reward-toast { display: flex; align-items: center; gap: 12px; min-width: 260px; max-width: min(440px, calc(100vw - 32px)); padding: 10px 18px 10px 10px; border: 2px solid var(--color-rule); border-radius: 18px; background: var(--color-surface); box-shadow: 0 4px 0 var(--color-rule), 0 18px 30px -18px rgb(0 0 0 / 0.3); animation: reward-toast 3400ms var(--ease-spring) both; }
+.reward-toast-icon { display: grid; place-items: center; flex-shrink: 0; width: 40px; height: 40px; border-radius: 13px; color: #fff; background: var(--color-accent-bright); box-shadow: 0 3px 0 var(--color-accent-bright-deep); }
+.reward-toast[data-tone=gold] .reward-toast-icon { background: var(--color-gold); color: var(--color-gold-ink); box-shadow: 0 3px 0 var(--color-gold-deep); }
+.reward-toast[data-tone=flame] .reward-toast-icon { background: var(--color-flame); box-shadow: 0 3px 0 var(--color-flame-deep); }
+.reward-toast[data-tone=accent] .reward-toast-icon { background: var(--color-blue-bright); box-shadow: 0 3px 0 #1899d6; }
+.reward-toast strong { display: block; font-size: 15px; font-weight: 900; line-height: 1.4; }
+.reward-toast small { display: block; margin-top: 1px; font-size: 12px; font-weight: 700; line-height: 1.5; color: var(--color-muted); }
+.reward-xp-float { position: absolute; white-space: nowrap; padding: 4px 10px; border: 2px solid var(--color-gold-deep); border-radius: var(--radius-pill); background: var(--color-gold); box-shadow: 0 3px 0 var(--color-gold-deep); font: 900 15px/1 var(--font-display); color: #5c3a00; transform: translate(-50%, 0); animation: reward-xp 1500ms var(--ease-out) both; }
+
+@keyframes reward-hero-life { 0% { opacity: 0; } 7% { opacity: 1; } 84% { opacity: 1; transform: translate(-50%, -50%); } 100% { opacity: 0; transform: translate(-50%, -58%) scale(0.96); } }
+@keyframes reward-pop { 0% { opacity: 0; transform: scale(0.3) rotate(-14deg); } 60% { opacity: 1; transform: scale(1.12) rotate(3deg); } 100% { transform: scale(1) rotate(0); } }
+@keyframes reward-pop-tilt { 0% { opacity: 0; transform: scale(0.3) rotate(-20deg); } 60% { opacity: 1; transform: scale(1.12) rotate(2deg); } 100% { transform: scale(1) rotate(-6deg); } }
+@keyframes reward-draw { to { stroke-dashoffset: 0; } }
+@keyframes reward-ring { 0% { opacity: 0.9; transform: scale(0.92); } 100% { opacity: 0; transform: scale(1.8); } }
+@keyframes reward-rays { 0% { opacity: 0; transform: rotate(0); } 15% { opacity: 1; } 80% { opacity: 1; } 100% { opacity: 0; transform: rotate(150deg); } }
+@keyframes reward-rise { from { opacity: 0; transform: translateY(14px) scale(0.9); } to { opacity: 1; transform: none; } }
+@keyframes reward-toast { 0% { opacity: 0; transform: translateY(-20px) scale(0.9); } 7% { opacity: 1; transform: none; } 88% { opacity: 1; transform: none; } 100% { opacity: 0; transform: translateY(-10px); } }
+@keyframes reward-xp { 0% { opacity: 0; transform: translate(-50%, -40%) scale(0.5); } 16% { opacity: 1; transform: translate(-50%, 10%) scale(1.15); } 28% { transform: translate(-50%, 0) scale(1); } 72% { opacity: 1; transform: translate(-50%, 0) scale(1); } 100% { opacity: 0; transform: translate(-50%, -30%) scale(0.85); } }
+
+/* Level ring. */
+.level-ring { position: relative; display: grid; place-items: center; flex-shrink: 0; width: 44px; height: 44px; border-radius: 50%; }
+.level-ring > svg { position: absolute; inset: 0; transform: rotate(-90deg); overflow: visible; }
+.level-ring-track { fill: color-mix(in srgb, var(--rank-color) 18%, #fff); stroke: var(--color-paper-3); stroke-width: 5; }
+.level-ring-value { fill: none; stroke: var(--rank-color); stroke-width: 5; stroke-linecap: round; transition: stroke-dashoffset 900ms var(--ease-spring); }
+.level-ring > strong { position: relative; font: 900 1em/1 var(--font-display); color: var(--rank-ink); font-variant-numeric: tabular-nums; }

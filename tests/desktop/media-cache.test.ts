@@ -4,7 +4,7 @@ import { mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'n
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, test, type TestContext } from 'node:test';
-import { cacheProblemMedia } from '../../src/desktop/media-cache.ts';
+import { cachedMediaType, cacheProblemMedia } from '../../src/desktop/media-cache.ts';
 import type { ProblemContent } from '../../src/shared/library.ts';
 
 // All transport responses in this suite are injected fixtures. These tests do
@@ -139,4 +139,12 @@ test('existing local media is validated without network and missing/corrupt file
   const bad = await cacheProblemMedia(content(`<img src="${local}"><img src="algopractice://app/media/${'0'.repeat(64)}">`), path);
   assert.equal(fetch.mock.callCount(), 0); assert.equal(bad.media?.missingUrls.length, 2);
   assert.equal(bad.description, '<img src=""><img src="">');
+});
+
+test('cached media types are named from their first bytes for serving and backup checks', () => {
+  const type = (bytes: number[] | string) => cachedMediaType(typeof bytes === 'string' ? Buffer.from(bytes, 'ascii') : Buffer.from(bytes));
+  assert.deepEqual(type([137, 80, 78, 71, 13, 10, 26, 10]), { extension: 'png', mime: 'image/png' });
+  assert.deepEqual(type([255, 216, 255, 224]), { extension: 'jpg', mime: 'image/jpeg' });
+  assert.deepEqual(type('GIF89a'), { extension: 'gif', mime: 'image/gif' });
+  assert.deepEqual(type('RIFF\0\0\0\0WEBP'), { extension: 'webp', mime: 'image/webp' });
 });

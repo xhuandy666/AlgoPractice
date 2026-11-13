@@ -1,0 +1,3 @@
+.official-finish { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 12px; margin: 8px 0; padding: 10px 12px; border-radius: var(--radius-sm); background: var(--color-success-soft); }
+.official-finish > p { margin: 0; flex: 1 1 220px; font-weight: 700; color: var(--color-success); }
+.official-finish > .field-help { flex-basis: 100%; color: var(--color-ink-2); font-weight: 600; }

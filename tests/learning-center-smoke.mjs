@@ -259,7 +259,7 @@ try {
   assert.equal(await page.locator('.sidebar').getByText(fixture.official.title, { exact: true }).count(), 0);
   assert.equal(await page.evaluate(() => typeof window.require), 'undefined');
   const initial = await api('learningDashboard');
-  assert.equal(initial.totals.completedAttempts, fixture.dashboard.totals.completedAttempts);
+  assert.equal(initial.totals.completedProblems, fixture.dashboard.totals.completedProblems);
   assert.equal(initial.days.find(day => day.date === fixture.today).completedProblems, fixture.dashboard.days.at(-1).completedProblems);
   const dailyProgress = page.getByRole('progressbar', { name: '今日练习目标', exact: true });
   await dailyProgress.waitFor();
@@ -342,7 +342,7 @@ try {
     reviewEvent = (await api('problemReviewDetail', fixture.official.problemId)).events.items.find(event => event.requestId !== 'pending-initial');
     assert.equal(reviewEvent.kind, 'review'); assert.equal(reviewEvent.rating, 4);
     const timeline = details.locator('.review-history-event').filter({ has: page.getByText(fixture.today, { exact: true }) });
-    await timeline.getByRole('button', { name: '修改这次自评', exact: true }).click();
+    await timeline.getByRole('button', { name: '修改本次自评', exact: true }).click();
     const correction = page.getByRole('dialog');
     await correction.getByRole('radio', { name: /良好/ }).check();
     await api('saveLearningSettings', { dailyPracticeGoal: 7 }); await delay(800);
@@ -359,7 +359,7 @@ try {
     await close(); await load();
     assert.equal((await api('learningSettings')).dailyPracticeGoal, 7);
     assert.equal((await api('problemReviewDetail', fixture.official.problemId)).events.total, 3);
-    assert.ok(!(await api('reviewItems')).find(item => item.id === fixture.pending.id).suspended);
+    assert.equal((await api('problemReviewDetail', fixture.official.problemId)).plan.suspended, false);
     pass('Full application restart preserves the goal, original review, correction and resumed plan');
   }
   await close(); assert.deepEqual(report.rendererErrors, []); assert.deepEqual(report.httpAttempts, []);

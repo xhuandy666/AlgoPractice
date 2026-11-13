@@ -20,7 +20,7 @@ function problem(id: string, changes: Partial<ProblemContent> = {}): ProblemCont
     cases: [{ args: [[1, 2]], expected: 3 }], starter: { python: `# ${body}\nclass Solution: pass` }, ...changes };
 }
 const run = (attemptId: string, changes: Partial<SaveRunInput> = {}): SaveRunInput => ({ attemptId, code: body,
-  testSuiteVersion: 'suite', testSnapshot: { description: body }, adapterVersion: 'adapter', runtimeVersion: 'runtime',
+  testSuiteVersion: 'suite', testSnapshot: { description: body }, expectedOutputSource: 'native-samples', adapterVersion: 'adapter', runtimeVersion: 'runtime',
   status: 'passed', result: { durationMs: 42, stdout: body, caseResults: [{ status: 'passed', actual: body }, { status: 'wrong_answer', actual: body }] }, ...changes });
 
 test('P5 problem pages preserve metadata filters, list ordering/duplicates and capability without fetching bodies', t => {
@@ -121,5 +121,4 @@ test('P5 metadata and Today use JavaScript whitespace semantics for empty statem
   const page = store.listProblemPage({ ids: ['a-empty'] });
   assert.deepEqual(page.items[0].capability, capability(store.getProblem('a-empty')!.content));
   assert.equal(page.items[0].capabilities.python, false); assert.equal(page.items[0].capabilities.statement, false);
-  assert.deepEqual(store.getTodayQueue().newProblemIds, ['b-runnable']);
 });

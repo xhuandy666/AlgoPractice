@@ -91,17 +91,4 @@ export class AttachmentService {
     if (resolve(selectedDestination).startsWith(this.directory + sep)) throw new Error('不能覆盖应用管理的附件。');
     await publishFile(resolve(selectedDestination), bytes);
   }
-  async openablePath(hash: string): Promise<string> {
-    const { attachment, bytes } = await this.read(hash);
-    // Never ask the OS to open imported source code as an executable association.
-    const extension = attachment.mimeType.startsWith('image/') ? (attachment.mimeType === 'image/jpeg' ? '.jpg' : `.${attachment.mimeType.slice(6)}`) : attachment.mimeType === 'application/pdf' ? '.pdf' : '.txt';
-    const directory = join(this.directory, '.open'); await mkdir(directory, { recursive: true });
-    const file = join(directory, hash + extension);
-    try { await publishFile(file, bytes); }
-    catch (error) {
-      if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error;
-      if (contentHash(await readRegularFile(file, MAX_ATTACHMENT_BYTES)) !== hash) throw new Error('临时预览附件已变化，请重新导出。');
-    }
-    return file;
-  }
 }

@@ -1,7 +1,6 @@
 import { AI_POLICY_VERSION, type AiPatch, type AiRequestSnapshot, type AiResponse } from '../shared/ai.ts';
 import { canonicalJson, sha256 } from './canonical.ts';
 import { AiServiceError } from './errors.ts';
-import { validateLegacyResponse } from './legacy-policy.ts';
 import { decodeResponseFormat } from './response-format.ts';
 import { resolveEvidenceReference } from './evidence-catalog.ts';
 
@@ -96,18 +95,13 @@ export function patchCode(code: string, patch: AiPatch): string {
   const result = lines.join(newline); if (Buffer.byteLength(result) > 512 * 1024) return shape(); return result;
 }
 export function validateResponse(raw: string, snapshot: AiRequestSnapshot): AiResponse {
-  // Preserve the old immutable response/hash contract for records already saved on disk.
-  if (snapshot.policyVersion === 'algopractice-ai-policy-v1') return validateLegacyResponse(raw, snapshot);
-  if (snapshot.policyVersion !== AI_POLICY_VERSION || snapshot.level !== undefined || snapshot.unlockCompleteSolution !== undefined) return policy('schemaKind');
+  if (snapshot.policyVersion !== AI_POLICY_VERSION) return policy('schemaKind');
   let decoded: unknown; try { decoded = decodeResponseFormat(raw, snapshot.kind); } catch { return shape(); }
   const value = object(decoded, ['schemaVersion', 'kind', 'title', 'explanation', 'nextSteps', 'evidence', 'inferences', 'patch', 'completeSolution', 'noteDraft']);
   if (value.schemaVersion !== 2 || value.kind !== snapshot.kind) return policy('schemaKind');
   if (snapshot.mode === 'strict' && snapshot.isActive) throw new AiServiceError('STRICT_MODE');
-  // The old adaptive coach used hint as its general action. Keep saved v2.3 answers readable;
-  // the new chat coach gives explicit hint requests a narrower, no-code-proposal contract.
-  const chatPrompt = /^tilian-chat-coach-v(\d+)\.(\d+)$/.exec(snapshot.promptVersion);
-  const hintOnly = snapshot.kind === 'hint' && !!chatPrompt && (Number(chatPrompt[1]) > 2 || (Number(chatPrompt[1]) === 2 && Number(chatPrompt[2]) >= 4));
-  if (hintOnly && (value.patch !== null || value.completeSolution !== null)) return policy('patchKind');
+  // A hint points the way; it never carries a code proposal.
+  if (snapshot.kind === 'hint' && (value.patch !== null || value.completeSolution !== null)) return policy('patchKind');
   const title = text(value.title, 120), explanation = text(value.explanation, 8000);
   const nextSteps = array(value.nextSteps, 8).map(item => text(item, 2000));
   const inferences = array(value.inferences, 8).map(item => { const inference = object(item, ['text', 'reason']); return { text: text(inference.text, 2000), reason: text(inference.reason, 2000) }; });

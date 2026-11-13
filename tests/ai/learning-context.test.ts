@@ -31,7 +31,7 @@ test('AI context resolves the requested format draft and only current test evide
   assert.equal(buildPracticeAiContext(store, request(fn.id)).code, '# function');
   const digest = testConfigDigest(tests)!;
   const run = store.beginRun({ id: 'run-original-tests', attemptId: acm.id, code: '# acm', testSuiteVersion: digest, testConfigDigest: digest,
-    testSnapshot: { cases: tests.cases, acmCompare: tests.compare, answerFormat: 'acm', specVersion: acm.specVersion, testConfigDigest: digest } as never,
+    testSnapshot: { cases: tests.cases, acmCompare: tests.compare, answerFormat: 'acm', specVersion: acm.specVersion, testConfigDigest: digest } as never, expectedOutputSource: 'user',
     adapterVersion: 'none', runtimeVersion: 'Python 3.14.7' });
   store.finishRun(run.id, { status: 'passed', result: { stdout: '1\n', stderr: '', diagnostics: [], caseResults: [{ index: 0, status: 'passed', actual: '1\n', expected: '1\n' }] } });
   const current = buildPracticeAiContext(store, request(acm.id));
@@ -49,7 +49,7 @@ test('function evidence digest matches main runtime identity and cannot borrow A
   const { store, problem, attempt } = fixture(t), fn = attempt('function');
   const digest = hashCode(JSON.stringify([problem.content.cases, 'normalized']));
   const run = store.beginRun({ id: 'function-run', attemptId: fn.id, code: '# function', testSuiteVersion: digest,
-    testSnapshot: { cases: problem.content.cases, acmCompare: 'normalized', answerFormat: 'function', specVersion: fn.specVersion, testConfigDigest: null } as never,
+    testSnapshot: { cases: problem.content.cases, acmCompare: 'normalized', answerFormat: 'function', specVersion: fn.specVersion, testConfigDigest: null } as never, expectedOutputSource: 'native-samples',
     adapterVersion: 'adapter', runtimeVersion: 'Python 3.14.7' });
   store.finishRun(run.id, { status: 'completed', result: { diagnostics: [], caseResults: [], stdout: '', stderr: '' } });
   const context = buildPracticeAiContext(store, request(fn.id));
@@ -89,7 +89,7 @@ test('beginRun rejects a stale test snapshot atomically and cannot overwrite ano
   const old = store.getDraft(problem.id, 'python', 'practice', 'acm')!;
   const other = { ...tests, compare: 'exact' as const }, digest = testConfigDigest(other)!;
   assert.throws(() => store.beginRun({ id: 'stale', attemptId: acm.id, code: 'overwriting code', expectedDraftRevision: old.revision,
-    testSuiteVersion: digest, testConfigDigest: digest, testSnapshot: { cases: other.cases, acmCompare: other.compare, testConfigDigest: digest } as never,
+    testSuiteVersion: digest, testConfigDigest: digest, testSnapshot: { cases: other.cases, acmCompare: other.compare, testConfigDigest: digest } as never, expectedOutputSource: 'user',
     adapterVersion: 'none', runtimeVersion: 'Python 3.14.7' }), /tests have changed/);
   assert.deepEqual(store.getDraft(problem.id, 'python', 'practice', 'acm'), old);
   assert.equal(store.getDraft(problem.id, 'python', 'practice', 'function')!.code, '# function');

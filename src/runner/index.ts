@@ -4,7 +4,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { runProcess } from './process.ts';
 import { compare, normalizeTyped, observedType, supportsAdapter, validateType, validateValue } from './values.ts';
-import { javaWrapper, pythonWrapper, JAVA_NODES } from './wrappers.ts';
+import { javaDesignWrapper, javaWrapper, pythonDesignWrapper, pythonWrapper, JAVA_NODES } from './wrappers.ts';
 import { javaDiagnostics, PYTHON_ACM_WRAPPER, PYTHON_COMPILE_CHECK, readPythonDiagnostic } from './diagnostics.ts';
 import { compilerPath, defaultRuntimePath } from './runtime-paths.ts';
 import { inspectRuntime } from './runtime-inspect.ts';
@@ -12,10 +12,14 @@ import { isLanguage } from '../shared/languages.ts';
 import { nativeSources, type NativeSources } from './native-driver.ts';
 import { nativeDiagnostics } from './native-diagnostics.ts';
 import { prepareCompilation } from './toolchain-env.ts';
-import type { Diagnostic, RunEvent, RunOptions, RunRequest, RunResult, RunStatus, WireValue } from './types.ts';
+import type { Adapter, Diagnostic, RunEvent, RunOptions, RunRequest, RunResult, RunStatus, WireValue } from './types.ts';
+import { compareDesign, designSteps, isDesignAdapter, validateDesignAdapter, validateDesignOutput } from './design.ts';
 export type * from './types.ts';
 export { defaultRuntimePath } from './runtime-paths.ts';
 export { inspectRuntime } from './runtime-inspect.ts';
+/** Local protection against runaway allocation (whole process group, execution only, POSIX for now). Generous next
+ * to typical judge limits so correct solutions are never stopped; the JVM heap is already capped by -Xmx256m. */
+export const EXECUTION_MEMORY_LIMIT_BYTES = 1024 * 1024 * 1024;
 /** Explicit protocol identity for new run archives; existing archives are never rewritten. */
 export function runnerDriverVersion(language: RunRequest['language']): string {
   return { python: 'python-function-acm-v1', java: 'java-function-acm-v1', go: 'go-function-acm-v1', cpp: 'cpp17-function-acm-v1' }[language];
@@ -30,8 +34,14 @@ function validate(request: RunRequest): void {
   if(request.acmCompare!==undefined && !['normalized','exact'].includes(request.acmCompare))throw new Error('Unsupported ACM comparator');
   if (request.cases && (!Array.isArray(request.cases) || request.cases.length > 100)) throw new Error('At most 100 test cases');
   if (Buffer.byteLength(JSON.stringify(request)) > 4194304) throw new Error('Request exceeds 4 MiB');
-  if (request.mode === 'function') {
+  if (request.mode === 'function' && isDesignAdapter(request.adapter)) {
     const adapter = request.adapter;
+    validateDesignAdapter(adapter);
+    if (!supportsAdapter(request.language, adapter)) throw new Error(`${request.language}: portable function adapters do not support bigint; use ACM mode with your own representation.`);
+    if (!request.cases?.length) throw new Error('Function mode requires cases');
+    for (const test of request.cases) { const steps = designSteps(adapter, test.args); if (test.expected !== undefined) validateDesignOutput(test.expected, steps); }
+  } else if (request.mode === 'function') {
+    const adapter = request.adapter as Adapter | undefined;
     if (!adapter || !/^[A-Za-z_][A-Za-z0-9_]*$/.test(adapter.method) || !Array.isArray(adapter.params) || adapter.params.length > 20) throw new Error('Function adapter requires a valid method and parameter types');
     adapter.params.forEach(t => validateType(t)); if(adapter.returns!=='void')validateType(adapter.returns);
     if (!supportsAdapter(request.language, adapter)) throw new Error(`${request.language}: portable function adapters do not support bigint; use ACM mode with your own representation.`);
@@ -79,7 +89,8 @@ export async function runCode(request: RunRequest, options: RunOptions = {}): Pr
   const emit = (phase: RunEvent['phase'], extra: Partial<RunEvent> = {}) => {
     try { options.onEvent?.({ runId, sequence: ++sequence, at: new Date().toISOString(), phase, ...extra }); } catch { /* Observers cannot change a run's state. */ }
   };
-  const result: RunResult = { status:'internal_error', diagnostics:[], stdout:'', stderr:'', caseResults:[], runtimeVersion:'', durationMs:0, executionScope:'local-user-code-not-sandboxed', hostPlatform:`${process.platform}-${process.arch}` };
+  const result: RunResult = { status:'internal_error', diagnostics:[], stdout:'', stderr:'', caseResults:[], runtimeVersion:'', durationMs:0, executionScope:'local-user-code-not-sandboxed', hostPlatform:`${process.platform}-${process.arch}`,
+    ...(process.platform !== 'win32' ? { memoryLimitBytes: EXECUTION_MEMORY_LIMIT_BYTES } : {}) };
   let directory: string | undefined;
   let executionTimer: ReturnType<typeof setTimeout> | undefined;
   try {
@@ -99,13 +110,13 @@ export async function runCode(request: RunRequest, options: RunOptions = {}): Pr
     if(request.language==='python') {
       await writeFile(path.join(directory,request.mode==='acm'?'main.py':'solution.py'),request.code);
       await writeFile(path.join(directory,'compile-check.py'),PYTHON_COMPILE_CHECK);
-      await writeFile(path.join(directory,'wrapper.py'),request.mode==='function'?pythonWrapper(request.adapter!,tests):PYTHON_ACM_WRAPPER);
+      await writeFile(path.join(directory,'wrapper.py'),request.mode==='function'?(isDesignAdapter(request.adapter)?pythonDesignWrapper(request.adapter,tests):pythonWrapper(request.adapter as Adapter,tests)):PYTHON_ACM_WRAPPER);
     } else if(request.language==='java') {
       if(request.mode==='acm') await writeFile(path.join(directory,'Main.java'),request.code);
       else {
         await writeFile(path.join(directory,'Solution.java'),'import java.util.*;\nimport java.math.*;\n'+request.code);
         await writeFile(path.join(directory,'Nodes.java'),JAVA_NODES);
-        await writeFile(path.join(directory,'Main.java'),javaWrapper(request.adapter!,tests));
+        await writeFile(path.join(directory,'Main.java'),(isDesignAdapter(request.adapter)?javaDesignWrapper(request.adapter,tests):javaWrapper(request.adapter as Adapter,tests)));
       }
     } else {
       native = await nativeSources(directory, request, tests);
@@ -128,7 +139,8 @@ export async function runCode(request: RunRequest, options: RunOptions = {}): Pr
       result.status='internal_error';result.diagnostics.push({phase:'compile',source:'runner',code:'termination_failed',message:compilation.terminationError});return result;
     }
     if(compilation.reason || compilation.code!==0) {
-      result.status=compilation.reason==='spawn_error'?'environment_error':compilation.reason ?? 'compile_error';
+      // Compilers are not memory-capped; the branch only keeps the reason-to-status mapping total.
+      result.status=compilation.reason==='spawn_error'?'environment_error':compilation.reason==='memory_limit'?'compile_error':compilation.reason ?? 'compile_error';
       result.diagnostics.push(...await diagnosticsFrom(compileDiagnostic,compilation.stderr,'compile'));
       if(result.status==='compile_error' && result.diagnostics.every(d=>d.source==='runner'))result.status='internal_error';
       return result;
@@ -146,12 +158,14 @@ export async function runCode(request: RunRequest, options: RunOptions = {}): Pr
         ? request.mode==='acm'?['-I','-X','utf8','wrapper.py',diagnosticFile]:['-I','-X','utf8','wrapper.py',String(index),output,String(remaining),diagnosticFile]
         : request.mode==='acm'?['-Xmx256m','-cp',directory,'Main']:['-Xmx256m','-cp',directory,'Main',String(index),output,String(remaining)];
       emit('run',{caseIndex:index});
-      const run=await runProcess(native?.binary ?? executable,args,{...processOptions,signal:executionSignal,stdin:tests[index].stdin ?? request.stdin,outputLimitBytes:remaining});
+      const run=await runProcess(native?.binary ?? executable,args,{...processOptions,signal:executionSignal,stdin:tests[index].stdin ?? request.stdin,outputLimitBytes:remaining,memoryLimitBytes:EXECUTION_MEMORY_LIMIT_BYTES});
       result.stdout+=run.stdout;result.stderr+=run.stderr;
-      let status:RunStatus=run.terminationError?'internal_error':run.reason==='spawn_error'?'environment_error':run.reason ?? (run.code===0?'completed':'runtime_error');
+      // Exceeding the local memory cap is the user's program failing, so it stays a runtime error (no new status or schema).
+      let status:RunStatus=run.terminationError?'internal_error':run.reason==='spawn_error'?'environment_error':run.reason==='memory_limit'?'runtime_error':run.reason ?? (run.code===0?'completed':'runtime_error');
       if(status==='cancelled' && executionDeadline.signal.aborted && !options.signal?.aborted) status='timeout';
       let diagnostics:Diagnostic[]=run.terminationError?[{phase:'run',source:'runner',code:'termination_failed',message:run.terminationError}]:[];
-      if(status==='runtime_error'){
+      if(status==='runtime_error' && run.reason==='memory_limit')diagnostics=[{phase:'run',source:'user',code:'memory_limit',message:`程序占用的内存超过本地运行上限（${EXECUTION_MEMORY_LIMIT_BYTES/1048576} MiB），已被终止。请检查是否有不断增长的数组、字符串或过深的递归。这是本机保护，不是力扣的内存限制。`}];
+      else if(status==='runtime_error'){
         diagnostics=await diagnosticsFrom(diagnosticFile,run.stderr,'run');
         if(diagnostics.some(d=>d.code==='output_limit'))status='output_limit';
         else if(diagnostics.every(d=>d.source==='runner'))status='internal_error';
@@ -165,13 +179,15 @@ export async function runCode(request: RunRequest, options: RunOptions = {}): Pr
             else {
               structuredBytes+=size;
               actual=JSON.parse(await readFile(output,'utf8')) as WireValue;
-              validateValue(actual,observedType(request.adapter!));
+              if(isDesignAdapter(request.adapter))validateDesignOutput(actual,designSteps(request.adapter,tests[index].args));
+              else validateValue(actual,observedType(request.adapter as Adapter));
             }
           } catch(error) {status=(error as NodeJS.ErrnoException).code==='ENOENT'?'internal_error':'runtime_error';diagnostics.push({phase:'run',source:status==='internal_error'?'runner':'user',code:status==='internal_error'?'wrapper_protocol':'invalid_return',message:`Invalid structured result: ${String(error)}`});}
         } else actual=run.stdout;
         if(status==='completed' && tests[index].expected!==undefined) {
-          const kind=request.mode==='function'?observedType(request.adapter!):undefined;
-          const passed=request.mode==='function'?compare(normalizeTyped(actual!,kind!),normalizeTyped(tests[index].expected!,kind!),request.adapter!.compare):request.acmCompare==='exact'?actual===tests[index].expected:normalizeOutput(actual as string)===normalizeOutput(tests[index].expected as string);
+          const design=isDesignAdapter(request.adapter)?request.adapter:undefined,fn=design?undefined:request.adapter as Adapter|undefined;
+          const kind=request.mode==='function'&&fn?observedType(fn):undefined;
+          const passed=design?compareDesign(actual!,tests[index].expected!,designSteps(design,tests[index].args),design.compare):request.mode==='function'?compare(normalizeTyped(actual!,kind!),normalizeTyped(tests[index].expected!,kind!),fn!.compare):request.acmCompare==='exact'?actual===tests[index].expected:normalizeOutput(actual as string)===normalizeOutput(tests[index].expected as string);
           status=passed?'passed':'wrong_answer';
         }
       }

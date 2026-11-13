@@ -1,20 +1,26 @@
 import { createHash, randomUUID } from 'node:crypto';
-import { pageBounds, pageResult, searchText, SQL_TRIM_WHITESPACE } from '../storage/pagination.ts';
+import { literalLike, pageBounds, pageResult, searchText } from '../storage/pagination.ts';
 import type { NoteListItem, NotePageFilter, PageResult } from '../shared/learning.ts';
 import type { DatabaseSync } from 'node:sqlite';
-import type {
-  ActivityDay, ActivitySample, ActivitySampleInput, AddReviewItemInput, ArchiveStatistics, Attachment,
-  ConfirmNoteInput, CorrectReviewInput, LearningSettings, LearningSettingsInput, Note, NoteDeletionResult, NoteFilter, NoteVersion, ReviewEvent,
-  ReviewFeedbackInput, ReviewFeedbackResult, ReviewFilter, ReviewItem, SaveNoteInput, TodayQueue,
-} from '../shared/learning.ts';
-import type { AiHelpState, AiLevel, AiRequestCompletion, AiRequestRecord, AiRequestSeed } from '../shared/ai.ts';
+import type { ActivityDay, ActivitySample, ActivitySampleInput, ArchiveStatistics, Attachment, ProblemStruggleSignals, ReviewRating, ConfirmNoteInput, LearningSettings, LearningSettingsInput, Note, NoteDeletionResult, NoteFilter, NoteVersion, SaveNoteInput } from '../shared/learning.ts';
+import type { AiHelpState, AiRequestCompletion, AiRequestRecord, AiRequestSeed, AiUsageSummary, AiUsageTotals } from '../shared/ai.ts';
+import { localDate } from './fsrs.ts';
 import { learningDashboard } from './dashboard.ts';
-import { archiveDateBoundary } from '../shared/archive-date.ts';
-import { advanceReviewCard, FSRS_PARAMETERS, FSRS_VERSION, localDate, newReviewCard } from './fsrs.ts';
+import { attemptCompletionsSql, officialAcceptedSql, trustedPassSql } from './verdicts.ts';
+import type { RunStatus } from '../runner/types.ts';
+import { FAILED_RUN_STATUSES } from '../ai/help-card.ts';
+import { dayNumberDate, isoMsSql, localDayAt, localDaySegments, localDaySql } from './local-days.ts';
+
+/** Run outcomes where the user's own code compiled or executed but did not pass every case. */
+const PRACTICE_RUN_STATUS_LIST: readonly RunStatus[] = ['completed', 'wrong_answer', 'compile_error', 'runtime_error', 'timeout', 'output_limit'];
+const PRACTICE_RUN_STATUSES = PRACTICE_RUN_STATUS_LIST.map(status => `'${status}'`).join(', ');
+/** Local outcomes that are the user's code failing a check. Unlike the AI help suggestion, compile errors are left out:
+ * they say little about the topic. A stored wrong_answer always had an expectation: unjudged runs end as completed. */
+const STRUGGLE_RUN_STATUSES = ['wrong_answer', ...FAILED_RUN_STATUSES].map(status => `'${status}'`).join(', ');
+/** Official verdicts that reject the code; compile errors, internal errors and unknown results are not counted. */
+const OFFICIAL_REJECTED_STATUSES = ['wrong_answer', 'runtime_error', 'timeout', 'memory_limit', 'output_limit'].map(status => `'${status}'`).join(', ');
 import { ProblemReviewRepository } from './problem-review-repository.ts';
-import type { AdvanceReviewSessionInput, ProblemReviewAssessmentInput, ProblemReviewBatchInput, ProblemReviewCorrectionInput,
-  ProblemReviewEvent, ProblemReviewPlan, ProblemReviewPreviewInput, ReviewAssessmentDraftInput, ReviewOpportunityFilter,
-  ReviewPlanQuery, StartReviewSessionInput, SubmitReviewOpportunityInput } from '../shared/review-plan.ts';
+import type { AdvanceReviewSessionInput, ProblemReviewAssessmentInput, ProblemReviewBatchInput, ProblemReviewCorrectionInput, ProblemReviewPreviewInput, ReviewAssessmentDraftInput, ReviewOpportunityFilter, ReviewPlanQuery, StartReviewSessionInput, SubmitReviewOpportunityInput } from '../shared/review-plan.ts';
 import type { PageRequest } from '../shared/learning.ts';
 
 type Row = Record<string, string | number | null>;
@@ -43,7 +49,6 @@ function canonical(value: unknown): string {
 function hash(value: unknown): string { return createHash('sha256').update(canonical(value)).digest('hex'); }
 function sha(value: string): void { if (!/^[a-f0-9]{64}$/.test(value)) throw new Error('Invalid SHA-256 reference'); }
 function zone(value: string): void { text(value, 'time zone', 100); new Intl.DateTimeFormat('en', { timeZone: value }).format(); }
-const like = (value: string) => `%${value.replace(/[\\%_]/g, match => `\\${match}`)}%`;
 const attachmentUrlPrefix = 'algopractice://app/attachment/';
 function markdownAttachmentHashes(markdown: string): string[] {
   // Keep registered URLs mentioned in code/text conservatively too; never change the Markdown itself.
@@ -60,12 +65,6 @@ function backfillAttachmentHashReferences(db: DatabaseSync, hash: string): void 
   const insert = db.prepare('INSERT OR IGNORE INTO note_attachment_refs VALUES (?, ?, ?)');
   const versions = db.prepare('SELECT note_id, version, markdown FROM note_versions WHERE instr(markdown, ?) > 0').iterate(attachmentUrlPrefix + hash);
   for (const row of versions) if (markdownAttachmentHashes(row.markdown as string).includes(hash)) insert.run(row.note_id, row.version, hash);
-}
-/** Idempotent reference-index repair, also run for development schema 4 databases from before URL tracking. */
-export function backfillNoteAttachmentReferences(db: DatabaseSync): void {
-  const insert = db.prepare('INSERT OR IGNORE INTO note_attachment_refs VALUES (?, ?, ?)');
-  for (const ref of registeredMarkdownReferences(db)) insert.run(ref.noteId, ref.version, ref.hash);
-  db.exec('DELETE FROM attachment_deletion_candidates WHERE EXISTS(SELECT 1 FROM note_attachment_refs r WHERE r.hash = attachment_deletion_candidates.hash)');
 }
 export function defaultLearningSettings(): LearningSettings {
   return { dailyReviewBudget: 3, dailyPracticeGoal: 3, timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC', updatedAt: '1970-01-01T00:00:00.000Z', aiAutoAnalyzeOfficial: false };
@@ -100,7 +99,7 @@ export class LearningRepository {
   }
   listAttachmentReferences(): Attachment[] {
     const hashes = new Set((this.db.prepare('SELECT DISTINCT hash FROM note_attachment_refs').all() as Row[]).map(row => row.hash as string));
-    // Older snapshots may predate URL tracking. Inspect their actual historical Markdown as well.
+    // Also scan the saved Markdown: an attachment it still mentions stays in backups even if its reference row is missing.
     for (const ref of registeredMarkdownReferences(this.db)) hashes.add(ref.hash);
     return [...hashes].sort().map(hash => this.getAttachment(hash)!);
   }
@@ -153,7 +152,7 @@ export class LearningRepository {
     if (filter.kind) { clauses.push('n.kind = ?'); values.push(filter.kind); }
     if (filter.subjectId) { clauses.push('n.subject_id = ?'); values.push(filter.subjectId); }
     if (filter.tag) { clauses.push('EXISTS(SELECT 1 FROM note_versions v, json_each(v.tags_json) t WHERE v.note_id = n.id AND lower(t.value) = lower(?))'); values.push(filter.tag); }
-    if (filter.search) { clauses.push("EXISTS(SELECT 1 FROM note_versions v WHERE v.note_id = n.id AND (v.title LIKE ? ESCAPE '\\' OR v.markdown LIKE ? ESCAPE '\\'))"); values.push(like(filter.search), like(filter.search)); }
+    if (filter.search) { clauses.push("EXISTS(SELECT 1 FROM note_versions v WHERE v.note_id = n.id AND (v.title LIKE ? ESCAPE '\\' OR v.markdown LIKE ? ESCAPE '\\'))"); values.push(literalLike(filter.search), literalLike(filter.search)); }
     return (this.db.prepare(`SELECT n.id FROM notes n ${clauses.length ? `WHERE ${clauses.join(' AND ')}` : ''} ORDER BY n.updated_at DESC, n.id`).all(...values) as Row[])
       .map(row => this.getNote(row.id as string)!);
   }
@@ -166,7 +165,7 @@ export class LearningRepository {
     if (filter.kind) { if (!['problem', 'topic'].includes(filter.kind)) throw new Error('Invalid note kind'); clauses.push('n.kind = ?'); values.push(filter.kind); }
     if (filter.subjectId) { clauses.push('n.subject_id = ?'); values.push(filter.subjectId); }
     if (filter.tag) { clauses.push('EXISTS(SELECT 1 FROM note_versions v, json_each(v.tags_json) t WHERE v.note_id = n.id AND lower(t.value) = lower(?))'); values.push(filter.tag); }
-    if (search) { clauses.push("EXISTS(SELECT 1 FROM note_versions v WHERE v.note_id = n.id AND (v.title LIKE ? ESCAPE '\\' OR v.markdown LIKE ? ESCAPE '\\' OR EXISTS(SELECT 1 FROM json_each(v.tags_json) tag WHERE tag.value LIKE ? ESCAPE '\\')))"); values.push(like(search), like(search), like(search)); }
+    if (search) { clauses.push("EXISTS(SELECT 1 FROM note_versions v WHERE v.note_id = n.id AND (v.title LIKE ? ESCAPE '\\' OR v.markdown LIKE ? ESCAPE '\\' OR EXISTS(SELECT 1 FROM json_each(v.tags_json) tag WHERE tag.value LIKE ? ESCAPE '\\')))"); values.push(literalLike(search), literalLike(search), literalLike(search)); }
     const where = clauses.length ? `WHERE ${clauses.join(' AND ')}` : '';
     const total = this.db.prepare(`SELECT COUNT(*) AS total FROM notes n ${where}`).get(...values)!.total as number;
     const rows = this.db.prepare(`SELECT n.id, n.kind, n.subject_id, n.latest_version, n.confirmed_version,
@@ -268,11 +267,9 @@ export class LearningRepository {
   }
   /** Part of PracticeStore's single archive-deletion transaction. Independent learning content stays intact. */
   detachAndDeleteAttemptData(attemptId: string): void {
-    this.db.prepare('UPDATE review_events SET attempt_id = NULL WHERE attempt_id = ?').run(attemptId);
     this.db.prepare('UPDATE note_versions SET ai_request_id = NULL WHERE ai_request_id IN (SELECT id FROM ai_requests WHERE attempt_id = ?)').run(attemptId);
     this.db.prepare(`UPDATE ai_requests SET cached_from_request_id = NULL
       WHERE attempt_id <> ? AND cached_from_request_id IN (SELECT id FROM ai_requests WHERE attempt_id = ?)`).run(attemptId, attemptId);
-    this.db.prepare('DELETE FROM ai_help_used WHERE attempt_id = ?').run(attemptId);
     this.db.prepare('DELETE FROM ai_help_state WHERE attempt_id = ?').run(attemptId);
     this.db.prepare('DELETE FROM activity_samples WHERE attempt_id = ?').run(attemptId);
     this.db.prepare('DELETE FROM ai_requests WHERE attempt_id = ?').run(attemptId);
@@ -304,61 +301,9 @@ export class LearningRepository {
       return settings;
     });
   }
-  private compatibleReview(plan: ProblemReviewPlan): ReviewItem {
-    return { id: plan.id, problemId: plan.problemId, target: 'understanding', language: 'none', dueAt: plan.dueAt,
-      scheduledAt: plan.scheduledAt, suspended: plan.suspended, card: plan.card, algorithmVersion: plan.algorithmVersion,
-      createdAt: plan.createdAt, updatedAt: plan.updatedAt };
-  }
-  private compatibleEvent(event: ProblemReviewEvent): ReviewEvent {
-    return { id: event.id, requestId: event.requestId, itemId: event.planId, kind: event.kind, rating: event.rating,
-      reviewedAt: event.observedAt, createdAt: event.createdAt, correctsEventId: event.correctsEventId,
-      algorithmVersion: event.algorithmVersion, attemptId: event.attemptId, learningDate: event.learningDate,
-      isInitialAssessment: event.isInitialAssessment };
-  }
-  addReviewItem(input: AddReviewItemInput): ReviewItem {
-    return this.compatibleReview(this.reviews.addProblemReview(input.problemId, input.now));
-  }
-  getReviewItem(id: string): ReviewItem | undefined { const plan = this.reviews.resolveProblemReview(id); return plan ? this.compatibleReview(plan) : undefined; }
-  listReviewItems(filter: ReviewFilter = {}): ReviewItem[] {
-    return this.reviews.listProblemReviews().filter(plan => !filter.problemId || plan.problemId === filter.problemId).map(plan => this.compatibleReview(plan));
-  }
-  listReviewEvents(itemId: string): ReviewEvent[] { return this.reviews.listProblemReviewEvents(itemId).map(event => this.compatibleEvent(event)); }
-  recordReview(input: ReviewFeedbackInput): ReviewFeedbackResult {
-    const result = this.reviews.recordCompatibleReview(input); return { item: this.compatibleReview(result.plan), event: this.compatibleEvent(result.event) };
-  }
-  correctReview(input: CorrectReviewInput): ReviewFeedbackResult {
-    const result = this.reviews.correctProblemReview(input); return { item: this.compatibleReview(result.plan), event: this.compatibleEvent(result.event) };
-  }
-  setReviewPlan(itemId: string, input: { suspended?: boolean; scheduledAt?: string | null }): ReviewItem {
-    const plan = this.reviews.resolveProblemReview(itemId); if (!plan) throw new Error('Review item not found');
-    return this.compatibleReview(this.reviews.updateProblemReviews({ problemIds: [plan.problemId], ...input })[0]);
-  }
-  getTodayQueue(at = now()): TodayQueue {
-    at = timestamp(at); const snapshot = this.reviews.getReviewPlanSnapshot({ view: 'today', limit: 100 }, at), settings = this.getLearningSettings();
-    const day = snapshot.summary.date, end = archiveDateBoundary(day, settings.timeZone, true);
-    const done = new Set((this.db.prepare('SELECT problem_id FROM problem_review_day_assessments WHERE learning_date=?').all(day) as Row[]).map(row => String(row.problem_id)));
-    const eligible = this.reviews.listProblemReviews().filter(plan => !plan.suspended && plan.dueAt && plan.dueAt < end
-      && (!plan.scheduledAt || plan.scheduledAt <= at) && !done.has(plan.problemId))
-      .sort((a, b) => (a.scheduledAt && a.scheduledAt > a.dueAt! ? a.scheduledAt : a.dueAt!).localeCompare(b.scheduledAt && b.scheduledAt > b.dueAt! ? b.scheduledAt : b.dueAt!) || a.problemId.localeCompare(b.problemId));
-    const admitted = snapshot.summary.remainingBudget === null ? eligible : eligible.slice(0, snapshot.summary.remainingBudget);
-    const fresh = (this.db.prepare(`SELECT h.problem_id FROM library_problem_heads h JOIN problem_versions v ON v.problem_id=h.problem_id AND v.version=h.version
-      WHERE NOT EXISTS(SELECT 1 FROM attempts a WHERE a.problem_id=h.problem_id)
-      AND NOT EXISTS(SELECT 1 FROM problem_review_plans r WHERE r.problem_id=h.problem_id)
-      AND (length(trim(COALESCE(json_extract(v.snapshot_json, '$.starter.python'), ''), ${SQL_TRIM_WHITESPACE})) > 0
-        OR length(trim(COALESCE(json_extract(v.snapshot_json, '$.starter.java'), ''), ${SQL_TRIM_WHITESPACE})) > 0
-        OR length(trim(COALESCE(json_extract(v.snapshot_json, '$.starter.go'), ''), ${SQL_TRIM_WHITESPACE})) > 0
-        OR (length(trim(COALESCE(json_extract(v.snapshot_json, '$.starter.cpp'), ''), ${SQL_TRIM_WHITESPACE})) > 0
-          AND (json_extract(v.snapshot_json, '$.mode') = 'acm' OR (json_type(v.snapshot_json, '$.adapter') = 'object'
-            AND NOT EXISTS(SELECT 1 FROM json_tree(v.snapshot_json, '$.adapter.params') t WHERE t.type = 'text' AND t.value = 'bigint')
-            AND NOT EXISTS(SELECT 1 FROM json_tree(v.snapshot_json, '$.adapter.returns') t WHERE t.type = 'text' AND t.value = 'bigint')))))
-      AND (json_extract(v.snapshot_json, '$.mode')='acm' OR json_type(v.snapshot_json, '$.adapter')='object')
-      AND json_array_length(v.snapshot_json, '$.cases') > 0 ORDER BY h.created_at,h.problem_id LIMIT 3`).all() as Row[]).map(row => String(row.problem_id));
-    return { date: day, timeZone: settings.timeZone, budget: settings.dailyReviewBudget, reviewedToday: snapshot.summary.reviewedToday,
-      remainingBudget: snapshot.summary.remainingBudget, items: admitted.map(plan => this.compatibleReview(plan)),
-      dueCount: snapshot.summary.dueCount, overdueCount: snapshot.summary.overdueCount, deferredCount: snapshot.summary.deferredCount,
-      suspendedCount: snapshot.summary.suspendedCount, newProblemIds: fresh };
-  }
-  addProblemReview(problemId: string) { return this.reviews.addProblemReview(problemId); }
+  /** Reviews due today (the reminder's count), from the same snapshot as the review plan. */
+  dueReviewCount(at = now()): number { return this.reviews.getReviewPlanSnapshot({ view: 'today', limit: 1 }, timestamp(at)).summary.dueCount; }
+  addProblemReview(problemId: string, at?: string) { return this.reviews.addProblemReview(problemId, at); }
   addProblemReviews(input: { problemIds: string[] }) { return this.reviews.addProblemReviews(input); }
   getProblemReview(problemId: string) { return this.reviews.getProblemReview(problemId); }
   listProblemReviews() { return this.reviews.listProblemReviews(); }
@@ -384,6 +329,11 @@ export class LearningRepository {
   advanceReviewSession(input: AdvanceReviewSessionInput) { return this.reviews.advanceReviewSession(input); }
   endReviewSession(id: string) { return this.reviews.endReviewSession(id); }
 
+  /** Effective practice time recorded for one attempt (the workbench timer's starting point). */
+  attemptActiveMs(attemptId: string): number {
+    text(attemptId, 'attempt id', 200);
+    return Number((this.db.prepare('SELECT COALESCE(SUM(duration_ms), 0) AS total FROM activity_samples WHERE attempt_id = ?').get(attemptId) as Row).total);
+  }
   recordActivity(input: ActivitySampleInput): ActivitySample {
     text(input.requestId, 'activity request id', 200); integer(input.durationMs, 'activity duration', 0, 30000);
     const occurredAt = timestamp(input.occurredAt);
@@ -401,62 +351,108 @@ export class LearningRepository {
       return sample;
     });
   }
-  getLearningDashboard(month?: string, at = now()) {
-    return learningDashboard(this.db, this.getLearningSettings(), () => this.listReviewItems(), month, timestamp(at));
+  getLearningDashboard(at = now()) {
+    return learningDashboard(this.db, this.getLearningSettings(), timestamp(at));
+  }
+  /** Current-state struggle signals for every problem that still has a practice archive (deleting an archive removes
+   * its runs, official results and AI requests, so they stop counting). Tags and title come from the library head. */
+  listProblemStruggleSignals(): ProblemStruggleSignals[] {
+    const rows = this.db.prepare(`WITH practiced AS (SELECT DISTINCT problem_id FROM attempts),
+      local AS (SELECT a.problem_id, SUM(${trustedPassSql('r')}) AS passed, SUM(r.status IN (${STRUGGLE_RUN_STATUSES})) AS failed
+        FROM runs r JOIN attempts a ON a.id = r.attempt_id GROUP BY a.problem_id),
+      official AS (SELECT a.problem_id, SUM(json_extract(s.result_json, '$.status') = 'accepted') AS accepted,
+        SUM(json_extract(s.result_json, '$.status') IN (${OFFICIAL_REJECTED_STATUSES})) AS rejected
+        FROM official_submissions s JOIN attempts a ON a.id = s.attempt_id WHERE s.status = 'completed' GROUP BY a.problem_id),
+      helps AS (SELECT a.problem_id, COUNT(*) AS helps FROM ai_requests q JOIN attempts a ON a.id = q.attempt_id
+        WHERE q.status = 'completed' AND json_extract(q.snapshot_json, '$.kind') IN ('hint', 'diagnosis', 'chat') GROUP BY a.problem_id),
+      ratings AS (SELECT problem_id, effective_rating FROM (SELECT problem_id, effective_rating,
+        ROW_NUMBER() OVER (PARTITION BY problem_id ORDER BY observed_at DESC, sequence DESC) AS position FROM problem_review_effective_events) WHERE position = 1)
+      SELECT p.problem_id AS problem_id, COALESCE(json_extract(v.snapshot_json, '$.title'), p.problem_id) AS title,
+        COALESCE(json_extract(v.snapshot_json, '$.tags'), '[]') AS tags_json, COALESCE(l.passed, 0) AS passed, COALESCE(l.failed, 0) AS failed,
+        COALESCE(o.accepted, 0) AS accepted, COALESCE(o.rejected, 0) AS rejected, COALESCE(h.helps, 0) AS helps, r.effective_rating AS rating
+      FROM practiced p LEFT JOIN library_problem_heads head ON head.problem_id = p.problem_id
+        LEFT JOIN problem_versions v ON v.problem_id = head.problem_id AND v.version = head.version
+        LEFT JOIN local l ON l.problem_id = p.problem_id LEFT JOIN official o ON o.problem_id = p.problem_id
+        LEFT JOIN helps h ON h.problem_id = p.problem_id LEFT JOIN ratings r ON r.problem_id = p.problem_id
+      ORDER BY p.problem_id`).all() as Row[];
+    return rows.map(row => {
+      let tags: unknown = []; try { tags = JSON.parse(String(row.tags_json)); } catch { tags = []; }
+      return { problemId: String(row.problem_id), title: String(row.title), tags: Array.isArray(tags) ? tags.filter((tag): tag is string => typeof tag === 'string') : [],
+        passedRuns: Number(row.passed), failedRuns: Number(row.failed), officialAccepted: Number(row.accepted), officialRejected: Number(row.rejected),
+        aiHelps: Number(row.helps), rating: row.rating === null ? null : Number(row.rating) as ReviewRating };
+    });
   }
   getArchiveStatistics(input: { attemptId?: string; from?: string; to?: string; timeZone?: string } = {}): ArchiveStatistics {
     const timeZone = input.timeZone ?? this.getLearningSettings().timeZone; zone(timeZone);
     const from = input.from ? timestamp(input.from) : '', to = input.to ? timestamp(input.to) : '9999';
-    // Reuse one formatter and let SQLite aggregate small date/count rows, never Run code or results.
-    const formatter = new Intl.DateTimeFormat('en', { timeZone, year: 'numeric', month: '2-digit', day: '2-digit' });
-    type DayRange = { date: string; start: number; end: number };
-    const ranges = new Map<string, DayRange>(); let recent: DayRange | undefined;
-    const rangeAt = (at: number): DayRange => {
-      if (recent && at >= recent.start && at < recent.end) return recent;
-      const parts = formatter.formatToParts(new Date(at));
-      const date = ['year', 'month', 'day'].map(type => parts.find(part => part.type === type)!.value).join('-');
-      let range = ranges.get(date);
-      if (!range) { range = { date, start: Date.parse(archiveDateBoundary(date, timeZone)), end: Date.parse(archiveDateBoundary(date, timeZone, true)) }; ranges.set(date, range); }
-      recent = range; return range;
-    };
-    this.db.function('practice_local_date', { deterministic: true }, at => rangeAt(Date.parse(String(at))).date);
-    let cachedSample: { at: string; duration: number; parts: [string, number, string, number] } | undefined;
-    this.db.function('practice_activity_part', { deterministic: true }, (value, durationValue, part) => {
-      const at = String(value), duration = Number(durationValue);
-      if (!cachedSample || cachedSample.at !== at || cachedSample.duration !== duration) {
-        const end = Date.parse(at), start = end - duration;
-        // A pulse describes [end-duration, end), so exactly-midnight samples belong to yesterday.
-        const first = rangeAt(start), last = rangeAt(duration > 0 ? end - 1 : end);
-        const previous = first.date === last.date ? 0 : Math.max(0, last.start - start);
-        cachedSample = { at, duration, parts: [last.date, duration - previous, first.date, previous] };
-      }
-      return cachedSample.parts[Number(part)];
-    });
     const days = new Map<string, ActivityDay>();
-    const day = (date: string) => { if (!days.has(date)) days.set(date, { date, activeMs: 0, attempts: 0, runs: 0, passedRuns: 0, reviewCount: 0 }); return days.get(date)!; };
+    const day = (date: string) => { if (!days.has(date)) days.set(date, { date, activeMs: 0, attempts: 0, completedProblems: 0, runs: 0, passedRuns: 0, practiceRuns: 0, officialAccepted: 0, reviewCount: 0 }); return days.get(date)!; };
     const condition = input.attemptId ? ' AND attempt_id = ?' : '', args = input.attemptId ? [from, to, input.attemptId] : [from, to];
+    const attemptCondition = input.attemptId ? ' AND id = ?' : '';
     let activeMs = 0, attempts = 0, runs = 0, passedRuns = 0;
     const activityWhere = `occurred_at >= ? AND occurred_at <= ?${condition}`;
-    for (const row of this.db.prepare(`SELECT practice_activity_part(occurred_at, duration_ms, 0) AS date,
-      SUM(practice_activity_part(occurred_at, duration_ms, 1)) AS duration FROM activity_samples WHERE ${activityWhere} GROUP BY date
-      UNION ALL SELECT practice_activity_part(occurred_at, duration_ms, 2) AS date,
-      SUM(practice_activity_part(occurred_at, duration_ms, 3)) AS duration FROM activity_samples
-      WHERE ${activityWhere} AND practice_activity_part(occurred_at, duration_ms, 3) > 0 GROUP BY date`).all(...args, ...args) as Row[]) {
-      activeMs += row.duration as number; day(row.date as string).activeMs += row.duration as number;
+    // Official results live with their attempt, so deleting an archive removes them exactly like its local runs.
+    const officialWhere = `${officialAcceptedSql('s')}
+      AND s.finished_at >= ? AND s.finished_at <= ?${input.attemptId ? ' AND s.attempt_id = ?' : ''}`;
+    // Local dates are bucketed inside SQLite from precomputed day segments (local-days.ts). A JavaScript callback per
+    // row kept the main process busy for about a second per 100k focus samples, and statistics refresh every minute.
+    const extent = this.db.prepare(`SELECT MIN(low) AS low, MAX(high) AS high FROM (
+      SELECT MIN(occurred_at) AS low, MAX(occurred_at) AS high FROM activity_samples WHERE ${activityWhere}
+      UNION ALL SELECT MIN(started_at), MAX(started_at) FROM attempts WHERE started_at >= ? AND started_at <= ?${attemptCondition}
+      UNION ALL SELECT MIN(ended_at), MAX(ended_at) FROM attempts WHERE ended_at IS NOT NULL AND ended_at >= ? AND ended_at <= ?${attemptCondition}
+      UNION ALL SELECT MIN(created_at), MAX(created_at) FROM runs WHERE created_at >= ? AND created_at <= ?${condition}
+      UNION ALL SELECT MIN(s.finished_at), MAX(s.finished_at) FROM official_submissions s WHERE ${officialWhere})`).get(...args, ...args, ...args, ...args, ...args) as Row;
+    if (extent.low !== null) {
+      const segments = localDaySegments(Date.parse(String(extent.low)), Date.parse(String(extent.high)), timeZone);
+      const byDay = localDaySql('ms', segments).day, last = localDaySql('last_at', segments);
+      const date = (value: unknown) => { if (typeof value !== 'number') throw new Error('统计日期映射不完整。'); return dayNumberDate(value); };
+      // "LIMIT -1" keeps SQLite from flattening the timestamp subquery into every CASE branch, which would parse
+      // each timestamp once per reference instead of once per row.
+      const timestamps = (column: string, rest: string) => `(SELECT ${isoMsSql(column)} AS ms${rest} LIMIT -1)`;
+      // A pulse describes [end-duration, end), so exactly-midnight samples belong to yesterday. A pulse that crosses
+      // midnight gives the part before it to the previous local day: pulses last at most 30 s and every non-empty
+      // local day is far longer, so that day is the one containing the instant just before the boundary.
+      for (const row of this.db.prepare(`SELECT day, MIN(last_start) - 1 AS before_start, SUM(duration - previous) AS duration, SUM(previous) AS carried FROM (
+          SELECT ${last.day} AS day, ${last.dayStart} AS last_start, duration, MAX(0, ${last.dayStart} - first_at) AS previous
+          FROM (SELECT ms - (duration > 0) AS last_at, ms - duration AS first_at, duration FROM ${timestamps('occurred_at', `, duration_ms AS duration
+            FROM activity_samples WHERE ${activityWhere}`)} LIMIT -1)) GROUP BY day`).all(...args) as Row[]) {
+        activeMs += (row.duration as number) + (row.carried as number); day(date(row.day)).activeMs += row.duration as number;
+        if ((row.carried as number) > 0) day(date(localDayAt(row.before_start as number, segments))).activeMs += row.carried as number;
+      }
+      for (const row of this.db.prepare(`SELECT ${byDay} AS day, COUNT(*) AS count FROM ${timestamps('started_at', `
+        FROM attempts WHERE started_at >= ? AND started_at <= ?${attemptCondition}`)} GROUP BY day`).all(...args) as Row[]) {
+        attempts += row.count as number; day(date(row.day)).attempts = row.count as number;
+      }
+      // Completion instants are run, official or end times of these attempts, all inside the extent above.
+      for (const row of this.db.prepare(`SELECT ${byDay} AS day, COUNT(DISTINCT problem_id) AS count FROM ${timestamps('completed_at', `, problem_id
+        FROM (${attemptCompletionsSql(input.attemptId ? 'a.id = ?' : '')}) WHERE completed_at >= ? AND completed_at <= ?`)} GROUP BY day`)
+        .all(...(input.attemptId ? [input.attemptId, from, to] : [from, to])) as Row[]) {
+        day(date(row.day)).completedProblems = row.count as number;
+      }
+      for (const row of this.db.prepare(`SELECT ${byDay} AS day, COUNT(*) AS count, SUM(${trustedPassSql()}) AS passed,
+        SUM(status IN (${PRACTICE_RUN_STATUSES})) AS practiced FROM ${timestamps('created_at', `, status, expected_output_source
+        FROM runs WHERE created_at >= ? AND created_at <= ?${condition}`)} GROUP BY day`).all(...args) as Row[]) {
+        runs += row.count as number; passedRuns += row.passed as number;
+        Object.assign(day(date(row.day)), { runs: row.count as number, passedRuns: row.passed as number, practiceRuns: row.practiced as number });
+      }
+      for (const row of this.db.prepare(`SELECT ${byDay} AS day, COUNT(DISTINCT problem_id) AS count FROM ${timestamps('s.finished_at', `, a.problem_id
+        FROM official_submissions s JOIN attempts a ON a.id = s.attempt_id WHERE ${officialWhere}`)} GROUP BY day`).all(...args) as Row[]) {
+        day(date(row.day)).officialAccepted = row.count as number;
+      }
     }
-    for (const row of this.db.prepare(`SELECT practice_local_date(started_at) AS date, COUNT(*) AS count
-      FROM attempts WHERE started_at >= ? AND started_at <= ?${input.attemptId ? ' AND id = ?' : ''} GROUP BY date`).all(...args) as Row[]) {
-      attempts += row.count as number; day(row.date as string).attempts = row.count as number;
-    }
-    for (const row of this.db.prepare(`SELECT practice_local_date(created_at) AS date, COUNT(*) AS count, SUM(status = 'passed') AS passed
-      FROM runs WHERE created_at >= ? AND created_at <= ?${condition} GROUP BY date`).all(...args) as Row[]) {
-      runs += row.count as number; passedRuns += row.passed as number; day(row.date as string).runs = row.count as number; day(row.date as string).passedRuns = row.passed as number;
-    }
+    const solved = this.db.prepare(`SELECT COUNT(*) AS solved, COALESCE(SUM(official), 0) AS official FROM (
+      SELECT problem_id, MAX(official) AS official FROM (
+        SELECT a.problem_id, 0 AS official FROM runs r JOIN attempts a ON a.id = r.attempt_id
+          WHERE ${trustedPassSql('r')} AND r.created_at >= ? AND r.created_at <= ?${input.attemptId ? ' AND r.attempt_id = ?' : ''}
+        UNION ALL
+        SELECT a.problem_id, 1 AS official FROM official_submissions s JOIN attempts a ON a.id = s.attempt_id WHERE ${officialWhere}
+      ) GROUP BY problem_id)`).get(...args, ...args)!;
     for (const row of this.db.prepare(`SELECT learning_date AS date, COUNT(DISTINCT problem_id) AS count
       FROM problem_review_effective_events WHERE is_initial=0 AND observed_at>=? AND observed_at<=?${condition} GROUP BY learning_date`).all(...args) as Row[]) day(row.date as string).reviewCount = row.count as number;
     const reviewedItems = this.db.prepare(`SELECT COUNT(DISTINCT problem_id) AS count FROM problem_review_effective_events
       WHERE is_initial=0 AND observed_at>=? AND observed_at<=?${condition}`).get(...args)!.count as number;
-    return { activeMs, attempts, runs, passedRuns, reviewedItems, days: [...days.values()].sort((a, b) => a.date.localeCompare(b.date)) };
+    return { activeMs, attempts, runs, passedRuns, reviewedItems, solvedProblems: solved.solved as number, officialSolvedProblems: solved.official as number,
+      days: [...days.values()].sort((a, b) => a.date.localeCompare(b.date)) };
   }
 
   private aiRecord(row: Row): AiRequestRecord {
@@ -505,17 +501,42 @@ export class LearningRepository {
         if (canonical({ status: request.status, response: request.response, error: request.error, usage: request.usage, cachedFromRequestId: request.cachedFromRequestId }) !== canonical(completion)) throw new Error('AI request already has a different terminal result');
         return request;
       }
+      // The service refuses help during an active strict interview before it gets here; the store refuses it as well.
+      if (completion.status === 'completed' && request.snapshot.mode === 'strict' && request.snapshot.isActive) throw new Error('An active strict interview cannot complete an AI request');
       if (completion.cachedFromRequestId) { const cached = this.getAIRequest(completion.cachedFromRequestId);
         if (!cached || cached.status !== 'completed' || cached.requestHash !== request.requestHash || canonical(cached.response) !== canonical(completion.response)) throw new Error('AI cache reference does not match completed request'); }
       this.db.prepare('UPDATE ai_requests SET status = ?, response_json = ?, error_json = ?, usage_json = ?, cached_from_request_id = ?, finished_at = ? WHERE id = ?')
         .run(completion.status, canonical(completion.response), canonical(completion.error), canonical(completion.usage), completion.cachedFromRequestId, now(), id);
-      if (completion.status === 'completed') this.markAIHelpUsed(request.attemptId, id, request.snapshot.level);
       return this.getAIRequest(id)!;
     });
   }
   recoverInterruptedAIRequests(): number {
     return this.transaction(() => Number(this.db.prepare("UPDATE ai_requests SET status = 'interrupted', error_json = ?, finished_at = ? WHERE status IN ('pending','streaming','repairing')")
       .run(canonical({ code: 'INTERRUPTED', message: 'Application stopped before the AI request finished; no request was repeated.', retryable: true }), now()).changes));
+  }
+  /** Provider-reported usage of finished requests by day and month of the learning time zone (see AiUsageSummary). */
+  getAIUsageSummary(at = now()): AiUsageSummary {
+    const timeZone = this.getLearningSettings().timeZone, today = localDate(at, timeZone), month = today.slice(0, 7);
+    const empty = (): AiUsageTotals => ({ requests: 0, calls: 0, tokens: 0, unreported: 0 });
+    const summary: AiUsageSummary = { timeZone, today: empty(), month: empty(), all: empty(), monthByModel: [] };
+    const models = new Map<string, AiUsageTotals>();
+    const add = (totals: AiUsageTotals, calls: number, tokens: number | null) => {
+      totals.requests++; totals.calls += calls; if (tokens === null) totals.unreported++; else totals.tokens += tokens;
+    };
+    for (const row of this.db.prepare(`SELECT created_at, json_extract(snapshot_json, '$.provider.model') AS model,
+        json_extract(usage_json, '$.calls') AS calls, json_extract(usage_json, '$.totalTokens') AS tokens
+      FROM ai_requests WHERE finished_at IS NOT NULL AND created_at <= ?`).all(at) as Row[]) {
+      const day = localDate(String(row.created_at), timeZone), calls = Number(row.calls ?? 0), tokens = row.tokens === null ? null : Number(row.tokens);
+      add(summary.all, calls, tokens);
+      if (day === today) add(summary.today, calls, tokens);
+      if (day.slice(0, 7) !== month) continue;
+      add(summary.month, calls, tokens);
+      const model = typeof row.model === 'string' && row.model ? row.model : '未知模型';
+      if (!models.has(model)) models.set(model, empty());
+      add(models.get(model)!, calls, tokens);
+    }
+    summary.monthByModel = [...models].map(([model, totals]) => ({ model, ...totals })).sort((a, b) => b.tokens - a.tokens || a.model.localeCompare(b.model));
+    return summary;
   }
   getAIHelpState(attemptId: string): AiHelpState {
     const row = this.db.prepare('SELECT * FROM ai_help_state WHERE attempt_id = ?').get(attemptId) as Row | undefined;
@@ -530,11 +551,5 @@ export class LearningRepository {
   }
   dismissAIHelp(attemptId: string): void {
     this.transaction(() => { this.db.prepare('INSERT INTO ai_help_state VALUES (?, NULL, ?) ON CONFLICT(attempt_id) DO UPDATE SET dismissed_at = COALESCE(dismissed_at, excluded.dismissed_at)').run(attemptId, now()); });
-  }
-  markAIHelpUsed(attemptId: string, requestId: string, legacyLevel?: AiLevel): void {
-    this.transaction(() => { const request = this.getAIRequest(requestId);
-      if (!request || request.status !== 'completed' || request.attemptId !== attemptId || (legacyLevel !== undefined && request.snapshot.level !== legacyLevel) || (request.snapshot.mode === 'strict' && request.snapshot.isActive)) throw new Error('AI help record does not match a completed request and mode');
-      this.db.prepare('INSERT OR IGNORE INTO ai_help_used VALUES (?, ?, ?, ?)').run(requestId, attemptId, request.snapshot.level ?? 'adaptive', now());
-    });
   }
 }

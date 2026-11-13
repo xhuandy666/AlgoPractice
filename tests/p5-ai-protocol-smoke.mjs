@@ -125,7 +125,7 @@ try {
     const selected = sent.evidenceCatalog.find(entry => entry.kind === scenario), { referenceId, ...canonicalEvidence } = selected;
     check(`${scenario}: real loopback fetch-body reference selection completes once and persists canonical source evidence without repair`, () => {
       assert.equal(result.status, 'completed'); assert.equal(requests.length - before, 1); assert.equal(result.usage.calls, 1);
-      assert.equal(result.snapshot.promptVersion, 'tilian-chat-coach-v2.5');
+      assert.equal(result.snapshot.promptVersion, 'tilian-chat-coach-v2.6');
       assert.deepEqual(result.snapshot.evidenceCatalog, sent.evidenceCatalog);
       assert.deepEqual(result.response.evidence, [canonicalEvidence]);
       assert.deepEqual(repository.getAIRequest(activeRequest.requestId).response.evidence, [canonicalEvidence]);

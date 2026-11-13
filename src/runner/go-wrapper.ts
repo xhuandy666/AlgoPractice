@@ -1,5 +1,6 @@
-import type { Adapter, TestCase, ValueType, WireValue } from './types.ts';
-import { observedType } from './values.ts';
+import type { Adapter, DesignAdapter, ProblemAdapter, TestCase, ValueType, WireValue } from './types.ts';
+import { designSteps, goMethodName, isDesignAdapter } from './design.ts';
+import { containsValueType, observedType } from './values.ts';
 
 const goString = (value: string) => `"${[...Buffer.from(value, 'utf8')].map(byte => `\\x${byte.toString(16).padStart(2, '0')}`).join('')}"`;
 function goType(type: ValueType): string {
@@ -20,10 +21,13 @@ function literal(value: WireValue, type: ValueType): string {
   if (type === 'treenode') return `apTree([]interface{}{${((value ?? []) as WireValue[]).map(v => v === null ? 'nil' : `int(${v})`).join(',')}})`;
   return String(value);
 }
-const hasType = (type: ValueType | 'void', wanted: ValueType): boolean => typeof type === 'string' ? type === wanted : hasType('array' in type ? type.array : type.list, wanted);
-export function goNodes(adapter: Adapter): string {
-  const types = [...adapter.params, adapter.returns];
-  return `package main\n${types.some(t => hasType(t, 'listnode')) ? 'type ListNode struct { Val int; Next *ListNode }' : ''}\n${types.some(t => hasType(t, 'treenode')) ? 'type TreeNode struct { Val int; Left, Right *TreeNode }' : ''}\n`;
+/** Every value type a driver handles: node structs and helpers are emitted only when used. */
+function adapterTypes(adapter: ProblemAdapter): Array<ValueType | 'void'> {
+  return isDesignAdapter(adapter) ? [...adapter.constructorParams, ...adapter.methods.flatMap(method => [...method.params, method.returns])] : [...adapter.params, adapter.returns];
+}
+export function goNodes(adapter: ProblemAdapter): string {
+  const types = adapterTypes(adapter);
+  return `package main\n${types.some(t => containsValueType(t, 'listnode')) ? 'type ListNode struct { Val int; Next *ListNode }' : ''}\n${types.some(t => containsValueType(t, 'treenode')) ? 'type TreeNode struct { Val int; Left, Right *TreeNode }' : ''}\n`;
 }
 /** Recognize only the leading package clause; never infer or rewrite imports/functions. */
 export function goFunctionSource(code: string): string {
@@ -51,9 +55,25 @@ export function goWrapper(adapter: Adapter, cases: TestCase[]): string {
     }
     return `case ${index}:\n${declarations}\n${invoke}`;
   }).join('\n');
-  const types = [...adapter.params, adapter.returns];
-  const list = types.some(t => hasType(t, 'listnode'));
-  const tree = types.some(t => hasType(t, 'treenode'));
+  return goProgram(adapterTypes(adapter), branches,
+    `var kind interface{};if err=json.Unmarshal([]byte(${goString(JSON.stringify(observedType(adapter)))}),&kind);err!=nil {panic(err)}`, 'apEncode(apInvoke(index),kind)');
+}
+/** Design problems: Constructor(...) builds the value (LeetCode's Go templates), then exported methods run in order. */
+export function goDesignWrapper(adapter: DesignAdapter, cases: TestCase[]): string {
+  const branches = cases.map((test, index) => {
+    const [constructor, ...calls] = designSteps(adapter, test.args);
+    const lines = calls.map(step => {
+      const call = `apObject.${goMethodName(step.name)}(${step.args.map((value, i) => literal(value, step.params[i])).join(',')})`;
+      return step.returns === 'void' ? `${call}\napOut = append(apOut, nil)` : `apOut = append(apOut, apEncode(${call}, apKinds[${goString(step.name)}]))`;
+    });
+    return `case ${index}:\napObject := Constructor(${constructor.args.map((value, i) => literal(value, constructor.params[i])).join(',')})\n_ = apObject\napOut := []interface{}{nil}\n${lines.join('\n')}\nreturn apOut`;
+  }).join('\n');
+  const kinds = Object.fromEntries(adapter.methods.filter(method => method.returns !== 'void').map(method => [method.name, method.returns]));
+  return goProgram(adapterTypes(adapter), branches, `if err=json.Unmarshal([]byte(${goString(JSON.stringify(kinds))}),&apKinds);err!=nil {panic(err)}`, 'apInvoke(index)', 'var apKinds map[string]interface{}\n');
+}
+function goProgram(types: Array<ValueType | 'void'>, branches: string, setup: string, observe: string, globals = ''): string {
+  const list = types.some(t => containsValueType(t, 'listnode'));
+  const tree = types.some(t => containsValueType(t, 'treenode'));
   return `package main
 import ("encoding/json"; "fmt"; "math"; "math/big"; "os"; "reflect"; "runtime/debug"; "strconv"; "unicode/utf8")
 type apInvalid struct { message string }; func (e apInvalid) Error() string { return e.message }
@@ -77,12 +97,12 @@ func apEncode(value interface{}, kind interface{}) interface{} {
  ${tree ? 'case "treenode": n,ok:=value.(*TreeNode);if !ok {panic(apInvalid{"Expected TreeNode output"})};return apTreeJSON(n)' : ''}
  };panic(apInvalid{"Unsupported output type"})
 }
-func apInvoke(index int) interface{} {switch index {${branches}};panic(apInvalid{"Invalid test index"})}
+${globals}func apInvoke(index int) interface{} {switch index {${branches}};panic(apInvalid{"Invalid test index"})}
 func main() {
  defer func(){if value:=recover();value!=nil {code:="runtime_exception";switch value.(type){case apInvalid:code="invalid_return";case apLimit:code="output_limit"};fmt.Fprintln(os.Stderr,"ALGOPRACTICE_ERROR:"+code+":"+fmt.Sprint(value));os.Stderr.Write(debug.Stack());os.Exit(1)}}()
  index,err:=strconv.Atoi(os.Args[1]);if err!=nil {panic(err)};limit,err:=strconv.Atoi(os.Args[3]);if err!=nil {panic(err)}
- var kind interface{};if err=json.Unmarshal([]byte(${goString(JSON.stringify(observedType(adapter)))}),&kind);err!=nil {panic(err)}
- output,err:=json.Marshal(apEncode(apInvoke(index),kind));if err!=nil {panic(apInvalid{err.Error()})};if len(output)>limit {panic(apLimit{})};if err=os.WriteFile(os.Args[2],output,0600);err!=nil {panic(err)}
+ ${setup}
+ output,err:=json.Marshal(${observe});if err!=nil {panic(apInvalid{err.Error()})};if len(output)>limit {panic(apLimit{})};if err=os.WriteFile(os.Args[2],output,0600);err!=nil {panic(err)}
 }
 `;
 }

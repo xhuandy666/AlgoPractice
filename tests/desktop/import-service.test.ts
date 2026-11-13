@@ -92,7 +92,7 @@ function archive(store: PracticeStore, problemId: string) {
   const problem = store.getProblem(problemId)!;
   const attempt = store.startAttempt({ problemId, language: 'python', problemVersion: problem.version });
   const run = store.beginRun({ attemptId: attempt.id, code: 'historical fixture code', testSuiteVersion: 'fixture-tests-v1',
-    testSnapshot: problem.content.cases as never, adapterVersion: 'fixture-adapter-v1', runtimeVersion: 'fixture runtime' });
+    testSnapshot: problem.content.cases as never, expectedOutputSource: 'native-samples', adapterVersion: 'fixture-adapter-v1', runtimeVersion: 'fixture runtime' });
   store.finishRun(run.id, { status: 'passed', result: { fixture: true } });
   const draft = store.saveDraft({ problemId, language: 'python', code: 'newer unsent fixture edits' });
   return { problem, attempt: store.getAttempt(attempt.id)!, run: store.getRun(run.id)!, draft };
@@ -338,6 +338,46 @@ test('a completed batch with a fixture schema failure retries only its failed it
   assert.equal(done.status, 'completed');
   assert.deepEqual(done.items[0], withErrors.items[0]);
   assert.deepEqual(adapter.calls, ['a', 'b', 'b']);
+});
+
+test('consecutive first-time schema failures pause the job, and retried failures cannot wedge a resume', async t => {
+  const { service, adapter } = fixture(t);
+  const broken = new Set(['b', 'c', 'd']);
+  adapter.contentHandler = async slug => {
+    if (broken.has(slug)) throw new SourceError('SCHEMA_CHANGED', 'fixture field missing');
+    return content(slug);
+  };
+  const preview = await service.prepare({ kind: 'links', text: ['a', 'b', 'c', 'd', 'e'].map(url).join(' ') });
+  const started = service.start(preview.id, 'schema-streak');
+  const paused = await settled(service, started.id);
+  assert.equal(paused.status, 'paused', 'three structure failures in a row look like a site change, not three odd problems');
+  assert.equal(paused.error?.code, 'SCHEMA_CHANGED');
+  assert.match(paused.error?.message ?? '', /连续 3 道题/);
+  assert.deepEqual(paused.items.map(item => item.status), ['imported', 'failed', 'failed', 'failed', 'pending']);
+  assert.deepEqual(adapter.calls, ['a', 'b', 'c', 'd'], 'the remaining problem is not fetched just to fail');
+
+  service.resume(started.id, true);
+  const finished = await settled(service, started.id);
+  assert.equal(finished.status, 'completed_with_errors', 'the same three problems failing again on retry do not pause it a second time');
+  assert.deepEqual(finished.items.map(item => item.status), ['imported', 'failed', 'failed', 'failed', 'imported']);
+  assert.deepEqual(adapter.calls, ['a', 'b', 'c', 'd', 'b', 'c', 'd', 'e']);
+});
+
+test('a rate-limit pause shows the wait the site asked for and never resumes by itself', async t => {
+  const { service, adapter } = fixture(t);
+  adapter.contentHandler = async slug => {
+    if (slug === 'b') throw new SourceError('RATE_LIMITED', '站点限制请求频率；不会自动无限重试。', { httpStatus: 429, retryAfterMs: 90000 }, true);
+    return content(slug);
+  };
+  const preview = await service.prepare({ kind: 'links', text: `${url('a')} ${url('b')} ${url('c')}` });
+  const started = service.start(preview.id, 'rate-limited');
+  const paused = await settled(service, started.id);
+  assert.equal(paused.status, 'paused');
+  assert.equal(paused.error?.code, 'RATE_LIMITED');
+  assert.equal(paused.error?.message, '站点限制请求频率；不会自动无限重试。建议约 2 分钟后再继续。');
+  await delay(20);
+  assert.equal(service.job(started.id).status, 'paused');
+  assert.deepEqual(adapter.calls, ['a', 'b']);
 });
 
 test('a stale membership preview is rejected before it creates a job or placeholder', async t => {

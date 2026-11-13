@@ -1,0 +1,10 @@
+.dash-tile[data-tone=red] { --tile: #ff4b4b; }
+.topic-list { list-style: none; margin: 12px 0 0; padding: 0; display: grid; gap: 10px; }
+.topic-row { display: grid; gap: 6px; padding: 10px 12px; border: 2px solid var(--color-paper-2); border-radius: var(--radius-sm); }
+.topic-head { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 10px; }
+.topic-head strong { font-size: 16px; }
+.topic-head span { font-size: 13px; color: var(--color-muted); font-variant-numeric: tabular-nums; }
+.topic-reasons { list-style: none; margin: 0; padding: 0; display: flex; flex-wrap: wrap; gap: 6px; }
+.topic-reasons li { padding: 1px 8px; border-radius: var(--radius-pill); font-size: 12px; font-weight: 700; color: var(--color-error); background: var(--color-error-soft); }
+.topic-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 12px; }
+.topic-actions .button, .topic-actions .text-button { max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }

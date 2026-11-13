@@ -6,7 +6,6 @@ const messages: Record<AiErrorCode, string> = {
   INVALID_CONFIG: 'AI 配置无效，请检查接口地址、模型与参数。',
   INVALID_REQUEST: 'AI 请求或练习上下文无效，请重新选择当前练习。',
   STRICT_MODE: '严格面试进行中，当前模式不允许 AI 解题帮助。',
-  L4_LOCKED: '完整解法需要先主动解锁 L4。',
   AUTH: 'AI 服务拒绝凭据或访问权限，请检查本应用的接口配置。',
   RATE_LIMITED: 'AI 服务暂时限流，请稍后手动重试。',
   TIMEOUT: 'AI 请求超时；未校验的部分回答未展示。',

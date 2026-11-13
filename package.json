@@ -31,12 +31,12 @@
     "preruntime:install": "node scripts/prepare-windows-helper.mjs",
     "test:learning-center": "node tests/learning-center-smoke.mjs",
     "test:reviews": "node tests/review-plan-desktop-smoke.mjs",
-    "test:editor-performance": "node tests/editor-performance-smoke.mjs"
+    "test:editor-performance": "node tests/editor-performance-smoke.mjs",
+    "test:ui": "node tests/ai-chat-smoke.mjs && node tests/runtime-ui-smoke.mjs && node tests/hot100-ui-smoke.mjs && node tests/runtime-gate-smoke.mjs"
   },
   "devDependencies": {
-    "@fontsource/inter": "5.3.0",
     "@fontsource/jetbrains-mono": "5.3.0",
-    "@fontsource/space-grotesk": "5.3.0",
+    "@fontsource/nunito": "5.3.0",
     "@types/node": "24.3.0",
     "@types/react": "19.2.18",
     "@types/react-dom": "19.2.7",

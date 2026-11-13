@@ -9,6 +9,11 @@ const imageHosts = new Set(['assets.leetcode.com', 'assets.leetcode.cn', 'pic.le
 const maxImages = 20;
 const maxImageBytes = 8 * 1024 * 1024;
 const localImage = /^algopractice:\/\/app\/media\/([a-f0-9]{64})$/;
+/** The type of a cached statement image. Its signature was checked when it was stored, so the first bytes name it. */
+export function cachedMediaType(bytes: Uint8Array): { extension: 'png' | 'jpg' | 'gif' | 'webp'; mime: string } {
+  const extension = bytes[0] === 137 ? 'png' : bytes[0] === 255 ? 'jpg' : Buffer.from(bytes.subarray(0, 3)).toString('ascii') === 'GIF' ? 'gif' : 'webp';
+  return { extension, mime: extension === 'jpg' ? 'image/jpeg' : `image/${extension}` };
+}
 const imageMagic = (bytes: Uint8Array) => {
   const b = Buffer.from(bytes);
   if (b.subarray(0, 8).equals(Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]))) return true;

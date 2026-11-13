@@ -4,7 +4,7 @@ const MAX_CONTENT_CHARS = 128 * 1024;
 const MAX_CONTENT_BYTES = 512 * 1024;
 const MAX_WRAPPER_CHARS = 512;
 const defaultTitles: Record<AiKind, string> = {
-  chat: '一起梳理这道题', hint: '一个思路提示', diagnosis: '检查当前代码',
+  chat: '梳理本题', hint: '思路提示', diagnosis: '检查当前代码',
   'official-review': '官方提交复盘', 'note-draft': '复盘笔记草稿',
 };
 

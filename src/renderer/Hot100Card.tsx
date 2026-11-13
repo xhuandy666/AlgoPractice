@@ -2,6 +2,7 @@ import { useEffect, useId, useRef, useState } from 'react';
 import type { DesktopBridge } from '../shared/bridge';
 import { HOT100 } from '../shared/builtin-lists';
 import type { ImportJob, StudyList } from '../shared/library';
+import type { ListProgress } from '../shared/learning';
 import { errorText } from './ui';
 import './hot100-card.css';
 
@@ -10,8 +11,8 @@ const statusLabel: Record<ImportJob['status'], string> = {
   completed: '导入任务已完成', completed_with_errors: '部分内容待重试',
 };
 
-export function Hot100Card({ api, lists, jobs, onChanged, onView, viewLabel = '查看 Hot100 题单' }: {
-  api: DesktopBridge | undefined; lists: StudyList[]; jobs: ImportJob[];
+export function Hot100Card({ api, lists, jobs, progress, onChanged, onView, viewLabel = '查看 Hot100 题单' }: {
+  api: DesktopBridge | undefined; lists: StudyList[]; jobs: ImportJob[]; progress?: Record<string, ListProgress>;
   onChanged: () => Promise<void>; onView: (listId: string) => void; viewLabel?: string;
 }) {
   const headingId = useId(); const descriptionId = useId();
@@ -53,6 +54,7 @@ export function Hot100Card({ api, lists, jobs, onChanged, onView, viewLabel = '�
       <div className="hot100-card-heading"><span className="hot100-card-kicker">常用题单</span><h3 id={headingId}>{HOT100.title}</h3></div>
       <p id={descriptionId} className="hot100-card-description">首次导入需联网；已缓存题面可离线使用。</p>
       {message && <p className="hot100-card-status" role="status" aria-live="polite" aria-atomic="true">{message}{list ? ` · 本机题单 ${list.items.length} 道题` : ''}</p>}
+      {list && progress?.[list.id] && <p className="hot100-card-practice"><strong>已解出 {progress[list.id].solved} / {progress[list.id].total}</strong><span>练过 {progress[list.id].practiced} 道</span></p>}
       {job && <div className="hot100-card-progress">
         <progress max={Math.max(1, job.total)} value={Math.max(0, job.total - job.counts.pending - job.counts.running)} aria-label="Hot100 最近导入任务进度" />
         <p>最近任务 {job.total} 项：已缓存 {job.counts.imported + job.counts.reused} · 待处理 {job.counts.pending + job.counts.running} · 失败 {job.counts.failed} · 受限 {job.counts.restricted}{job.counts.link_only > 0 ? ` · 仅链接 ${job.counts.link_only}` : ''}{job.counts.skipped > 0 ? ` · 已跳过 ${job.counts.skipped}` : ''}</p>

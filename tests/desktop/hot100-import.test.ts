@@ -123,7 +123,7 @@ test('Hot100 reuses prepared content without changing an existing draft, run or 
   const draft = store.saveDraft({ problemId: before.id, language: 'python', code: 'private unfinished answer' });
   const attempt = store.startAttempt({ problemId: before.id, language: 'python', problemVersion: before.version });
   const run = store.beginRun({ attemptId: attempt.id, code: draft.code, testSuiteVersion: 'synthetic-suite',
-    testSnapshot: before.content.cases as never, adapterVersion: 'synthetic-adapter', runtimeVersion: 'synthetic-runtime' });
+    testSnapshot: before.content.cases as never, expectedOutputSource: 'native-samples', adapterVersion: 'synthetic-adapter', runtimeVersion: 'synthetic-runtime' });
   store.finishRun(run.id, { status: 'passed', result: { fixture: true } });
   const frozenRun = store.getRun(run.id);
   const result = await service.importHot100();

@@ -1,12 +1,13 @@
 import assert from 'node:assert/strict';
-import { existsSync, mkdtempSync, readdirSync, rmSync } from 'node:fs';
+import { mkdtempSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { DatabaseSync } from 'node:sqlite';
 import { test } from 'node:test';
 import { PracticeStore, hashCode } from '../../src/storage/practice-store.ts';
 import type { BeginOfficialSubmissionInput } from '../../src/shared/official.ts';
-import { stripProblemReviewSchema } from './fixtures/pre-v9.ts';
+import { restoreBackup } from '../restore-backup.ts';
+import { SCHEMA_VERSION } from '../../src/storage/schema.ts';
 
 const accepted = { status: 'accepted' as const, statusCode: 10, statusMessage: 'Accepted' };
 const wrongAnswer = { status: 'wrong_answer' as const, statusMessage: 'Wrong Answer' };
@@ -55,14 +56,31 @@ test('only newly confirmed official Accepted creates eligibility, failure does n
   f.store.integrityCheck();
 });
 
-test('local passes and ending an attempt never create official assessment eligibility', t => {
+test('passing the problem\'s own cases enters it into review unassessed, without official eligibility or a due item', t => {
   const f = fixture(t);
-  const run = f.store.saveRun({ attemptId: f.attempt.id, code: f.input.code,
-    testSuiteVersion: 'local-samples', adapterVersion: 'local-function-v1', runtimeVersion: 'test-runtime' });
-  f.store.finishRun(run.id, { status: 'passed', result: { passed: 1, total: 1 } });
+  const summary = () => { const { dueCount, plannedCount, remainingBudget, pendingAssessmentCount } = f.store.getReviewPlanSnapshot({ view: 'today' }).summary;
+    return { dueCount, plannedCount, remainingBudget, pendingAssessmentCount }; };
+  const before = summary();
+  const local = (attemptId: string, status: 'passed' | 'wrong_answer', expectedOutputSource: 'native-samples' | 'user') => {
+    const run = f.store.saveRun({ attemptId, code: f.input.code, testSuiteVersion: 'local-samples', expectedOutputSource,
+      adapterVersion: 'local-function-v1', runtimeVersion: 'test-runtime' });
+    return f.store.finishRun(run.id, { status, result: { passed: 1, total: 1 } });
+  };
+  local(f.attempt.id, 'wrong_answer', 'native-samples');
+  local(f.attempt.id, 'passed', 'user');
+  assert.equal(f.store.getProblemReview(f.problem.id), undefined, 'neither a failure nor a pass on self-written cases enrolls the problem');
+  const interview = f.store.startAttempt({ problemId: f.problem.id, problemVersion: f.problem.version, language: 'python', mode: 'strict', problemSnapshot: f.problem.content as never });
+  local(interview.id, 'passed', 'native-samples');
+  assert.equal(f.store.getProblemReview(f.problem.id), undefined, 'interviews offer review themselves when they end');
+  local(f.attempt.id, 'passed', 'native-samples');
+  const plan = f.store.getProblemReview(f.problem.id)!;
+  assert.deepEqual([plan.card, plan.dueAt, plan.observationCount, plan.pendingAssessmentCount], [null, null, 0, 0], 'enrolled, waiting for a first self-rating');
+  local(f.attempt.id, 'passed', 'native-samples');
+  assert.equal(f.store.getProblemReview(f.problem.id)!.revision, plan.revision, 'passing again changes nothing');
   f.store.finishAttempt(f.attempt.id);
-  assert.equal(f.store.reviewOpportunities().total, 0);
-  assert.equal(f.store.getProblemReview(f.problem.id), undefined);
+  assert.equal(f.store.reviewOpportunities().total, 0, 'only an official Accepted creates assessment eligibility');
+  assert.deepEqual(summary(), before, 'an unassessed enrolment adds nothing due, planned or pending');
+  assert.equal(f.store.dueReviewCount(), 0);
 });
 
 test('unknown submits, authentication failures and paused results do not consume the daily opportunity', t => {
@@ -191,6 +209,25 @@ test('manual assessment before Accepted resolves eligibility without changing it
   assert.equal(details.events.items[0].effectiveRating, 2);
 });
 
+test('the database refuses to rewrite review identity, Accepted evidence or a resolved opportunity', t => {
+  const f = fixture(t);
+  f.store.recordProblemReview({ requestId: 'manual-first', problemId: f.problem.id, rating: 3 });
+  f.begin('resolved-ac', '602');
+  f.store.updateOfficialSubmission('resolved-ac', { status: 'completed', result: accepted });
+  const opportunity = f.store.getReviewOpportunityForSubmission('resolved-ac')!;
+  assert.equal(opportunity.state, 'assessed');
+  const raw = new DatabaseSync(f.dbPath);
+  try {
+    assert.throws(() => raw.prepare('UPDATE problem_review_plans SET created_at = ? WHERE problem_id = ?').run('2000-01-01T00:00:00.000Z', f.problem.id),
+      /problem review identity and algorithm are immutable/);
+    assert.throws(() => raw.prepare('UPDATE review_daily_ac_opportunities SET code_hash = ? WHERE id = ?').run('0'.repeat(64), opportunity.id),
+      /Accepted evidence is immutable/);
+    assert.throws(() => raw.prepare("UPDATE review_daily_ac_opportunities SET state = 'pending', assessment_event_id = NULL WHERE id = ?").run(opportunity.id),
+      /resolved Accepted opportunity cannot be reopened/);
+  } finally { raw.close(); }
+  assert.deepEqual(f.store.getReviewOpportunityForSubmission('resolved-ac'), opportunity);
+});
+
 test('explicit resume after an ended attempt can register Accepted; deleting its archive retains minimal eligibility and permits delayed assessment', t => {
   t.mock.timers.enable({ apis: ['Date'], now: Date.parse('2026-10-01T12:00:00.000Z') });
   const f = fixture(t);
@@ -257,12 +294,11 @@ test('claimed display attempts and skipped pending assessments survive backup an
   const before = f.store.reviewOpportunities().items[0];
   const backup = join(f.directory, 'new-schema-backup.sqlite');
   await f.store.backupTo(backup);
-  assert.equal(PracticeStore.inspectBackupSnapshot(backup).schemaVersion, 10);
+  assert.equal(PracticeStore.inspectBackupSnapshot(backup).schemaVersion, SCHEMA_VERSION);
   const restoredPath = join(f.directory, 'restored.sqlite');
-  PracticeStore.restoreBackup(backup, restoredPath);
+  restoreBackup(backup, restoredPath);
   const restored = new PracticeStore(restoredPath);
   try {
-    assert.equal(restored.migrationBackupPath, null);
     assert.deepEqual(restored.reviewOpportunities().items[0], before);
     assert.equal(restored.claimReviewOpportunity(before.id), null);
     assert.equal(restored.reviewOpportunities({ pendingOnly: true }).total, 1);
@@ -286,70 +322,4 @@ test('independent consumers compete through the persisted claim rather than thei
     assert.equal(second.claimReviewOpportunity(secondView.id), null);
     assert.equal(second.reviewOpportunities().items[0].state, 'claimed');
   } finally { second.close(); }
-});
-
-test('schema8 backup includes committed WAL, upgrades without reapplying v8, and seeds historical Accepted silently', t => {
-  t.mock.timers.enable({ apis: ['Date'], now: Date.parse('2026-10-01T12:00:00.000Z') });
-  const f = fixture(t);
-  f.begin('legacy-ac', '901');
-  f.store.updateOfficialSubmission('legacy-ac', { status: 'completed', result: accepted });
-  f.store.close();
-  const legacy = new DatabaseSync(f.dbPath);
-  stripProblemReviewSchema(legacy);
-  legacy.exec('PRAGMA journal_mode=WAL;');
-  legacy.prepare('UPDATE drafts SET code=?,code_hash=?,revision=revision+1 WHERE problem_id=?').run('committed WAL draft', hashCode('committed WAL draft'), f.problem.id);
-  const upgraded = new PracticeStore(f.dbPath);
-  try {
-    assert.ok(upgraded.migrationBackupPath?.includes('.before-v10-'));
-    assert.ok(existsSync(upgraded.migrationBackupPath!));
-    assert.equal(PracticeStore.inspectBackupSnapshot(upgraded.migrationBackupPath!).schemaVersion, 8);
-    const saved = new DatabaseSync(upgraded.migrationBackupPath!, { readOnly: true });
-    try { assert.equal(saved.prepare('SELECT code FROM drafts WHERE problem_id=?').get(f.problem.id)?.code, 'committed WAL draft'); }
-    finally { saved.close(); }
-    assert.equal(upgraded.getDraft(f.problem.id, 'python')?.code, 'committed WAL draft');
-    const historical = upgraded.reviewOpportunities().items[0];
-    assert.equal(historical.state, 'historical');
-    assert.equal(historical.historicalBaseline, true);
-    assert.equal(upgraded.reviewOpportunities({ pendingOnly: true }).total, 0);
-    assert.equal(upgraded.claimReviewOpportunity(historical.id), null);
-    const currentDraft = upgraded.getDraft(f.problem.id, 'python')!;
-    upgraded.beginOfficialSubmission({ ...f.input, requestId: 'post-upgrade-same-day', code: currentDraft.code, expectedDraftRevision: currentDraft.revision });
-    upgraded.updateOfficialSubmission('post-upgrade-same-day', { status: 'judging', submissionId: '902' });
-    upgraded.updateOfficialSubmission('post-upgrade-same-day', { status: 'completed', result: accepted });
-    assert.equal(upgraded.reviewOpportunities().total, 1);
-    assert.equal(upgraded.reviewOpportunities({ pendingOnly: true }).total, 0);
-    assert.equal(upgraded.reviewOpportunities().items[0].officialSubmissionId, '901');
-    const restoredPath = join(f.directory, 'restored-v8.sqlite');
-    PracticeStore.restoreBackup(upgraded.migrationBackupPath!, restoredPath);
-    const restored = new PracticeStore(restoredPath);
-    try {
-      assert.ok(restored.migrationBackupPath);
-      assert.equal(restored.reviewOpportunities().total, 1);
-      assert.equal(restored.reviewOpportunities().items[0].state, 'historical');
-      restored.integrityCheck();
-    } finally { restored.close(); }
-    upgraded.integrityCheck();
-  } finally { upgraded.close(); legacy.close(); }
-  const reopened = new PracticeStore(f.dbPath);
-  try { assert.equal(reopened.migrationBackupPath, null); assert.equal(reopened.reviewOpportunities().total, 1); }
-  finally { reopened.close(); }
-});
-
-test('failed upgrade to schema10 retains original v8 database and independently inspectable pre-upgrade backup', t => {
-  const f = fixture(t);
-  f.store.close();
-  const old = new DatabaseSync(f.dbPath);
-  stripProblemReviewSchema(old);
-  old.exec('CREATE TABLE problem_review_plans(unexpected TEXT);');
-  old.close();
-  assert.throws(() => new PracticeStore(f.dbPath), /Schema v10 migration failed/);
-  const raw = new DatabaseSync(f.dbPath, { readOnly: true });
-  try {
-    assert.equal(raw.prepare('PRAGMA user_version').get()?.user_version, 8);
-    assert.equal(raw.prepare("SELECT 1 FROM sqlite_schema WHERE type='table' AND name='problem_review_events'").get(), undefined);
-    assert.equal(raw.prepare('SELECT answer_format FROM attempts WHERE id=?').get(f.attempt.id)?.answer_format, 'function');
-  } finally { raw.close(); }
-  const backupName = readdirSync(f.directory).find(name => name.includes('.before-v10-') && name.endsWith('.sqlite'));
-  assert.ok(backupName);
-  assert.equal(PracticeStore.inspectBackupSnapshot(join(f.directory, backupName)).schemaVersion, 8);
 });

@@ -32,18 +32,9 @@ test('resume catches missed scheduled time while running; quiet hours defer to m
   f.setTime('2026-09-09T00:00:00Z'); await f.service.tick('resume'); assert.equal(f.messages.length, 1);
   f.setTime('2026-09-09T12:00:00Z'); await f.service.tick(); assert.equal(f.messages.length, 1);
 });
-test('30-minute snooze survives restart, respects quiet hours, and invalidates empty queues', async t => {
-  const f = await fixture(t, '2026-09-08T13:40:00Z'); await f.service.start(false); const state = await f.service.snooze(); assert.equal(state.snoozedUntil, '2026-09-08T14:10:00.000Z');
-  f.service.stop(); f.setTime('2026-09-08T13:50:00Z'); const restarted = new ReminderService(f.options); t.after(() => restarted.stop()); await restarted.start(false);
-  f.setTime('2026-09-08T14:10:00Z'); assert.equal((await restarted.tick()).phase, 'quiet'); assert.equal(f.messages.length, 0);
-  f.setTime('2026-09-09T00:00:00Z'); await restarted.tick(); assert.equal(f.messages.length, 1);
-  await restarted.snooze(); f.setCount(0); await restarted.tick(); assert.equal(restarted.status().snoozedUntil, null);
-  f.setTime('2026-09-09T00:31:00Z'); await restarted.tick(); assert.equal(f.messages.length, 1); f.messages[0].onClick(); assert.equal(f.opened(), 0);
-});
-test('snooze delays the regular slot and time-zone changes cannot repeat the same local day', async t => {
-  const f = await fixture(t, '2026-09-08T11:50:00Z'); await f.service.start(false); await f.service.snooze();
-  f.setTime('2026-09-08T12:00:00Z'); await f.service.tick(); assert.equal(f.messages.length, 0);
-  f.setTime('2026-09-08T12:20:00Z'); await f.service.tick(); assert.equal(f.messages.length, 1);
+test('time-zone changes cannot repeat the same local day', async t => {
+  const f = await fixture(t, '2026-09-08T11:50:00Z'); await f.service.start(false);
+  f.setTime('2026-09-08T12:00:00Z'); await f.service.tick(); assert.equal(f.messages.length, 1);
   f.setZone('America/New_York'); f.setTime('2026-09-09T00:00:00Z'); await f.service.tick('settings'); assert.equal(f.messages.length, 1);
   f.setZone('Asia/Shanghai'); f.setTime('2026-09-08T12:30:00Z'); await f.service.tick('settings'); assert.equal(f.messages.length, 1);
 });

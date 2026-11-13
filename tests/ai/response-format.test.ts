@@ -13,7 +13,6 @@ function fixture(kind: AiKind = 'chat') {
       codeHash: source.run!.codeHash, status: 'wrong_answer', statusMessage: 'Wrong Answer' };
   }
   const snapshot = buildRequestSnapshot(request, source, config());
-  snapshot.promptVersion = 'tilian-chat-coach-v2.4';
   return { request, source, snapshot, response: answer(request, source) };
 }
 function reason(expected: string) {
@@ -125,13 +124,12 @@ test('New explicit hint rejects non-null code proposals, including Markdown stri
   }
 });
 
-test('Historical adaptive hint responses and v1 response/hash representation stay compatible', () => {
-  const { snapshot, response } = fixture('hint'); snapshot.promptVersion = 'tilian-adaptive-coach-v2.3';
+test('a hint with a code proposal is rejected whatever prompt version it records, and 0.x policy records are not read', () => {
+  const { snapshot, response } = fixture('hint');
   response.inferences = [{ text: '检查返回值。', reason: '基于当时提供的代码。' }];
   response.patch = { baseCodeHash: snapshot.codeHash, edits: [{ startLine: 6, endLine: 6, replacement: '        return total' }] };
-  assert.equal(canonicalJson(validateResponse(canonicalJson(response), snapshot)), canonicalJson(response));
-  const oldSnapshot = { ...snapshot, policyVersion: 'algopractice-ai-policy-v1', promptVersion: 'algopractice-tutor-v1', level: 'L2' as const, unlockCompleteSolution: false };
-  const oldResponse = { ...response, schemaVersion: 1 as const, level: 'L2' as const, patch: null };
-  assert.equal(canonicalJson(validateResponse(canonicalJson(oldResponse), oldSnapshot)), canonicalJson(oldResponse));
-  assert.throws(() => validateResponse(`\`\`\`json\n${canonicalJson(oldResponse)}\n\`\`\``, oldSnapshot));
+  for (const promptVersion of ['tilian-adaptive-coach-v2.3', 'tilian-chat-coach-v2.3', snapshot.promptVersion]) {
+    assert.throws(() => validateResponse(canonicalJson(response), { ...snapshot, promptVersion }), reason('patchKind'), promptVersion);
+  }
+  assert.throws(() => validateResponse(canonicalJson(response), { ...snapshot, policyVersion: 'algopractice-ai-policy-v1' }), 'records of the 0.x policy are not read');
 });

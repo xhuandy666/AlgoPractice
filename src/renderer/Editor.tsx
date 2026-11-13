@@ -4,6 +4,8 @@ import 'monaco-editor/languages/definitions/python/register';
 import 'monaco-editor/languages/definitions/java/register';
 import 'monaco-editor/languages/definitions/go/register';
 import 'monaco-editor/languages/definitions/cpp/register';
+// The bare editor API has no completion UI; this adds the suggest widget with word-based suggestions.
+import 'monaco-editor/editor/contrib/suggest/browser/suggestController';
 import { LANGUAGE_DETAILS } from '../shared/languages';
 import EditorWorker from 'monaco-editor/editor/editor.worker?worker';
 import type { Diagnostic, Language } from '../runner/types';
@@ -40,13 +42,23 @@ export function defineEditorTheme() {
   themeSignature = signature;
 }
 const noDiagnostics: Diagnostic[] = [];
+/** Word suggestions: 'auto' pops them up while typing code (never in comments or strings), 'manual' only on request
+ * (Ctrl+Space), 'off' not at all — strict interviews swallow every key that would request them. */
+export type SuggestionMode = 'off' | 'manual' | 'auto';
+const suggestionOptions = (mode: SuggestionMode): monaco.editor.IEditorOptions => ({
+  quickSuggestions: mode === 'auto' ? { other: true, comments: false, strings: false } : false, suggestOnTriggerCharacters: mode !== 'off',
+  // A popup that appeared on its own must not steal Enter at the end of a line (Tab accepts); after Ctrl+Space it may.
+  acceptSuggestionOnEnter: mode === 'auto' ? 'off' : 'on',
+});
+const SUGGEST_KEYS = [monaco.KeyMod.CtrlCmd | monaco.KeyCode.Space, monaco.KeyMod.WinCtrl | monaco.KeyCode.Space, monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyI, monaco.KeyMod.Alt | monaco.KeyCode.Escape];
 
-export function Editor({ code, language, readOnly = false, label = '解题代码', diagnostics = noDiagnostics, reveal, onChange, onRun }: { code: string; language: Language; readOnly?: boolean; label?: string; diagnostics?: Diagnostic[]; reveal?: { line: number; column: number; serial: number } | null; onChange: (value: string) => void; onRun: () => void }) {
+export function Editor({ code, language, readOnly = false, suggestions = 'manual', label = '解题代码', diagnostics = noDiagnostics, reveal, onChange, onRun }: { code: string; language: Language; readOnly?: boolean; suggestions?: SuggestionMode; label?: string; diagnostics?: Diagnostic[]; reveal?: { line: number; column: number; serial: number } | null; onChange: (value: string) => void; onRun: () => void }) {
   const updatingFromProps = useRef(false);
   const modelValue = useRef(code);
   const hasMarkers = useRef(false);
   const host = useRef<HTMLDivElement>(null);
   const instance = useRef<monaco.editor.IStandaloneCodeEditor | null>(null);
+  const suggestAllowed = useRef<monaco.editor.IContextKey<boolean> | null>(null);
   const callbacks = useRef({ onChange, onRun }); callbacks.current = { onChange, onRun };
   useEffect(() => {
     defineEditorTheme();
@@ -59,7 +71,7 @@ export function Editor({ code, language, readOnly = false, label = '解题代码
       renderLineHighlight: 'line', overviewRulerLanes: 0, hideCursorInOverviewRuler: true,
       lineNumbersMinChars: 3, glyphMargin: false, folding: false,
       ariaLabel: label, accessibilitySupport: 'auto', readOnly,
-      quickSuggestions: false, fixedOverflowWidgets: true,
+      ...suggestionOptions(suggestions), fixedOverflowWidgets: true,
     });
     instance.current = editor;
     const listener = editor.onDidChangeModelContent(() => {
@@ -67,6 +79,8 @@ export function Editor({ code, language, readOnly = false, label = '解题代码
       if (!updatingFromProps.current) callbacks.current.onChange(modelValue.current);
     });
     editor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.Enter, () => callbacks.current.onRun());
+    suggestAllowed.current = editor.createContextKey('algopracticeSuggestAllowed', suggestions !== 'off');
+    for (const key of SUGGEST_KEYS) editor.addCommand(key, () => {}, '!algopracticeSuggestAllowed');
     return () => { listener.dispose(); editor.dispose(); model.dispose(); instance.current = null; };
   }, []);
   useEffect(() => {
@@ -78,6 +92,11 @@ export function Editor({ code, language, readOnly = false, label = '解题代码
     if (model && model.getLanguageId() !== LANGUAGE_DETAILS[language].monacoLanguage) monaco.editor.setModelLanguage(model, LANGUAGE_DETAILS[language].monacoLanguage);
   }, [language]);
   useEffect(() => { instance.current?.updateOptions({ readOnly }); }, [readOnly]);
+  useEffect(() => {
+    const editor = instance.current; if (!editor) return;
+    editor.updateOptions(suggestionOptions(suggestions)); suggestAllowed.current?.set(suggestions !== 'off');
+    if (suggestions === 'off') editor.trigger('algopractice', 'hideSuggestWidget', {});
+  }, [suggestions]);
   useEffect(() => {
     const model = instance.current?.getModel(); if (!model) return;
     // Empty diagnostic arrays are common while typing; avoid notifying Monaco

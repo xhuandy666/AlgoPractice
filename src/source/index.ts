@@ -1,10 +1,8 @@
-import { createHash } from 'node:crypto';
 import { checkCancelled, failSchema, nonempty, record, requiredCount, requiredString, SourceError, type ObjectValue } from './errors.ts';
 import { parseSource } from './identify.ts';
 import { SourceTransport, type SourceAdapterOptions } from './transport.ts';
 import { problemContent } from './problem-content.ts';
-import { LANGUAGE_DETAILS, languageFromOfficialSlug } from '../shared/languages.ts';
-import type { FetchOptions, ProblemReference, SourceAdapter, SourcePlan, SourceProblemContent, SourceProblemMetadata, SourceReference } from './types.ts';
+import type { FetchOptions, ProblemReference, SourceAdapter, SourcePlan, SourceProblemContent, SourceReference } from './types.ts';
 export { SourceError } from './errors.ts';
 export type { SourceErrorCode } from './errors.ts';
 export { parseSource, identifySources } from './identify.ts';
@@ -104,23 +102,8 @@ export class LeetCodeCnSourceAdapter implements SourceAdapter {
     if (problem.slug !== source.slug) return failSchema('question.titleSlug');
     return { source, page, q, problem };
   }
-  async fetchProblem(input: string | SourceReference, options: FetchOptions = {}): Promise<SourceProblemMetadata> {
-    const { source, page, q, problem } = await this.question(input, options);
-    let metadata: ObjectValue | null = null;
-    if (nonempty(q.metaData)) { try { metadata = record(JSON.parse(q.metaData)); } catch { return failSchema('question.metaData'); } }
-    const templates: SourceProblemMetadata['templates'] = [];
-    if (!Array.isArray(q.codeSnippets)) return failSchema('question.codeSnippets');
-    for (const value of q.codeSnippets) { const s = record(value); const language = languageFromOfficialSlug(s?.langSlug); if (s && language && nonempty(s.code)) templates.push({ language: LANGUAGE_DETAILS[language].officialSlug, characterCount: s.code.length, sha256: createHash('sha256').update(s.code).digest('hex') }); }
-    const params = metadata && Array.isArray(metadata.params) ? metadata.params : []; const returnInfo = record(metadata?.return);
-    return { source, problem, fields: { statement: nonempty(q.content), translatedStatement: nonempty(q.translatedContent), functionMetadata: metadata !== null, sampleCases: nonempty(q.exampleTestcases) || nonempty(q.sampleTestCase) || nonempty(q.jsonExampleTestcases) },
-      functionSignature: metadata ? { name: nonempty(metadata.name) ? metadata.name : null, parameterTypes: params.map(p => record(p)?.type).filter(nonempty), returnType: nonempty(returnInfo?.type) ? returnInfo.type : null } : null,
-      templates, observation: page.observation, limitation: 'metadata-only; no statement, sample text, or template body retained' };
-  }
   async fetchProblemContent(input: string | SourceReference, options: FetchOptions = {}): Promise<SourceProblemContent> {
     const { source, page, q, problem } = await this.question(input, options);
     return problemContent(q, source, problem, page.observation);
   }
-}
-export async function fetchProblemContent(input: string | SourceReference, options: FetchOptions & { adapter?: LeetCodeCnSourceAdapter } = {}) {
-  return (options.adapter ?? new LeetCodeCnSourceAdapter()).fetchProblemContent(input, options);
 }

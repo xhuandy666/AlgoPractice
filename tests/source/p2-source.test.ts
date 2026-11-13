@@ -1,4 +1,5 @@
 import test from 'node:test';
+import { statementExampleOutputs } from '../../src/source/statement-examples.ts';
 import assert from 'node:assert/strict';
 import { LeetCodeCnSourceAdapter, SourceError, parseImportInput, previewImport } from '../../src/source/index.ts';
 import { parseCSV } from '../../src/source/imports.ts';
@@ -138,6 +139,15 @@ test('JSON standalone content validates adapter, preserves int64 strings and exp
   assert.equal(result.items[0].content?.cases[0].expected, '9223372036854775807'); assert.equal(result.items[0].problemId, 'file:long-local'); assert.equal(result.items[1].content?.acmCompare, 'exact');
 });
 
+test('ACM imports stay within the workbench limits so every imported problem can be opened', async () => {
+  const acm = (cases: unknown[]) => JSON.stringify([{ id: 'acm-limit', title: 'Own stdin task', description: 'Own fixture', mode: 'acm', cases, starter: { python: 'print(input())' } }]);
+  assert.equal((await previewImport({ kind: 'json', text: acm(Array.from({ length: 50 }, (_, i) => ({ stdin: `${i}\n` }))) })).complete, true);
+  const tooMany = await previewImport({ kind: 'json', text: acm(Array.from({ length: 51 }, () => ({ stdin: '' }))) });
+  assert.equal(tooMany.complete, false); assert.match(tooMany.errors[0].message, /最多 50 组/);
+  const tooLarge = await previewImport({ kind: 'json', text: acm([{ stdin: 'x'.repeat(600 * 1024) }, { stdin: 'y'.repeat(600 * 1024) }]) });
+  assert.equal(tooLarge.complete, false); assert.match(tooLarge.errors[0].message, /1 MiB/);
+});
+
 test('file IDs cannot overwrite local/remote namespace without explicit source URL, conflicting content fails', async () => {
   const file = (description: string) => ({ id: 'leetcode-cn:problem:two-sum', title: 'Own task', description });
   const result = await previewImport({ kind: 'json', text: JSON.stringify([file('first'), file('different')]) });
@@ -178,9 +188,6 @@ for (const [language, slug, code] of [
   assert.equal(result.capability, 'sample-verified');
   assert.deepEqual(result.content.starter, { [language]: code });
   assert.deepEqual(result.content.cases.map(test => test.expected), [true, false]);
-  const metadata = await source.fetchProblem('https://leetcode.cn/problems/valid-parentheses/');
-  assert.equal(metadata.templates.length, 1); assert.equal(metadata.templates[0].language, slug);
-  assert.ok(!JSON.stringify(metadata).includes(code), 'Metadata must not retain source code');
 });
 
 test('schemaVersion 1 JSON and quoted CSV accept Go/C++ without changing their source text', async () => {
@@ -206,4 +213,23 @@ test('source char is explicitly ASCII, including nested character boards', async
     const invalid = await previewImport({ kind: 'json', text: JSON.stringify([{ ...base, cases: [{ args: [[[value]]], expected: 'a' }] }]) });
     assert.equal(invalid.complete, false); assert.equal(invalid.items.length, 0);
   }
+});
+
+test('in-place void problems observe the parameter LeetCode names, and their statement examples stay readable', async () => {
+  const moveZeroes = { titleSlug: 'move-zeroes', metaData: JSON.stringify({ name: 'moveZeroes', params: [{ name: 'nums', type: 'integer[]' }], return: { type: 'void' }, output: { paramindex: 0 } }),
+    jsonExampleTestcases: JSON.stringify(['[0,1,0,3,12]', '[0]']), translatedContent: '<pre><strong>输入：</strong>nums = [0,1,0,3,12]\n<strong>输出：</strong>[1,3,12,0,0]</pre><pre><strong>输入：</strong>nums = [0]\n<strong>输出：</strong>[0]</pre>',
+    codeSnippets: [{ langSlug: 'python3', code: 'class Solution:\n    def moveZeroes(self, nums: List[int]) -> None:\n        """\n        Do not return anything, modify nums in-place instead.\n        """' }] };
+  const result = await problemAdapter(moveZeroes).fetchProblemContent('https://leetcode.cn/problems/move-zeroes/');
+  assert.equal(result.capability, 'execution-only', 'runnable, but without a reviewed comparison profile it never claims a pass');
+  assert.deepEqual(result.content.adapter, { method: 'moveZeroes', params: [{ array: 'int' }], returns: 'void', inPlaceArg: 0 });
+  assert.deepEqual(result.content.cases, [{ args: [[0, 1, 0, 3, 12]] }, { args: [[0]] }]);
+  assert.deepEqual(statementExampleOutputs(result.content), [[1, 3, 12, 0, 0], [0]], 'the soft example check reads the modified array');
+  for (const output of [undefined, { paramindex: 3 }, { paramindex: -1 }, { paramindex: '0' }]) {
+    const broken = await problemAdapter({ ...moveZeroes, metaData: JSON.stringify({ name: 'moveZeroes', params: [{ name: 'nums', type: 'integer[]' }], return: { type: 'void' }, ...(output ? { output } : {}) }) })
+      .fetchProblemContent('https://leetcode.cn/problems/move-zeroes/');
+    assert.equal(broken.capability, 'statement-only', `void without a valid output parameter: ${JSON.stringify(output)}`);
+  }
+  const scalar = await problemAdapter({ ...moveZeroes, metaData: JSON.stringify({ name: 'moveZeroes', params: [{ name: 'n', type: 'integer' }], return: { type: 'void' }, output: { paramindex: 0 } }) })
+    .fetchProblemContent('https://leetcode.cn/problems/move-zeroes/');
+  assert.equal(scalar.capability, 'statement-only', 'a scalar cannot be observed in place');
 });

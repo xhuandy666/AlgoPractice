@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { existsSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync } from 'node:fs';
+import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
@@ -30,7 +30,7 @@ function list(items = ['local:a', 'local:b']): ListSnapshotInput {
 }
 
 function runInput(attemptId: string, code = 'return 3'): SaveRunInput {
-  return { attemptId, code, testSuiteVersion: 'test-v1', testSnapshot: [{ args: [[1, 2]], expected: 3 }],
+  return { attemptId, code, testSuiteVersion: 'test-v1', testSnapshot: [{ args: [[1, 2]], expected: 3 }], expectedOutputSource: 'native-samples',
     adapterVersion: 'adapter-v2', runtimeVersion: 'Python 3.14.7' };
 }
 
@@ -41,22 +41,6 @@ function importInput(): CreateImportJobInput {
       { key: 'b', problemId: 'file:b', title: '第二题', position: 1 },
     ] };
 }
-
-test('today new problems apply current runnable capability before the three-item limit', t => {
-  const { store } = fixture(t);
-  const attempted = store.upsertProblem(problem('0-attempted')); store.startAttempt({ problemId: attempted.id, language: 'python', problemVersion: attempted.version });
-  const reviewed = store.upsertProblem(problem('0-reviewed')); store.addReviewItem({ problemId: reviewed.id, target: 'understanding', language: 'none' });
-  store.upsertProblem({ ...problem('a-link'), description: '', adapter: undefined, starter: {}, cases: [] });
-  store.upsertProblem({ ...problem('b-no-adapter'), adapter: undefined });
-  store.upsertProblem({ ...problem('c-no-tests'), cases: [] });
-  store.upsertProblem(problem('d-python'));
-  store.upsertProblem({ ...problem('e-java'), starter: { java: 'class Solution { public int sum(int[] nums) { return 0; } }' } });
-  store.upsertProblem({ ...problem('f-acm'), mode: 'acm', adapter: undefined, cases: [{ stdin: '1', expected: '1' }], starter: { python: 'print(input())' } });
-  store.upsertProblem(problem('g-extra'));
-  assert.deepEqual(store.getTodayQueue().newProblemIds, ['d-python', 'e-java', 'f-acm']);
-  store.upsertProblem(problem('a-link'));
-  assert.deepEqual(store.getTodayQueue().newProblemIds, ['a-link', 'd-python', 'e-java'], 'the current cached version decides capability');
-});
 
 test('content hashes are canonical, preserve media/comparators, and never replace a pinned attempt version', (t) => {
   const { store } = fixture(t);
@@ -300,96 +284,4 @@ test('restoring history creates a separate scope and pinned attempt without over
   assert.throws(() => store.beginRun({ ...runInput(restored.attempt.id), scopeId: 'practice' }), /scope does not match/);
   assert.equal(store.listRuns(normal.id).length, 1);
   assert.equal(store.listRuns(restored.attempt.id).length, 0);
-});
-
-function createP1Database(dbPath: string): DatabaseSync {
-  const db = new DatabaseSync(dbPath);
-  db.exec(readFileSync(new URL('./fixtures/p1-schema.sql', import.meta.url), 'utf8'));
-  const legacy = { id: 'p1-demo', title: '原型题', topic: '数组', difficulty: '基础', description: '原始题面',
-    mode: 'acm', constraints: [], cases: [{ stdin: '1\n', expected: '1\n' }], starter: { python: 'print(0)', java: 'class Main {}' } };
-  db.prepare('INSERT INTO problems VALUES (?)').run('p1-demo');
-  db.prepare('INSERT INTO problem_versions VALUES (?, ?, ?)').run('p1-demo', 'p1-fixtures-v1', JSON.stringify(legacy));
-  db.prepare('INSERT INTO drafts VALUES (?, ?, ?, ?, ?, ?, ?)')
-    .run('p1-demo', 'python', 'practice', '最新草稿尚未运行', hashCode('最新草稿尚未运行'), 7, '2026-09-05T10:00:00.000Z');
-  for (const [id, time] of [['legacy-older', '2026-09-04T10:00:00.000Z'], ['legacy-active', '2026-09-05T10:00:00.000Z']]) {
-    db.prepare('INSERT INTO attempts VALUES (?, ?, ?, ?, ?, ?)').run(id, 'p1-demo', 'python', 'p1-fixtures-v1', 'practice', time);
-  }
-  for (let index = 0; index < 4; index++) {
-    const queued = index === 3;
-    const code = `legacy code ${index}`;
-    db.prepare('INSERT INTO runs VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)')
-      .run(`legacy-run-${index}`, index === 0 ? 'legacy-older' : 'legacy-active', code, hashCode(code), 'tests-v1', '[{"stdin":"1"}]',
-        'adapter-v1', 'Python 3.14.7', queued ? 'queued' : 'completed', queued ? 'null' : JSON.stringify({ stdout: String(index) }),
-        '2026-09-05T10:00:00.000Z', queued ? null : '2026-09-05T10:00:01.000Z');
-  }
-  return db;
-}
-
-test('P1 migration takes a consistent pre-migration WAL snapshot and preserves every draft/run/version', (t) => {
-  const directory = mkdtempSync(join(tmpdir(), 'algopractice-v1-migration '));
-  t.after(() => rmSync(directory, { recursive: true, force: true }));
-  const dbPath = join(directory, 'practice.sqlite');
-  const p1 = createP1Database(dbPath);
-  const beforeRuns = p1.prepare('SELECT * FROM runs ORDER BY id').all();
-  const beforeSnapshot = p1.prepare('SELECT snapshot_json FROM problem_versions').get();
-  assert.ok(existsSync(`${dbPath}-wal`) && statSync(`${dbPath}-wal`).size > 0);
-  const upgraded = new PracticeStore(dbPath);
-  try {
-    assert.ok(upgraded.migrationBackupPath);
-    assert.equal(upgraded.getDraft('p1-demo', 'python')?.revision, 7);
-    assert.equal(upgraded.listRuns('legacy-active').length, 3);
-    assert.equal(upgraded.listAttempts('p1-demo').length, 2);
-    assert.equal(upgraded.getActiveAttempt('p1-demo', 'python')?.id, 'legacy-active');
-    assert.equal(upgraded.getProblem('p1-demo'), undefined, 'migration does not manufacture a current head from unknown P1 JSON');
-    assert.deepEqual(upgraded.getProblem('p1-demo', 'p1-fixtures-v1')?.content.tags, ['数组']);
-    assert.deepEqual(p1.prepare('SELECT * FROM runs ORDER BY id').all(), beforeRuns);
-    assert.deepEqual(p1.prepare('SELECT snapshot_json FROM problem_versions').get(), beforeSnapshot);
-    assert.equal(p1.prepare('PRAGMA user_version').get()?.user_version, 10);
-    const backup = new DatabaseSync(upgraded.migrationBackupPath!, { readOnly: true });
-    try {
-      assert.equal(backup.prepare('PRAGMA user_version').get()?.user_version, 1);
-      assert.deepEqual(backup.prepare('SELECT * FROM runs ORDER BY id').all(), beforeRuns);
-      assert.equal(backup.prepare('SELECT code FROM drafts').get()?.code, '最新草稿尚未运行');
-      assert.equal(backup.prepare('PRAGMA integrity_check').get()?.integrity_check, 'ok');
-    } finally { backup.close(); }
-    const restoredPath = join(directory, 'restored-v1.sqlite');
-    PracticeStore.restoreBackup(upgraded.migrationBackupPath!, restoredPath);
-    const restored = new PracticeStore(restoredPath);
-    try {
-      assert.equal(restored.getDraft('p1-demo', 'python')?.code, '最新草稿尚未运行');
-      assert.equal(restored.getRun('legacy-run-3')?.status, 'queued');
-      assert.equal(restored.recoverInterruptedRuns(), 1);
-      assert.equal(restored.getRun('legacy-run-3')?.status, 'interrupted');
-      restored.integrityCheck();
-    } finally { restored.close(); }
-    upgraded.integrityCheck();
-  } finally { upgraded.close(); p1.close(); }
-  const again = new PracticeStore(dbPath);
-  try { assert.equal(again.migrationBackupPath, null); } finally { again.close(); }
-});
-
-test('failed v4 migration rolls every schema change back and retains a usable v1 backup', (t) => {
-  const directory = mkdtempSync(join(tmpdir(), 'algopractice-migration-failure '));
-  t.after(() => rmSync(directory, { recursive: true, force: true }));
-  const dbPath = join(directory, 'practice.sqlite');
-  const p1 = createP1Database(dbPath);
-  p1.exec('CREATE TABLE library_problem_heads (conflicting_fixture TEXT) STRICT');
-  const before = p1.prepare('SELECT * FROM runs ORDER BY id').all();
-  assert.throws(() => new PracticeStore(dbPath), /Schema v10 migration failed/);
-  try {
-    assert.equal(p1.prepare('PRAGMA user_version').get()?.user_version, 1);
-    assert.equal(p1.prepare('PRAGMA table_info(attempts)').all().length, 6);
-    assert.equal(p1.prepare("SELECT name FROM sqlite_master WHERE name = 'active_attempts'").get(), undefined);
-    assert.ok(p1.prepare("SELECT name FROM sqlite_master WHERE name = 'immutable_attempt'").get());
-    assert.deepEqual(p1.prepare('SELECT * FROM runs ORDER BY id').all(), before);
-    assert.equal(p1.prepare('SELECT code FROM drafts').get()?.code, '最新草稿尚未运行');
-    const backups = readdirSync(directory).filter((name) => name.includes('.before-v10-') && name.endsWith('.sqlite'));
-    assert.equal(backups.length, 1);
-    const backup = new DatabaseSync(join(directory, backups[0]), { readOnly: true });
-    try {
-      assert.equal(backup.prepare('PRAGMA user_version').get()?.user_version, 1);
-      assert.deepEqual(backup.prepare('SELECT * FROM runs ORDER BY id').all(), before);
-      assert.equal(backup.prepare('PRAGMA integrity_check').get()?.integrity_check, 'ok');
-    } finally { backup.close(); }
-  } finally { p1.close(); }
 });

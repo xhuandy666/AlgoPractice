@@ -1,28 +1,25 @@
 import { createHash, randomUUID } from 'node:crypto';
-import { existsSync, linkSync, mkdirSync, unlinkSync, copyFileSync } from 'node:fs';
+import { existsSync, linkSync, mkdirSync, unlinkSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import { DatabaseSync, backup as sqliteBackup } from 'node:sqlite';
-import { LearningRepository, backfillNoteAttachmentReferences, defaultLearningSettings } from '../learning/repository.ts';
-import { archiveDateBoundary } from '../shared/archive-date.ts';
-import { pageBounds, pageResult, searchText, literalLike, SQL_TRIM_WHITESPACE } from './pagination.ts';
-import type { AttemptListItem, AttemptPageFilter, NotePageFilter, PageRequest, PageResult, ProblemListItem, ProblemPageFilter, RunListItem, RunPageFilter } from '../shared/learning.ts';
+import { integrityFailure } from './sqlite-integrity.ts';
+import { APPLICATION_ID, SCHEMA, SCHEMA_VERSION } from './schema.ts';
+import { LearningRepository, defaultLearningSettings } from '../learning/repository.ts';
+import { archiveDateBoundary, localDateOf } from '../shared/archive-date.ts';
+import { pageBounds, pageResult, searchText, literalLike, SQL_ADAPTER_BIGINT, SQL_TRIM_WHITESPACE } from './pagination.ts';
+import type { AttemptListItem, AttemptPageFilter, CompletionBlocker, ListProgress, NotePageFilter, PageRequest, PageResult, ProblemListItem, ProblemPageFilter, RunListItem, RunPageFilter, TopicInsights } from '../shared/learning.ts';
+import { rankTopics } from '../learning/topic-insights.ts';
 import type { AdvanceReviewSessionInput, ProblemReviewAssessmentInput, ProblemReviewBatchInput, ProblemReviewCorrectionInput,
   ProblemReviewPreviewInput, ReviewAssessmentDraftInput, ReviewOpportunityFilter, ReviewPlanQuery,
   StartReviewSessionInput, SubmitReviewOpportunityInput } from '../shared/review-plan.ts';
-import { MIGRATE_V5 } from '../interview/schema.ts';
-import { MIGRATE_V7 } from './submission-history-schema.ts';
-import { MIGRATE_V8 } from './answer-format-schema.ts';
-import { MIGRATE_V10 } from './language-schema.ts';
 import { isLanguage, LANGUAGES, type Language } from '../shared/languages.ts';
-import { assertAnswerFormat, validateAcmTestConfig, NATIVE_SPEC_VERSION, ACM_FREE_SPEC_VERSION, type AnswerFormat, type AcmTestConfig } from '../shared/answer-format.ts';
+import { attemptCompletionsSql, officialAcceptedSql, trustedPassSql } from '../learning/verdicts.ts';
+import { assertAnswerFormat, validateAcmTestConfig, EXPECTED_OUTPUT_SOURCES, NATIVE_SPEC_VERSION, ACM_FREE_SPEC_VERSION, type AnswerFormat, type AcmTestConfig, type ExpectedOutputSource } from '../shared/answer-format.ts';
 import { SUBMISSION_REMARK_LIMIT, type SaveSubmissionRemarkInput, type SubmissionHistoryDetail, type SubmissionHistoryFilter,
   type SubmissionHistoryItem, type SubmissionHistorySource, type SubmissionRemark } from '../shared/submission-history.ts';
 import type { CompanyDataset, InterviewSession } from '../shared/interview.ts';
-import { MIGRATE_V3, MIGRATE_V4, MIGRATE_V9 } from '../learning/schema.ts';
-import { migrateProblemReviewData } from '../learning/problem-review-migration.ts';
-import type { ActivitySampleInput, AddReviewItemInput, Attachment, BackupSnapshotInfo, ConfirmNoteInput,
-  CorrectReviewInput, LearningSettingsInput, NoteFilter, ReviewFeedbackInput, ReviewFilter, SaveNoteInput } from '../shared/learning.ts';
-import type { AiLevel, AiRequestCompletion, AiRequestSeed } from '../shared/ai.ts';
+import type { ActivitySampleInput, Attachment, BackupSnapshotInfo, ConfirmNoteInput, LearningSettingsInput, NoteFilter, SaveNoteInput } from '../shared/learning.ts';
+import type { AiRequestCompletion, AiRequestSeed } from '../shared/ai.ts';
 import type { BeginOfficialSubmissionInput, OfficialSubmission, OfficialSubmissionUpdate } from '../shared/official.ts';
 import { officialProblemSlug, officialSubmissionUrl } from '../source/official-judge.ts';
 import type {
@@ -50,7 +47,7 @@ export interface Draft {
   codeHash: string;
   revision: number;
   savedAt: string;
-  answerFormat: AnswerFormat | null;
+  answerFormat: AnswerFormat;
   specVersion: string;
   testConfig: AcmTestConfig | null;
   testConfigDigest: string | null;
@@ -119,6 +116,8 @@ export interface SaveRunInput {
   code: string;
   testSuiteVersion: string;
   testSnapshot?: JsonValue;
+  /** Required so that every writer states whether a pass on these cases can count as solving the problem. */
+  expectedOutputSource: ExpectedOutputSource;
   adapterVersion: string;
   runtimeVersion: string;
   status?: RunStatus;
@@ -138,6 +137,7 @@ export interface StoredRun {
   codeHash: string;
   testSuiteVersion: string;
   testSnapshot: JsonValue;
+  expectedOutputSource: ExpectedOutputSource;
   adapterVersion: string;
   runtimeVersion: string;
   status: RunStatus;
@@ -150,228 +150,9 @@ export interface StoredRun {
 }
 
 type Row = Record<string, string | number | null>;
-const SCHEMA_VERSION = 10;
-const SUPPORTED_BACKUP_VERSIONS = [1, 2, 3, 4, 5, 6, 7, 8, 9, SCHEMA_VERSION];
-const MIGRATE_V6 = `
-CREATE TABLE official_submissions (
-  id TEXT PRIMARY KEY NOT NULL,
-  attempt_id TEXT NOT NULL REFERENCES attempts(id),
-  code TEXT NOT NULL,
-  code_hash TEXT NOT NULL,
-  draft_revision INTEGER NOT NULL CHECK(draft_revision > 0),
-  slug TEXT NOT NULL,
-  source_id TEXT NOT NULL,
-  submission_id TEXT,
-  status TEXT NOT NULL CHECK(status IN ('submitting','judging','paused','completed','unknown','error')),
-  result_json TEXT NOT NULL CHECK(json_valid(result_json)),
-  error_json TEXT NOT NULL CHECK(json_valid(error_json)),
-  created_at TEXT NOT NULL,
-  updated_at TEXT NOT NULL,
-  finished_at TEXT,
-  CHECK((status IN ('submitting','judging','paused') AND finished_at IS NULL)
-    OR (status IN ('completed','unknown','error') AND finished_at IS NOT NULL)),
-  CHECK((status = 'completed' AND result_json <> 'null') OR (status <> 'completed' AND result_json = 'null')),
-  CHECK(status NOT IN ('judging','paused','completed') OR submission_id IS NOT NULL)
-) STRICT;
-CREATE INDEX official_by_attempt ON official_submissions(attempt_id, created_at);
-CREATE UNIQUE INDEX official_active_attempt ON official_submissions(attempt_id) WHERE status IN ('submitting','judging');
-CREATE TRIGGER immutable_official_snapshot BEFORE UPDATE OF
-  id, attempt_id, code, code_hash, draft_revision, slug, source_id, created_at ON official_submissions
-BEGIN SELECT RAISE(ABORT, 'official submission snapshot is immutable'); END;
-CREATE TRIGGER immutable_official_id BEFORE UPDATE OF submission_id ON official_submissions
-WHEN OLD.submission_id IS NOT NULL AND OLD.submission_id IS NOT NEW.submission_id
-BEGIN SELECT RAISE(ABORT, 'official submission id is immutable'); END;
-CREATE TRIGGER immutable_official_result BEFORE UPDATE ON official_submissions
-WHEN OLD.status IN ('completed','unknown','error')
-BEGIN SELECT RAISE(ABORT, 'official terminal result is immutable'); END;
-ALTER TABLE ai_help_used RENAME TO ai_help_used_v5;
-CREATE TABLE ai_help_used (
-  request_id TEXT PRIMARY KEY NOT NULL REFERENCES ai_requests(id),
-  attempt_id TEXT NOT NULL REFERENCES attempts(id),
-  level TEXT NOT NULL CHECK(level IN ('L0','L1','L2','L3','L4','adaptive')),
-  created_at TEXT NOT NULL
-) STRICT;
-INSERT INTO ai_help_used SELECT * FROM ai_help_used_v5;
-DROP TABLE ai_help_used_v5;
-`;
-const terminalSQL = TERMINAL_STATUSES.map((status) => `'${status}'`).join(',');
-const RUN_SNAPSHOT_TRIGGERS = `
-CREATE TRIGGER immutable_run_snapshot BEFORE UPDATE OF
-  id, attempt_id, code, code_hash, test_suite_version, test_snapshot_json,
-  adapter_version, created_at ON runs
-BEGIN SELECT RAISE(ABORT, 'run snapshot is immutable'); END;
-CREATE TRIGGER immutable_run_runtime BEFORE UPDATE OF runtime_version ON runs
-WHEN OLD.status <> 'queued' OR NEW.status = 'queued' OR length(trim(NEW.runtime_version)) = 0
-BEGIN SELECT RAISE(ABORT, 'run runtime may only be finalized with its terminal result'); END;
-`;
-const SCHEMA = `
-CREATE TABLE problems (id TEXT PRIMARY KEY NOT NULL) STRICT;
-CREATE TABLE problem_versions (
-  problem_id TEXT NOT NULL REFERENCES problems(id),
-  version TEXT NOT NULL,
-  snapshot_json TEXT NOT NULL CHECK(json_valid(snapshot_json)),
-  PRIMARY KEY(problem_id, version)
-) STRICT;
-CREATE TABLE drafts (
-  problem_id TEXT NOT NULL REFERENCES problems(id),
-  language TEXT NOT NULL CHECK(language IN ('python', 'java')),
-  scope_id TEXT NOT NULL,
-  code TEXT NOT NULL,
-  code_hash TEXT NOT NULL,
-  revision INTEGER NOT NULL CHECK(revision > 0),
-  saved_at TEXT NOT NULL,
-  PRIMARY KEY(problem_id, language, scope_id)
-) STRICT;
-CREATE TABLE attempts (
-  id TEXT PRIMARY KEY NOT NULL,
-  problem_id TEXT NOT NULL,
-  language TEXT NOT NULL CHECK(language IN ('python', 'java')),
-  problem_version TEXT NOT NULL,
-  mode TEXT NOT NULL CHECK(mode IN ('practice', 'strict', 'coached')),
-  started_at TEXT NOT NULL,
-  FOREIGN KEY(problem_id, problem_version) REFERENCES problem_versions(problem_id, version)
-) STRICT;
-CREATE TABLE runs (
-  id TEXT PRIMARY KEY NOT NULL,
-  attempt_id TEXT NOT NULL REFERENCES attempts(id),
-  code TEXT NOT NULL,
-  code_hash TEXT NOT NULL,
-  test_suite_version TEXT NOT NULL,
-  test_snapshot_json TEXT NOT NULL CHECK(json_valid(test_snapshot_json)),
-  adapter_version TEXT NOT NULL,
-  runtime_version TEXT NOT NULL,
-  status TEXT NOT NULL CHECK(status IN ('queued', ${terminalSQL})),
-  result_json TEXT NOT NULL CHECK(json_valid(result_json)),
-  created_at TEXT NOT NULL,
-  finished_at TEXT,
-  CHECK((status = 'queued' AND finished_at IS NULL AND result_json = 'null')
-    OR (status <> 'queued' AND finished_at IS NOT NULL))
-) STRICT;
-CREATE INDEX runs_by_attempt ON runs(attempt_id, created_at);
-CREATE TRIGGER immutable_problem_version BEFORE UPDATE ON problem_versions
-BEGIN SELECT RAISE(ABORT, 'problem version is immutable'); END;
-CREATE TRIGGER immutable_attempt BEFORE UPDATE ON attempts
-BEGIN SELECT RAISE(ABORT, 'attempt identity is immutable'); END;
-${RUN_SNAPSHOT_TRIGGERS}
-CREATE TRIGGER immutable_run_result BEFORE UPDATE ON runs WHEN OLD.status <> 'queued'
-BEGIN SELECT RAISE(ABORT, 'run terminal result is immutable'); END;
-`;
-
 const IMPORT_ITEM_STATUSES: ImportItemStatus[] = ['pending', 'running', 'imported', 'reused', 'link_only', 'restricted', 'failed', 'skipped'];
 const IMPORT_JOB_STATUSES: ImportJobStatus[] = ['pending', 'running', 'paused', 'cancelled', 'completed', 'completed_with_errors'];
 const COMPLETE_ITEM_STATUSES = new Set<ImportItemStatus>(['imported', 'reused', 'link_only', 'skipped']);
-const MIGRATE_V2 = `
-ALTER TABLE attempts ADD COLUMN draft_scope_id TEXT NOT NULL DEFAULT 'practice';
-ALTER TABLE attempts ADD COLUMN ended_at TEXT;
-ALTER TABLE attempts ADD COLUMN final_code TEXT;
-ALTER TABLE attempts ADD COLUMN final_code_hash TEXT;
-ALTER TABLE attempts ADD COLUMN final_draft_revision INTEGER;
-ALTER TABLE attempts ADD COLUMN final_last_run_id TEXT REFERENCES runs(id);
-ALTER TABLE attempts ADD COLUMN last_run_matches_final INTEGER NOT NULL DEFAULT 0 CHECK(last_run_matches_final IN (0, 1));
-ALTER TABLE attempts ADD COLUMN restored_from_run_id TEXT REFERENCES runs(id);
-DROP TRIGGER immutable_attempt;
-CREATE TRIGGER immutable_attempt BEFORE UPDATE OF
-  id, problem_id, language, problem_version, mode, started_at, draft_scope_id, restored_from_run_id ON attempts
-BEGIN SELECT RAISE(ABORT, 'attempt identity is immutable'); END;
-CREATE TRIGGER immutable_finished_attempt BEFORE UPDATE ON attempts WHEN OLD.ended_at IS NOT NULL
-BEGIN SELECT RAISE(ABORT, 'finished attempt is immutable'); END;
-CREATE TRIGGER coherent_attempt_final BEFORE UPDATE ON attempts WHEN NEW.ended_at IS NOT NULL
-BEGIN
-  SELECT CASE WHEN NEW.final_code IS NULL OR NEW.final_code_hash IS NULL OR NEW.final_draft_revision IS NULL
-    THEN RAISE(ABORT, 'finished attempt requires a final draft snapshot') END;
-  SELECT CASE WHEN NEW.final_last_run_id IS NOT NULL AND NOT EXISTS(
-    SELECT 1 FROM runs WHERE id = NEW.final_last_run_id AND attempt_id = NEW.id)
-    THEN RAISE(ABORT, 'final run must belong to the attempt') END;
-END;
-CREATE UNIQUE INDEX attempt_scope_identity ON attempts(id, problem_id, language, mode, draft_scope_id);
-CREATE TABLE active_attempts (
-  problem_id TEXT NOT NULL,
-  language TEXT NOT NULL,
-  mode TEXT NOT NULL,
-  scope_id TEXT NOT NULL,
-  attempt_id TEXT NOT NULL UNIQUE,
-  PRIMARY KEY(problem_id, language, mode, scope_id),
-  FOREIGN KEY(attempt_id, problem_id, language, mode, scope_id)
-    REFERENCES attempts(id, problem_id, language, mode, draft_scope_id)
-) STRICT;
-INSERT INTO active_attempts SELECT problem_id, language, mode, draft_scope_id, id FROM attempts a
-WHERE NOT EXISTS(SELECT 1 FROM attempts newer WHERE newer.problem_id = a.problem_id
-  AND newer.language = a.language AND newer.mode = a.mode AND newer.rowid > a.rowid);
-CREATE TABLE library_problem_heads (
-  problem_id TEXT PRIMARY KEY NOT NULL,
-  version TEXT NOT NULL,
-  created_at TEXT NOT NULL,
-  updated_at TEXT NOT NULL,
-  FOREIGN KEY(problem_id, version) REFERENCES problem_versions(problem_id, version)
-) STRICT;
-CREATE TABLE study_lists (
-  id TEXT PRIMARY KEY NOT NULL,
-  title TEXT NOT NULL,
-  source TEXT NOT NULL CHECK(source IN ('local', 'leetcode-cn', 'file')),
-  source_url TEXT,
-  revision INTEGER NOT NULL CHECK(revision > 0),
-  created_at TEXT NOT NULL,
-  updated_at TEXT NOT NULL
-) STRICT;
-CREATE TABLE list_chapters (
-  list_id TEXT NOT NULL REFERENCES study_lists(id),
-  id TEXT NOT NULL,
-  title TEXT NOT NULL,
-  parent_id TEXT,
-  position INTEGER NOT NULL CHECK(position >= 0),
-  PRIMARY KEY(list_id, id),
-  FOREIGN KEY(list_id, parent_id) REFERENCES list_chapters(list_id, id) DEFERRABLE INITIALLY DEFERRED
-) STRICT;
-CREATE TABLE list_items (
-  list_id TEXT NOT NULL REFERENCES study_lists(id),
-  item_key TEXT NOT NULL,
-  problem_id TEXT NOT NULL REFERENCES problems(id),
-  chapter_id TEXT,
-  position INTEGER NOT NULL CHECK(position >= 0),
-  PRIMARY KEY(list_id, item_key),
-  FOREIGN KEY(list_id, chapter_id) REFERENCES list_chapters(list_id, id) DEFERRABLE INITIALLY DEFERRED
-) STRICT;
-CREATE INDEX list_items_by_problem ON list_items(problem_id);
-CREATE TABLE list_refresh_previews (
-  id TEXT PRIMARY KEY NOT NULL,
-  list_id TEXT NOT NULL,
-  base_revision INTEGER NOT NULL,
-  preview_json TEXT NOT NULL CHECK(json_valid(preview_json)),
-  created_at TEXT NOT NULL,
-  applied_at TEXT
-) STRICT;
-CREATE TABLE import_jobs (
-  id TEXT PRIMARY KEY NOT NULL,
-  request_key TEXT NOT NULL UNIQUE,
-  input_json TEXT NOT NULL CHECK(json_valid(input_json)),
-  input_hash TEXT NOT NULL,
-  status TEXT NOT NULL CHECK(status IN (${IMPORT_JOB_STATUSES.map((status) => `'${status}'`).join(',')})),
-  error_json TEXT NOT NULL CHECK(json_valid(error_json)),
-  created_at TEXT NOT NULL,
-  updated_at TEXT NOT NULL
-) STRICT;
-CREATE TABLE import_items (
-  job_id TEXT NOT NULL REFERENCES import_jobs(id),
-  item_key TEXT NOT NULL,
-  problem_id TEXT NOT NULL REFERENCES problems(id),
-  seed_json TEXT NOT NULL CHECK(json_valid(seed_json)),
-  version TEXT,
-  status TEXT NOT NULL CHECK(status IN (${IMPORT_ITEM_STATUSES.map((status) => `'${status}'`).join(',')})),
-  error_json TEXT NOT NULL CHECK(json_valid(error_json)),
-  attempts INTEGER NOT NULL DEFAULT 0 CHECK(attempts >= 0),
-  updated_at TEXT NOT NULL,
-  PRIMARY KEY(job_id, item_key),
-  FOREIGN KEY(problem_id, version) REFERENCES problem_versions(problem_id, version)
-) STRICT;
-CREATE TABLE draft_restorations (
-  request_id TEXT PRIMARY KEY NOT NULL,
-  run_id TEXT NOT NULL REFERENCES runs(id),
-  attempt_id TEXT NOT NULL UNIQUE REFERENCES attempts(id),
-  scope_id TEXT NOT NULL,
-  created_at TEXT NOT NULL
-) STRICT;
-`;
-
 function requireText(value: string, field: string): void {
   if (typeof value !== 'string' || value.trim().length === 0) throw new Error(`${field} must be non-empty`);
 }
@@ -482,11 +263,11 @@ export function testConfigDigest(value: AcmTestConfig | null): string | null {
   return value === null ? null : hashCode(json(validateAcmTestConfig(value)));
 }
 
-function checkDatabase(db: DatabaseSync, allowedVersions = [SCHEMA_VERSION]): void {
-  const version = db.prepare('PRAGMA user_version').get() as Row;
-  if (!allowedVersions.includes(version.user_version as number)) throw new Error('Unsupported backup schema version');
+function checkDatabase(db: DatabaseSync): void {
+  const header = db.prepare('PRAGMA application_id').get() as Row, version = db.prepare('PRAGMA user_version').get() as Row;
+  if (header.application_id !== APPLICATION_ID || version.user_version !== SCHEMA_VERSION) throw new Error('Unsupported backup schema version');
   const integrity = db.prepare('PRAGMA integrity_check').all() as Row[];
-  if (integrity.length !== 1 || integrity[0].integrity_check !== 'ok') throw new Error('SQLite integrity check failed');
+  if (integrity.length !== 1 || integrity[0].integrity_check !== 'ok') throw integrityFailure();
   if (db.prepare('PRAGMA foreign_key_check').all().length !== 0) throw new Error('SQLite foreign key check failed');
 }
 
@@ -507,7 +288,6 @@ function historyItem(row: Row): SubmissionHistoryItem {
 /** Local P3 repository. Construct after acquiring the application's single-instance lock. */
 export class PracticeStore {
   readonly dbPath: string;
-  readonly migrationBackupPath: string | null = null;
   #db: DatabaseSync;
   #learning!: LearningRepository;
   #closed = false;
@@ -519,94 +299,26 @@ export class PracticeStore {
     mkdirSync(dirname(this.dbPath), { recursive: true });
     this.#db = new DatabaseSync(this.dbPath);
     try {
-      const version = (this.#db.prepare('PRAGMA user_version').get() as Row).user_version;
-      if (![0, ...SUPPORTED_BACKUP_VERSIONS].includes(version as number)) throw new Error(`Unsupported schema version: ${version}`);
+      const version = Number((this.#db.prepare('PRAGMA user_version').get() as Row).user_version);
+      const applicationId = Number((this.#db.prepare('PRAGMA application_id').get() as Row).application_id);
+      const fresh = version === 0 && applicationId === 0 && !this.#db.prepare('SELECT 1 FROM sqlite_schema LIMIT 1').get();
+      // Databases of earlier versions (0.x) are never read or changed: no migrations exist for them.
+      if (!fresh && (applicationId !== APPLICATION_ID || version !== SCHEMA_VERSION)) throw new Error(`Unsupported schema version: ${version}`);
       this.#db.exec('PRAGMA foreign_keys = ON; PRAGMA journal_mode = WAL; PRAGMA synchronous = FULL; PRAGMA busy_timeout = 5000;');
-      if (version === 0) this.#schemaMigration(() => {
-        this.#db.exec(SCHEMA);
-        this.#db.exec(MIGRATE_V2);
-        this.#db.exec(MIGRATE_V3);
-        this.#db.exec(MIGRATE_V4);
-        this.#db.exec(MIGRATE_V5);
-        this.#db.exec(MIGRATE_V6);
-        this.#db.exec(MIGRATE_V7);
-        this.#db.exec(MIGRATE_V8);
-        this.#db.prepare('INSERT INTO learning_settings VALUES (1, ?)').run(json({ ...defaultLearningSettings(), updatedAt: new Date().toISOString() }));
-        this.#db.exec(MIGRATE_V9);
-        const settings = new LearningRepository(this.#db, operation => this.#transaction(operation)).getLearningSettings();
-        migrateProblemReviewData(this.#db, settings.timeZone);
-        this.#db.exec(MIGRATE_V10);
-        this.#db.exec(`PRAGMA user_version = ${SCHEMA_VERSION}`);
-        checkDatabase(this.#db);
-      });
-      if (typeof version === 'number' && version > 0 && version < SCHEMA_VERSION) {
-        checkDatabase(this.#db, [version]);
-        const backupPath = `${this.dbPath}.before-v${SCHEMA_VERSION}-${new Date().toISOString().replace(/[:.]/g, '-')}-${randomUUID()}.sqlite`;
-        const temporary = `${backupPath}.partial`;
-        try {
-          // VACUUM INTO is a synchronous, transactionally consistent snapshot including committed WAL pages.
-          // It preserves the synchronous P1 constructor; application single-instance ownership excludes concurrent writers.
-          this.#db.prepare('VACUUM INTO ?').run(temporary);
-          const verification = new DatabaseSync(temporary, { readOnly: true });
-          try { checkDatabase(verification, [version]); } finally { verification.close(); }
-          linkSync(temporary, backupPath);
-          this.migrationBackupPath = backupPath;
-        } finally { if (existsSync(temporary)) unlinkSync(temporary); }
-        try {
-          this.#schemaMigration(() => {
-            if (version === 1) this.#db.exec(MIGRATE_V2);
-            if (version < 3) {
-              this.#db.exec(MIGRATE_V3);
-              this.#db.prepare('INSERT INTO learning_settings VALUES (1, ?)').run(json({ ...defaultLearningSettings(), updatedAt: new Date().toISOString() }));
-            }
-            if (version < 4) this.#db.exec(MIGRATE_V4);
-            if (version < 5) this.#db.exec(MIGRATE_V5);
-            if (version < 6) this.#db.exec(MIGRATE_V6);
-            if (version < 7) this.#db.exec(MIGRATE_V7);
-            if (version < 8) this.#db.exec(MIGRATE_V8);
-            backfillNoteAttachmentReferences(this.#db);
-            if (version < 9) {
-              this.#db.exec(MIGRATE_V9);
-              const settings = new LearningRepository(this.#db, operation => this.#transaction(operation)).getLearningSettings();
-              migrateProblemReviewData(this.#db, settings.timeZone);
-            }
-            this.#db.exec(MIGRATE_V10);
-            this.#db.exec(`PRAGMA user_version = ${SCHEMA_VERSION}`);
-            checkDatabase(this.#db);
-          });
-        } catch (error) {
-          throw new Error(`Schema v${SCHEMA_VERSION} migration failed; original schema retained. Backup: ${backupPath}`, { cause: error });
-        }
-      }
-      // Existing schema 2 databases need only a trigger update; table layouts and stored snapshots stay intact.
-      if (!this.#db.prepare("SELECT 1 FROM sqlite_schema WHERE type = 'trigger' AND name = 'immutable_run_runtime'").get()) {
+      if (fresh) {
         this.#transaction(() => {
-          this.#db.exec('DROP TRIGGER immutable_run_snapshot');
-          this.#db.exec(RUN_SNAPSHOT_TRIGGERS);
+          this.#db.exec(SCHEMA);
+          this.#db.prepare('INSERT INTO learning_settings VALUES (1, ?)').run(json({ ...defaultLearningSettings(), updatedAt: new Date().toISOString() }));
+          this.#db.exec('INSERT INTO problem_review_meta(id, revision) VALUES (1, 0)');
+          this.#db.exec(`PRAGMA application_id = ${APPLICATION_ID}; PRAGMA user_version = ${SCHEMA_VERSION};`);
         });
+        checkDatabase(this.#db);
       }
       this.#learning = new LearningRepository(this.#db, operation => this.#transaction(operation), attemptId => this.getInterviewForAttempt(attemptId)?.mode);
-      if (version === SCHEMA_VERSION) this.#transaction(() => backfillNoteAttachmentReferences(this.#db));
-      if (!this.#db.prepare('SELECT 1 FROM learning_settings WHERE id = 1').get()) this.#learning.updateLearningSettings({});
     } catch (error) {
       this.#db.close();
       this.#closed = true;
       throw error;
-    }
-  }
-
-  /** A parent-table rebuild must switch FK enforcement outside, never inside, its transaction.
-   * All links are checked before commit, including deferred/cyclic Attempt and Run references.
-   */
-  #schemaMigration(operation: () => void): void {
-    if (this.#inTransaction || this.#db.isTransaction) throw new Error('Schema migration cannot join an existing transaction');
-    this.#db.exec('PRAGMA foreign_keys = OFF');
-    try {
-      if (this.#db.prepare('PRAGMA foreign_keys').get()!.foreign_keys !== 0) throw new Error('Cannot disable migration foreign keys');
-      this.#transaction(operation);
-    } finally {
-      this.#db.exec('PRAGMA foreign_keys = ON');
-      if (this.#db.prepare('PRAGMA foreign_keys').get()!.foreign_keys !== 1) throw new Error('Cannot restore foreign key enforcement');
     }
   }
 
@@ -653,26 +365,11 @@ export class PracticeStore {
       .get(id, selectedVersion) as Row | undefined;
     if (!snapshot) return undefined;
     const original = JSON.parse(snapshot.snapshot_json as string);
-    let content: ProblemContent;
-    if (original && original.descriptionFormat && original.source) content = normalizeProblem(original);
-    else {
-      // Old P1 snapshots are retained byte-for-byte. Only this read view adapts their known demo fields.
-      const legacy = original && typeof original === 'object' ? original : {};
-      content = { ...placeholderProblem(id, typeof legacy.title === 'string' ? legacy.title : id, 'local'),
-        difficulty: typeof legacy.difficulty === 'string' ? legacy.difficulty : '未知',
-        tags: typeof legacy.topic === 'string' ? [legacy.topic] : [],
-        description: typeof legacy.description === 'string' ? legacy.description : '',
-        constraints: Array.isArray(legacy.constraints) ? legacy.constraints : [],
-        mode: legacy.mode === 'acm' ? 'acm' : 'function',
-        ...(legacy.adapter ? { adapter: legacy.adapter } : {}),
-        cases: Array.isArray(legacy.cases) ? legacy.cases : [],
-        starter: legacy.starter && typeof legacy.starter === 'object' ? legacy.starter : {},
-        supportReason: '来自保留的 P1 题面快照；可运行能力仍须按实际模板与测试判定。',
-      };
-    }
-    const legacyTime = this.#db.prepare('SELECT MIN(started_at) AS started_at FROM attempts WHERE problem_id = ?')
+    // A version recorded by an attempt without a snapshot reads as a bare reference.
+    const content: ProblemContent = original && original.descriptionFormat && original.source ? normalizeProblem(original) : placeholderProblem(id, id, 'local');
+    const firstAttempt = this.#db.prepare('SELECT MIN(started_at) AS started_at FROM attempts WHERE problem_id = ?')
       .get(id) as Row;
-    const createdAt = (head?.created_at ?? legacyTime.started_at ?? '') as string;
+    const createdAt = (head?.created_at ?? firstAttempt.started_at ?? '') as string;
     return { id, version: selectedVersion as string, content, createdAt, updatedAt: (head?.updated_at ?? createdAt) as string };
   }
 
@@ -711,6 +408,10 @@ export class PracticeStore {
     if (filter.listId) { clauses.push('list_id = ?'); values.push(filter.listId); }
     if (filter.chapterId) { clauses.push('chapter_id = ?'); values.push(filter.chapterId); }
     if (search) { clauses.push("(problem_id LIKE ? ESCAPE '\\' OR title LIKE ? ESCAPE '\\' OR EXISTS(SELECT 1 FROM json_each(tags_json) WHERE value LIKE ? ESCAPE '\\'))"); values.push(literalLike(search), literalLike(search), literalLike(search)); }
+    if (filter.practice !== undefined) {
+      if (!['unpracticed', 'practiced', 'solved', 'review-due'].includes(filter.practice)) throw new Error('Invalid practice state filter');
+      clauses.push({ unpracticed: 'NOT practiced', practiced: 'practiced', solved: 'solved', 'review-due': 'review_due' }[filter.practice]);
+    }
     if (filter.difficulty) { clauses.push("CASE lower(difficulty) WHEN 'easy' THEN '简单' WHEN 'medium' THEN '中等' WHEN 'hard' THEN '困难' ELSE difficulty END = ?"); values.push(filter.difficulty); }
     const template = filter.language ? `has_${filter.language}` : `(${LANGUAGES.map(language => `has_${language}`).join(' OR ')})`;
     const runnable = `(${template} AND (mode = 'acm' OR has_adapter) AND case_count > 0)`;
@@ -732,21 +433,25 @@ export class PracticeStore {
       length(trim(COALESCE(json_extract(v.snapshot_json, '$.starter.java'), ''), ${SQL_TRIM_WHITESPACE})) > 0 AS has_java,
       length(trim(COALESCE(json_extract(v.snapshot_json, '$.starter.go'), ''), ${SQL_TRIM_WHITESPACE})) > 0 AS has_go,
       length(trim(COALESCE(json_extract(v.snapshot_json, '$.starter.cpp'), ''), ${SQL_TRIM_WHITESPACE})) > 0 AS has_cpp_template,
-      EXISTS(SELECT 1 FROM json_tree(v.snapshot_json, '$.adapter.params') t WHERE t.type = 'text' AND t.value = 'bigint')
-        OR EXISTS(SELECT 1 FROM json_tree(v.snapshot_json, '$.adapter.returns') t WHERE t.type = 'text' AND t.value = 'bigint') AS has_cpp_bigint,
+      ${SQL_ADAPTER_BIGINT} AS has_cpp_bigint,
       length(trim(COALESCE(json_extract(v.snapshot_json, '$.starter.cpp'), ''), ${SQL_TRIM_WHITESPACE})) > 0
-        AND (json_extract(v.snapshot_json, '$.mode') = 'acm' OR (
-          NOT EXISTS(SELECT 1 FROM json_tree(v.snapshot_json, '$.adapter.params') t WHERE t.type = 'text' AND t.value = 'bigint')
-          AND NOT EXISTS(SELECT 1 FROM json_tree(v.snapshot_json, '$.adapter.returns') t WHERE t.type = 'text' AND t.value = 'bigint'))) AS has_cpp,
+        AND (json_extract(v.snapshot_json, '$.mode') = 'acm' OR NOT ${SQL_ADAPTER_BIGINT}) AS has_cpp,
       COALESCE(json_array_length(v.snapshot_json, '$.cases'), 0) AS case_count,
-      NOT EXISTS(SELECT 1 FROM json_each(v.snapshot_json, '$.cases') c WHERE json_type(c.value, '$.expected') IS NULL) AS has_expected
+      NOT EXISTS(SELECT 1 FROM json_each(v.snapshot_json, '$.cases') c WHERE json_type(c.value, '$.expected') IS NULL) AS has_expected,
+      EXISTS(SELECT 1 FROM attempts a WHERE a.problem_id = h.problem_id) AS practiced,
+      (EXISTS(SELECT 1 FROM runs r JOIN attempts a ON a.id = r.attempt_id WHERE a.problem_id = h.problem_id AND ${trustedPassSql('r')}) OR EXISTS(SELECT 1 FROM official_submissions s JOIN attempts a ON a.id = s.attempt_id WHERE a.problem_id = h.problem_id AND ${officialAcceptedSql('s')})) AS solved,
+      -- Due today exactly as the review plan counts it: active, due and any deferral before today's learning-day end, not yet assessed today.
+      EXISTS(SELECT 1 FROM problem_review_plans rp WHERE rp.problem_id = h.problem_id AND rp.suspended = 0 AND rp.due_at IS NOT NULL AND rp.due_at < ?
+        AND (rp.scheduled_at IS NULL OR rp.scheduled_at < ?) AND NOT EXISTS(SELECT 1 FROM problem_review_day_assessments d WHERE d.problem_id = h.problem_id AND d.learning_date = ?)) AS review_due
       ${filter.listId ? ', li.list_id, li.item_key, li.chapter_id, li.position, li.rowid AS item_order' : ''}
       FROM library_problem_heads h JOIN problem_versions v ON v.problem_id = h.problem_id AND v.version = h.version
       ${filter.listId ? 'JOIN list_items li ON li.problem_id = h.problem_id' : ''})`;
     const where = clauses.length ? `WHERE ${clauses.join(' AND ')}` : '';
-    const total = this.#db.prepare(`${cte} SELECT COUNT(*) AS total FROM metadata ${where}`).get(...values)!.total as number;
+    const { timeZone } = this.#learning.getLearningSettings(), today = localDateOf(Date.now(), timeZone), dayEnd = archiveDateBoundary(today, timeZone, true);
+    const cteValues = [dayEnd, dayEnd, today];
+    const total = this.#db.prepare(`${cte} SELECT COUNT(*) AS total FROM metadata ${where}`).get(...cteValues, ...values)!.total as number;
     const rows = this.#db.prepare(`${cte} SELECT * FROM metadata ${where} ORDER BY ${filter.listId ? 'position, item_order' : 'ordering'} LIMIT ? OFFSET ?`)
-      .all(...values, bounds.limit, bounds.offset) as Row[];
+      .all(...cteValues, ...values, bounds.limit, bounds.offset) as Row[];
     return pageResult(rows.map(row => {
       const statement = Boolean(row.has_statement), adapter = Boolean(row.has_adapter);
       const templates = { python: Boolean(row.has_python), java: Boolean(row.has_java), go: Boolean(row.has_go), cpp: Boolean(row.has_cpp) };
@@ -758,12 +463,22 @@ export class PracticeStore {
           source: row.source as ProblemSource, mode: row.mode as ProblemContent['mode'], ...(row.source_url ? { sourceUrl: row.source_url as string } : {}),
           ...(supportReason ? { supportReason } : {}), ...(row.media_complete !== null ? { media: { complete: Boolean(row.media_complete) } } : {}) },
         capabilities: { statement, adapter, ...templates, cppTemplate: Boolean(row.has_cpp_template), cases: row.case_count as number, expected },
+        practice: { practiced: Boolean(row.practiced), solved: Boolean(row.solved), reviewDue: Boolean(row.review_due) },
         capability: { canRun, level: canRun ? expected ? 'sample-verified' : 'execution-only' : statement ? 'statement-only' : 'link-only',
-          label: canRun ? expected ? statement ? '本地可运行' : '本地可运行 · 缺题面' : '可运行 · 仅看输出' : statement ? '题面可读' : '仅链接',
-          reason: canRun ? expected ? '使用已缓存的本地用例，结果不等同于官方 AC。' : '用例没有完整的可信期望值，只展示实际输出。' : unsupportedCpp ? 'C++ 本地函数适配暂不支持此签名中的类型；可保存代码，或使用 ACM 自定义输入输出练习。' : supportReason || '题面、函数签名、语言模板或用例尚未准备完整。' },
+          label: canRun ? expected ? statement ? '本地可运行' : '本地可运行 · 缺题面' : '可运行 · 仅显示输出' : statement ? '题面可读' : '仅链接',
+          reason: canRun ? expected ? '使用已缓存的本地用例，结果不等同于官方 AC。' : '用例缺少完整的可信期望值，仅展示实际输出。' : unsupportedCpp ? 'C++ 本地函数适配暂不支持此签名中的类型；可保存代码，或使用 ACM 自定义输入输出练习。' : supportReason || '题面、函数签名、语言模板或用例尚未准备完整。' },
         ...(filter.listId ? { listItem: { key: row.item_key as string, problemId: row.problem_id as string, position: row.position as number,
           ...(row.chapter_id !== null ? { chapterId: row.chapter_id as string } : {}) } } : {}) };
     }), total, bounds);
+  }
+
+  /** Per study list: distinct member problems, how many were practiced, and how many solved. */
+  listProgress(): Record<string, ListProgress> {
+    const rows = this.#db.prepare(`SELECT li.list_id AS list_id, COUNT(DISTINCT li.problem_id) AS total,
+      COUNT(DISTINCT CASE WHEN EXISTS(SELECT 1 FROM attempts a WHERE a.problem_id = li.problem_id) THEN li.problem_id END) AS practiced,
+      COUNT(DISTINCT CASE WHEN (EXISTS(SELECT 1 FROM runs r JOIN attempts a ON a.id = r.attempt_id WHERE a.problem_id = li.problem_id AND ${trustedPassSql('r')}) OR EXISTS(SELECT 1 FROM official_submissions s JOIN attempts a ON a.id = s.attempt_id WHERE a.problem_id = li.problem_id AND ${officialAcceptedSql('s')})) THEN li.problem_id END) AS solved
+      FROM list_items li GROUP BY li.list_id`).all() as Row[];
+    return Object.fromEntries(rows.map(row => [String(row.list_id), { total: Number(row.total), practiced: Number(row.practiced), solved: Number(row.solved) }]));
   }
 
   listAttemptPage(filter: AttemptPageFilter = {}): PageResult<AttemptListItem> {
@@ -775,10 +490,6 @@ export class PracticeStore {
       clauses.push(filter.state === 'active' ? 'is_active = 1' : 'ended_at IS NOT NULL');
     }
     if (search) { clauses.push("(title LIKE ? ESCAPE '\\' OR problem_id LIKE ? ESCAPE '\\')"); values.push(literalLike(search), literalLike(search)); }
-    if (filter.helpLevel) {
-      if (!['none', 'L0', 'L1', 'L2', 'L3', 'L4'].includes(filter.helpLevel)) throw new Error('Invalid help level filter');
-      if (filter.helpLevel === 'none') clauses.push('help_level IS NULL'); else { clauses.push('help_level = ?'); values.push(filter.helpLevel); }
-    }
     for (const [key, operator] of [['from', '>='], ['to', '<']] as const) if (filter[key]) {
       if (!Number.isFinite(Date.parse(filter[key]!))) throw new Error('Invalid attempt date filter');
       clauses.push(`started_at ${operator} ?`); values.push(new Date(filter[key]!).toISOString());
@@ -801,7 +512,7 @@ export class PracticeStore {
       a.last_run_matches_final, a.restored_from_run_id, a.answer_format, a.spec_version, a.rowid AS ordering,
       EXISTS(SELECT 1 FROM active_attempts active WHERE active.attempt_id = a.id) AS is_active,
       COALESCE(json_extract(v.snapshot_json, '$.title'), a.problem_id) AS title,
-      (SELECT MAX(COALESCE(json_extract(ai.snapshot_json, '$.level'), 'adaptive')) FROM ai_requests ai WHERE ai.attempt_id = a.id AND ai.status = 'completed') AS help_level
+      EXISTS(SELECT 1 FROM ai_requests ai WHERE ai.attempt_id = a.id AND ai.status = 'completed') AS used_ai
       FROM attempts a JOIN problem_versions v ON v.problem_id = a.problem_id AND v.version = a.problem_version)`;
     const where = clauses.length ? `WHERE ${clauses.join(' AND ')}` : '';
     const total = this.#db.prepare(`${cte} SELECT COUNT(*) AS total FROM summaries ${where}`).get(...values)!.total as number;
@@ -818,7 +529,7 @@ export class PracticeStore {
       restoredFromRunId: row.restored_from_run_id as string | null, isActive: Boolean(row.is_active),
       answerFormat: row.answer_format as AnswerFormat, specVersion: row.spec_version as string },
       title: row.title as string, runCount: row.run_count as number, lastStatus: row.last_status as TerminalStatus | null,
-      activeMs: row.active_ms as number, helpLevel: row.help_level as string | null })), total, bounds);
+      activeMs: row.active_ms as number, usedAi: Boolean(row.used_ai) })), total, bounds);
   }
 
   /** Newest first. Queued runs are excluded unless explicitly requested. */
@@ -837,7 +548,7 @@ export class PracticeStore {
       SELECT r.id ${from} ${where} ORDER BY r.rowid DESC LIMIT ? OFFSET ?)
       SELECT r.id, r.attempt_id, a.problem_id, a.language, a.problem_version, a.answer_format, a.spec_version,
       COALESCE(json_extract(r.test_snapshot_json, '$.testConfigDigest'), r.test_suite_version) AS test_config_digest,
-      r.code_hash, r.test_suite_version, r.adapter_version, r.runtime_version, r.status, r.created_at, r.finished_at,
+      r.code_hash, r.test_suite_version, r.expected_output_source, r.adapter_version, r.runtime_version, r.status, r.created_at, r.finished_at,
       json_extract(r.result_json, '$.durationMs') AS duration_ms,
       COALESCE(json_array_length(r.result_json, '$.caseResults'), 0) AS case_count,
       (SELECT COUNT(*) FROM json_each(r.result_json, '$.caseResults') c WHERE json_extract(c.value, '$.status') = 'passed') AS passed_case_count
@@ -845,8 +556,8 @@ export class PracticeStore {
       ORDER BY r.rowid DESC`).all(...values, bounds.limit, bounds.offset) as Row[];
     return pageResult(rows.map(row => ({ id: row.id as string, attemptId: row.attempt_id as string,
       problemId: row.problem_id as string, language: row.language as Language, problemVersion: row.problem_version as string,
-      codeHash: row.code_hash as string, testSuiteVersion: row.test_suite_version as string, adapterVersion: row.adapter_version as string,
-      runtimeVersion: row.runtime_version as string, status: row.status as RunStatus, createdAt: row.created_at as string,
+      codeHash: row.code_hash as string, testSuiteVersion: row.test_suite_version as string, expectedOutputSource: row.expected_output_source as ExpectedOutputSource,
+      adapterVersion: row.adapter_version as string, runtimeVersion: row.runtime_version as string, status: row.status as RunStatus, createdAt: row.created_at as string,
       finishedAt: row.finished_at as string | null, durationMs: typeof row.duration_ms === 'number' ? row.duration_ms : null,
       caseCount: row.case_count as number, passedCaseCount: row.passed_case_count as number,
       answerFormat: row.answer_format as AnswerFormat, specVersion: row.spec_version as string, testConfigDigest: row.test_config_digest as string })), total, bounds);
@@ -1154,27 +865,15 @@ export class PracticeStore {
     return { problemId: row.problem_id as string, language: row.language as Language,
       scopeId: row.scope_id as string, code: row.code as string, codeHash: row.code_hash as string,
       revision: row.revision as number, savedAt: row.saved_at as string,
-      answerFormat: row.answer_format === 'legacy' ? null : row.answer_format as AnswerFormat,
+      answerFormat: row.answer_format as AnswerFormat,
       specVersion: row.spec_version as string, testConfig,
       testConfigDigest: testConfig ? hashCode(json(testConfig)) : null };
   }
 
-  /** Unknown pre-v8 drafts are retained verbatim and never silently assigned to a format. */
-  listLegacyDrafts(problemId?: string): Draft[] {
-    return (this.#db.prepare("SELECT * FROM drafts WHERE answer_format = 'legacy' AND (? IS NULL OR problem_id = ?) ORDER BY saved_at DESC")
-      .all(problemId ?? null, problemId ?? null) as Row[]).map(row => this.#draftFromRow(row));
-  }
-
   getDraft(problemId: string, language: Language, scopeId = 'practice', answerFormat?: AnswerFormat): Draft | undefined {
     if (answerFormat !== undefined) assertAnswerFormat(answerFormat);
-    const format = answerFormat ?? this.#nativeFormat(problemId);
     const row = this.#db.prepare('SELECT * FROM drafts WHERE problem_id = ? AND language = ? AND scope_id = ? AND answer_format = ?')
-      .get(problemId, language, scopeId, format) as Row | undefined;
-    if (!row && answerFormat === undefined) {
-      const legacy = this.#db.prepare("SELECT * FROM drafts WHERE problem_id = ? AND language = ? AND scope_id = ? AND answer_format = 'legacy'")
-        .get(problemId, language, scopeId) as Row | undefined;
-      return legacy ? this.#draftFromRow(legacy) : undefined;
-    }
+      .get(problemId, language, scopeId, answerFormat ?? this.#nativeFormat(problemId)) as Row | undefined;
     return row ? this.#draftFromRow(row) : undefined;
   }
 
@@ -1209,6 +908,13 @@ export class PracticeStore {
           (previous?.revision ?? 0) + 1, new Date().toISOString(), answerFormat, specVersion, configJson);
       return this.getDraft(input.problemId, input.language, scopeId, answerFormat)!;
     });
+  }
+
+  /** When this practice counted as completed (see LearningDay); otherwise why its end does not count. */
+  attemptCompletion(id: string): { completedAt: string | null; notCountedBecause: CompletionBlocker | null } {
+    const row = this.#db.prepare(`SELECT completed_at, end_blocker FROM (${attemptCompletionsSql('a.id = ?')})`).get(id) as Row | undefined;
+    const completedAt = (row?.completed_at as string | null | undefined) ?? null;
+    return { completedAt, notCountedBecause: completedAt ? null : (row?.end_blocker as CompletionBlocker | null | undefined) ?? null };
   }
 
   getAttempt(id: string): Attempt | undefined {
@@ -1431,7 +1137,7 @@ export class PracticeStore {
       for (const row of rows) {
         const record = this.getOfficialSubmission(row.id as string)!;
         this.updateOfficialSubmission(record.id, { status: record.submissionId ? 'paused' : 'unknown',
-          error: { code: 'interrupted', message: record.submissionId ? '结果查询已暂停，可以继续查询。' : '上次提交被中断，无法确认是否已送达，请先在力扣提交记录中核对。' } });
+          error: { code: 'interrupted', message: record.submissionId ? '结果查询已暂停，可继续查询。' : '上次提交被中断，无法确认是否已送达，请先在力扣提交记录中核对。' } });
       }
       return rows.length;
     });
@@ -1505,9 +1211,8 @@ export class PracticeStore {
         language: run.language, problemVersion: run.problemVersion, problemSnapshot: original.problemSnapshot,
         draftScopeId: scopeId, restoredFromRunId: runId, answerFormat: run.answerFormat, specVersion: run.specVersion });
       const snapshot = run.testSnapshot && typeof run.testSnapshot === 'object' && !Array.isArray(run.testSnapshot) ? run.testSnapshot : null;
-      const legacyCases = Array.isArray(run.testSnapshot) ? run.testSnapshot : undefined;
       const originalContent = original.problemSnapshot && typeof original.problemSnapshot === 'object' && !Array.isArray(original.problemSnapshot) ? original.problemSnapshot : null;
-      const restoredCases = snapshot && Array.isArray(snapshot.cases) ? snapshot.cases : legacyCases;
+      const restoredCases = snapshot && Array.isArray(snapshot.cases) ? snapshot.cases : undefined;
       const restoredTests = run.answerFormat === 'acm' && restoredCases
         ? validateAcmTestConfig({ version: 1, compare: snapshot?.acmCompare ?? originalContent?.acmCompare ?? 'normalized', cases: restoredCases }) : undefined;
       const draft = this.saveDraft({ problemId: run.problemId, language: run.language, code: run.code, scopeId, expectedRevision: 0,
@@ -1527,6 +1232,7 @@ export class PracticeStore {
       problemId: row.problem_id as string, language: row.language as Language,
       problemVersion: row.problem_version as string, code: row.code as string, codeHash: row.code_hash as string,
       testSuiteVersion: row.test_suite_version as string, testSnapshot: JSON.parse(row.test_snapshot_json as string),
+      expectedOutputSource: row.expected_output_source as ExpectedOutputSource,
       adapterVersion: row.adapter_version as string, runtimeVersion: row.runtime_version as string,
       status: row.status as RunStatus, result: JSON.parse(row.result_json as string),
       createdAt: row.created_at as string, finishedAt: row.finished_at as string | null,
@@ -1544,6 +1250,7 @@ export class PracticeStore {
     const result = json(input.result ?? null);
     if (status === 'queued' && result !== 'null') throw new Error('Queued run cannot contain a terminal result');
     const testSnapshot = json(input.testSnapshot ?? null);
+    if (!EXPECTED_OUTPUT_SOURCES.includes(input.expectedOutputSource)) throw new Error('Run must state where its expected outputs came from');
     if (input.testConfigDigest !== undefined) {
       const snapshot = input.testSnapshot;
       if (!snapshot || typeof snapshot !== 'object' || Array.isArray(snapshot)
@@ -1567,6 +1274,7 @@ export class PracticeStore {
       if (existing) {
         if (existing.attemptId !== input.attemptId || existing.codeHash !== codeHash
           || existing.testSuiteVersion !== input.testSuiteVersion || json(existing.testSnapshot) !== testSnapshot
+          || existing.expectedOutputSource !== input.expectedOutputSource
           || existing.adapterVersion !== input.adapterVersion || existing.runtimeVersion !== input.runtimeVersion
           || (status !== 'queued' && (existing.status !== status || json(existing.result) !== result))) {
           throw new Error('Run id conflicts with its immutable snapshot or result');
@@ -1578,8 +1286,9 @@ export class PracticeStore {
         if (!interview?.endedAt || !interview.items.some(item => item.attemptId === attempt.id && item.final?.codeHash === codeHash)) throw new Error('Cannot add a run to a finished attempt');
       }
       const now = new Date().toISOString();
-      this.#db.prepare('INSERT INTO runs VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)')
-        .run(id, input.attemptId, input.code, codeHash, input.testSuiteVersion, testSnapshot,
+      this.#db.prepare(`INSERT INTO runs (id, attempt_id, code, code_hash, test_suite_version, test_snapshot_json, expected_output_source,
+        adapter_version, runtime_version, status, result_json, created_at, finished_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
+        .run(id, input.attemptId, input.code, codeHash, input.testSuiteVersion, testSnapshot, input.expectedOutputSource,
           input.adapterVersion, input.runtimeVersion, status, result, now, status === 'queued' ? null : now);
       return this.#readRun(id)!;
     });
@@ -1598,6 +1307,9 @@ export class PracticeStore {
       }
       this.#db.prepare('UPDATE runs SET status = ?, result_json = ?, finished_at = ?, runtime_version = ? WHERE id = ?')
         .run(completion.status, result, new Date().toISOString(), completion.runtimeVersion ?? existing.runtimeVersion, id);
+      // Solving a problem in practice enters it into review, like an official Accepted. Interviews offer that themselves.
+      if (completion.status === 'passed' && existing.expectedOutputSource === 'native-samples'
+        && this.#db.prepare('SELECT mode FROM attempts WHERE id = ?').get(existing.attemptId)?.mode === 'practice') this.#learning.addProblemReview(existing.problemId);
       return this.#readRun(id)!;
     });
   }
@@ -1683,17 +1395,10 @@ export class PracticeStore {
   listNoteVersions(id: string) { return this.#learning.listNoteVersions(id); }
   getAttemptNoteVersions(attemptId: string) { return this.#learning.getAttemptNoteVersions(attemptId); }
   getLearningSettings() { return this.#learning.getLearningSettings(); }
-  getLearningDashboard(month?: string, at?: string) { return this.#learning.getLearningDashboard(month, at); }
+  getLearningDashboard(at?: string) { return this.#learning.getLearningDashboard(at); }
   updateLearningSettings(input: LearningSettingsInput) { return this.#learning.updateLearningSettings(input); }
-  addReviewItem(input: AddReviewItemInput) { return this.#learning.addReviewItem(input); }
-  getReviewItem(id: string) { return this.#learning.getReviewItem(id); }
-  listReviewItems(filter: ReviewFilter = {}) { return this.#learning.listReviewItems(filter); }
-  recordReview(input: ReviewFeedbackInput) { return this.#learning.recordReview(input); }
-  correctReview(input: CorrectReviewInput) { return this.#learning.correctReview(input); }
-  listReviewEvents(itemId: string) { return this.#learning.listReviewEvents(itemId); }
-  setReviewPlan(id: string, input: { suspended?: boolean; scheduledAt?: string | null }) { return this.#learning.setReviewPlan(id, input); }
-  getTodayQueue(at?: string) { return this.#learning.getTodayQueue(at); }
-  addProblemReview(problemId: string) { return this.#learning.addProblemReview(problemId); }
+  dueReviewCount(at?: string) { return this.#learning.dueReviewCount(at); }
+  addProblemReview(problemId: string, at?: string) { return this.#learning.addProblemReview(problemId, at); }
   addProblemReviews(input: { problemIds: string[] }) { return this.#learning.addProblemReviews(input); }
   getProblemReview(problemId: string) { return this.#learning.getProblemReview(problemId); }
   listProblemReviews() { return this.#learning.listProblemReviews(); }
@@ -1717,6 +1422,19 @@ export class PracticeStore {
   saveReviewAssessmentDraft(input: ReviewAssessmentDraftInput) { return this.#learning.saveReviewAssessmentDraft(input); }
   deleteReviewAssessmentDraft(key: string, expectedRevision?: number) { return this.#learning.deleteReviewAssessmentDraft(key, expectedRevision); }
   recordActivity(input: ActivitySampleInput) { return this.#learning.recordActivity(input); }
+  attemptActiveMs(attemptId: string) { return this.#learning.attemptActiveMs(attemptId); }
+  /** The weakest practiced topics, each with problems to redo and runnable problems in `language` not yet practiced. */
+  getTopicInsights(language: Language): TopicInsights {
+    requireLanguage(language);
+    const signals = this.#learning.listProblemStruggleSignals(), practiced = new Set(signals.map(signal => signal.problemId));
+    const topics = rankTopics(signals);
+    for (const topic of topics) {
+      topic.recommended = this.listProblemPage({ search: topic.tag, language, support: 'runnable', limit: 100 }).items
+        .filter(item => item.content.tags.includes(topic.tag) && item.capabilities.statement && !practiced.has(item.id))
+        .slice(0, 3).map(item => ({ id: item.id, title: item.content.title, difficulty: item.content.difficulty }));
+    }
+    return { language, topics };
+  }
   getArchiveStatistics(input: { attemptId?: string; from?: string; to?: string; timeZone?: string } = {}) { return this.#learning.getArchiveStatistics(input); }
   beginAIRequest(input: AiRequestSeed) {
     if (input.snapshot.answerFormat !== undefined) {
@@ -1733,23 +1451,21 @@ export class PracticeStore {
   listAIRequests(attemptId: string) { return this.#learning.listAIRequests(attemptId); }
   recoverInterruptedAIRequests() { return this.#learning.recoverInterruptedAIRequests(); }
   getAIHelpState(attemptId: string) { return this.#learning.getAIHelpState(attemptId); }
+  getAIUsageSummary(at?: string) { return this.#learning.getAIUsageSummary(at); }
   markAIHelpShown(attemptId: string) { return this.#learning.markAIHelpShown(attemptId); }
   dismissAIHelp(attemptId: string) { return this.#learning.dismissAIHelp(attemptId); }
-  markAIHelpUsed(attemptId: string, requestId: string, legacyLevel?: AiLevel) { return this.#learning.markAIHelpUsed(attemptId, requestId, legacyLevel); }
 
   /** Inspect the completed SQLite snapshot, never the mutable live database. Includes historical references. */
   static inspectBackupSnapshot(snapshotPath: string): BackupSnapshotInfo {
     const db = new DatabaseSync(resolve(snapshotPath), { readOnly: true });
     try {
-      checkDatabase(db, SUPPORTED_BACKUP_VERSIONS);
-      const version = (db.prepare('PRAGMA user_version').get() as Row).user_version as number;
+      checkDatabase(db);
       const mediaHashes = new Set<string>();
       for (const row of db.prepare('SELECT snapshot_json FROM problem_versions').all() as Row[]) {
         for (const match of (row.snapshot_json as string).matchAll(/algopractice:\/\/app\/media\/([a-f0-9]{64})(?![a-f0-9])/g)) mediaHashes.add(match[1]);
       }
-      const learning = version >= 3 ? new LearningRepository(db, () => { throw new Error('Backup snapshot is read-only'); }) : null;
-      return { schemaVersion: version, attachments: learning?.listAttachmentReferences() ?? [], mediaHashes: [...mediaHashes].sort(),
-        learningSettings: learning?.getLearningSettings() ?? { ...defaultLearningSettings(), timeZone: 'UTC' } };
+      const learning = new LearningRepository(db, () => { throw new Error('Backup snapshot is read-only'); });
+      return { schemaVersion: SCHEMA_VERSION, attachments: learning.listAttachmentReferences(), mediaHashes: [...mediaHashes].sort(), learningSettings: learning.getLearningSettings() };
     } finally { db.close(); }
   }
 
@@ -1779,24 +1495,6 @@ export class PracticeStore {
         this.#backupsInFlight--;
         if (existsSync(temporary)) unlinkSync(temporary);
       }
-    }
-  }
-
-  /** Restore SQLite into a fresh path; the backup service coordinates live replacement and file packages. */
-  static restoreBackup(backupPath: string, destination: string): string {
-    const source = resolve(backupPath);
-    const target = resolve(destination);
-    if (existsSync(target)) throw new Error('Restore destination must not exist');
-    mkdirSync(dirname(target), { recursive: true });
-    const temporary = `${target}.${randomUUID()}.partial`;
-    try {
-      copyFileSync(source, temporary);
-      const verification = new DatabaseSync(temporary, { readOnly: true });
-      try { checkDatabase(verification, SUPPORTED_BACKUP_VERSIONS); } finally { verification.close(); }
-      linkSync(temporary, target);
-      return target;
-    } finally {
-      if (existsSync(temporary)) unlinkSync(temporary);
     }
   }
 
