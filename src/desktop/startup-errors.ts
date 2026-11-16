@@ -42,7 +42,7 @@ export function isDatabaseCorruption(error: unknown): boolean { return startupFa
 /** Keep recovery instructions local and avoid putting raw exception payloads into logs or dialogs. */
 export function startupFailure(error: unknown, dataDirectory: string): StartupFailure {
   const kind = startupFailureKind(error); let title = '题炼暂时无法启动'; let action = '保留此数据目录。可重新启动；若仍失败，先复制整个目录，再用匹配版本的应用和已验证备份恢复。';
-  if (kind === 'version') { title = '当前版本无法读取此数据'; action = '此数据由其他版本的题炼创建。来自 0.x 旧版本的数据，当前版本不再读取，请继续使用旧版本打开；来自更新版本的数据，请使用相同或更新的题炼。请勿删除数据库或强行打开。'; }
+  if (kind === 'version') { title = '当前版本无法读取此数据'; action = '此数据由其他版本的题炼创建。来自 v0.91.0 及更早版本的数据，当前版本不再读取，请继续使用旧版本打开；来自更新版本的数据，请使用相同或更新的题炼。请勿删除数据库或强行打开。'; }
   else if (kind === 'disk-full') { title = '磁盘空间不足'; action = '请释放磁盘空间后重新打开。请勿通过删除数据库、附件或备份来解决启动问题。'; }
   else if (kind === 'permission') { title = '数据目录不可写'; action = '请确认当前用户对数据目录有读写权限，且目录所在磁盘可写。请勿通过覆盖数据库解决权限问题；修复权限后重新打开。'; }
   else if (kind === 'corrupt') { title = '数据文件未通过完整性检查'; action = '请先复制整个数据目录。使用已验证的完整备份恢复到独立目录，保留当前文件用于排查；请勿重建或覆盖现有数据库。'; }

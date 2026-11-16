@@ -1,0 +1,14 @@
+.app-update-preference { margin-top: var(--space-md); }
+.app-update-status { margin: var(--space-md) 0 var(--space-sm); }
+.app-update-progress { max-width: 480px; }
+.app-update-progress progress { display: block; width: 100%; height: 12px; accent-color: var(--color-flame); }
+.app-update-progress .field-help { margin-top: var(--space-xs); }
+.app-update-notice { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: var(--space-sm) var(--space-lg); }
+.app-update-notice-copy { flex: 1 1 260px; min-width: 0; overflow-wrap: anywhere; }
+.app-update-notice-copy p { margin: 0; }
+.app-update-notice-copy .runtime-inline-error { margin-top: var(--space-xs); }
+.app-update-notice-actions { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-sm); }
+@media (max-width: 480px) {
+  .app-update-notice-actions { width: 100%; }
+  .app-update-section .button-row > button { max-width: 100%; white-space: normal; }
+}

@@ -1,10 +1,12 @@
 import { prepareWindowsHelper } from './prepare-windows-helper.mjs';
 import { checkPackageBoundary } from './check-package-boundary.mjs';
+import { supplementalPackageNotices } from './package-notices.mjs';
 import { build as bundle } from 'esbuild';
 import { build as frontend } from 'vite';
 import { mkdir, readFile, readdir, writeFile, copyFile, rm } from 'node:fs/promises';
 import { createHash } from 'node:crypto';
 import { join, relative, resolve } from 'node:path';
+import { isBuiltin } from 'node:module';
 const root = process.cwd();
 await prepareWindowsHelper({ root });
 const hash = bytes => createHash('sha256').update(bytes).digest('hex');
@@ -12,6 +14,9 @@ await rm('dist', { recursive: true, force: true });
 await mkdir('dist', { recursive: true });
 const main = await bundle({ entryPoints: ['src/desktop/main.ts'], outfile: 'dist/main.cjs', bundle: true, platform: 'node', target: 'node24', format: 'cjs', external: ['electron'], sourcemap: true, metafile: true });
 const preload = await bundle({ entryPoints: ['src/desktop/preload.ts'], outfile: 'dist/preload.cjs', bundle: true, platform: 'node', target: 'node24', format: 'cjs', external: ['electron'], sourcemap: true, metafile: true });
+for (const result of [main, preload]) for (const output of Object.values(result.metafile.outputs)) for (const dependency of output.imports) {
+  if (dependency.external && dependency.path !== 'electron' && !isBuiltin(dependency.path)) throw new Error(`Unbundled runtime dependency: ${dependency.path}`);
+}
 const renderer = await frontend();
 await mkdir('dist/assets', { recursive: true });
 await copyFile('build/icon.png', 'dist/assets/icon.png');
@@ -38,6 +43,10 @@ for (const path of [...packagePaths].sort()) {
     const outputName = file === 'LICENSE' ? 'ELECTRON_RUNTIME_LICENSE' : file;
     await copyFile(join(path, 'dist', file), join(target, outputName)); notices.push({ file: relative('dist', join(target, outputName)).replaceAll('\\', '/'), sha256: hash(await readFile(join(path, 'dist', file))) });
   }
+  if (!notices.length) for (const notice of await supplementalPackageNotices(root, metadata)) {
+    await copyFile(notice.source, join(target, notice.file));
+    notices.push({ file: relative('dist', join(target, notice.file)).replaceAll('\\', '/'), sha256: hash(await readFile(notice.source)) });
+  }
   if (!notices.length) throw new Error(`Missing third-party notices for bundled package ${metadata.name}`);
   inventory.push({ name: metadata.name, version: metadata.version, license: metadata.license ?? 'See notices', packagePath: path, notices });
 }
@@ -48,12 +57,12 @@ async function walk(path) {
   }
   return files;
 }
-const sourcePaths = [...await walk('src'), 'build/icon.png', 'build/icon.icns', 'build/icon.ico', 'runtime-manifest.json', 'tokens.css', 'LICENSE', 'package.json', 'package-lock.json', 'scripts/build.mjs', 'scripts/check-package-boundary.mjs', 'scripts/prepare-windows-helper.mjs', 'vite.config.ts', 'tsconfig.json', 'index.html'].map(path => path.replaceAll('\\', '/')).sort();
+const sourcePaths = [...await walk('src'), ...await walk('build/third-party-notices'), 'build/icon.png', 'build/icon.icns', 'build/icon.ico', 'runtime-manifest.json', 'tokens.css', 'LICENSE', 'package.json', 'package-lock.json', 'scripts/build.mjs', 'scripts/check-package-boundary.mjs', 'scripts/prepare-windows-helper.mjs', 'scripts/package-desktop.mjs', 'scripts/update-artifacts.mjs', 'scripts/package-notices.mjs', 'vite.config.ts', 'tsconfig.json', 'index.html'].map(path => path.replaceAll('\\', '/')).sort();
 const inputs = [];
 for (const path of sourcePaths) inputs.push({ path, sha256: hash(await readFile(path)) });
 const pkg = JSON.parse(await readFile('package.json', 'utf8'));
 const sourceHash = hash(JSON.stringify(inputs));
-await writeFile('dist/build-info.json', JSON.stringify({ application: pkg.name, version: pkg.version, sourceHash, sourceInputs: inputs, dependencies: pkg.devDependencies, runtimeManifest: JSON.parse(await readFile('runtime-manifest.json', 'utf8')), noticeInventory: inventory }, null, 2) + '\n');
+await writeFile('dist/build-info.json', JSON.stringify({ application: pkg.name, version: pkg.version, sourceHash, sourceInputs: inputs, dependencies: { ...pkg.devDependencies, ...pkg.dependencies }, runtimeManifest: JSON.parse(await readFile('runtime-manifest.json', 'utf8')), noticeInventory: inventory }, null, 2) + '\n');
 await writeFile('dist/THIRD_PARTY_NOTICES.md', `# Third-party notices\n\nAlgoPractice ${pkg.version}. Source SHA-256: ${sourceHash}.\n\nThis directory contains the upstream notices for packages included in the application bundle and the Electron runtime. Build-only dependencies remain described in package-lock.json. Python, Temurin, Go and Zig are installed separately from the pinned runtime manifest; their original license files remain in each installation.\n\n` + inventory.map(item => `- ${item.name} ${item.version} (${item.license}): ${item.notices.map(notice => `[${notice.file}](${notice.file})`).join(', ')}`).join('\n') + '\n');
 await checkPackageBoundary(root);
 console.log(`Build ${pkg.version}: ${sourceHash}; ${inventory.length} third-party packages with original notices; no bundled language runtime.`);

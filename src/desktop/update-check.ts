@@ -1,8 +1,8 @@
 import type { UpdateCheck } from '../shared/maintenance';
 export type { UpdateCheck };
 
-// A manual "检查更新": one anonymous request to GitHub's public releases API when the user asks, never in the
-// background. The app does not download or install anything; it only links to the release page.
+// Shared release discovery for the legacy page link and the application update service. Never sends app cookies,
+// authentication tokens, learning records or a machine identifier.
 export const RELEASES_API = 'https://api.github.com/repos/xhuandy666/AlgoPractice/releases/latest';
 const RELEASE_PAGE = /^https:\/\/github\.com\/xhuandy666\/AlgoPractice\/releases\/tag\/[A-Za-z0-9._-]+$/;
 const VERSION = /^v?(\d{1,6})\.(\d{1,6})\.(\d{1,6})$/;
@@ -16,7 +16,7 @@ export function compareVersions(a: string, b: string): number | null {
 }
 
 type FetchLike = (url: string, init: RequestInit) => Promise<Response>;
-export async function checkForUpdate(currentVersion: string, fetchImpl: FetchLike, signal?: AbortSignal): Promise<UpdateCheck> {
+export async function latestRelease(fetchImpl: FetchLike, signal?: AbortSignal): Promise<Record<string, unknown>> {
   let response: Response;
   try {
     // No cookies or credentials of the app session ever go with it.
@@ -28,8 +28,13 @@ export async function checkForUpdate(currentVersion: string, fetchImpl: FetchLik
   const text = await response.text(); if (text.length > 1_000_000) throw new Error('更新信息过大，已忽略。');
   let release: Record<string, unknown>;
   try { release = JSON.parse(text) as Record<string, unknown>; } catch { throw new Error('更新信息格式无法识别。'); }
+  if (!release || typeof release !== 'object' || Array.isArray(release)) throw new Error('更新信息格式无法识别。');
   const tag = typeof release.tag_name === 'string' ? release.tag_name : '', url = typeof release.html_url === 'string' ? release.html_url : '';
-  if (release.draft === true || release.prerelease === true || compareVersions(tag, '0.0.0') === null || !RELEASE_PAGE.test(url)) throw new Error('更新信息格式无法识别。');
+  if (release.draft === true || release.prerelease === true || compareVersions(tag, '0.0.0') === null || !RELEASE_PAGE.test(url) || !url.endsWith('/' + tag)) throw new Error('更新信息格式无法识别。');
+  return release;
+}
+export async function checkForUpdate(currentVersion: string, fetchImpl: FetchLike, signal?: AbortSignal): Promise<UpdateCheck> {
+  const release = await latestRelease(fetchImpl, signal), tag = release.tag_name as string, url = release.html_url as string;
   const latest = tag.replace(/^v/, ''), order = compareVersions(latest, currentVersion);
   return { current: currentVersion, latest, newer: order !== null && order > 0, url,
     name: typeof release.name === 'string' ? release.name.slice(0, 200) : null,

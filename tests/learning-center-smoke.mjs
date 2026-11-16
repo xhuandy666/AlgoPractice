@@ -27,7 +27,7 @@ if (!packaged) {
   await cp(join(appSource, 'dist'), join(launchDirectory, 'dist'), { recursive: true });
   await cp(join(appSource, 'package.json'), join(launchDirectory, 'package.json'));
 }
-const env = { ...process.env, ALGOPRACTICE_DATA_DIR: dataDirectory, ALGOPRACTICE_RUNTIME_DIR: runtimeDirectory }; delete env.ELECTRON_RUN_AS_NODE;
+const env = { ...process.env, ALGOPRACTICE_DATA_DIR: dataDirectory, ALGOPRACTICE_RUNTIME_DIR: runtimeDirectory, ALGOPRACTICE_DISABLE_AUTO_UPDATE: '1' }; delete env.ELECTRON_RUN_AS_NODE;
 const report = { startedAt: new Date().toISOString(), platform: process.platform, arch: process.arch, dataDirectory, captureDirectory,
   appSource, executable: packaged || require('electron'), synthetic: true, screenshotOnly, assertions: [], screenshots: [], rendererErrors: [], httpAttempts: [], exits: [],
   clipboardScope: 'Real trusted IPC; native clipboard write and external-open methods temporarily intercepted in main. System clipboard is never read or changed.',

@@ -8,6 +8,8 @@ import { tmpdir } from 'node:os';
 import { basename, join, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { promisify } from 'node:util';
+import { load as loadYaml } from 'js-yaml';
+import { platformUpdateArtifacts, validateUpdateArtifacts } from './update-artifacts.mjs';
 
 const execute = promisify(execFile);
 const sha256 = bytes => createHash('sha256').update(bytes).digest('hex');
@@ -86,7 +88,7 @@ export async function collectSourceInputs(root) {
     }
     return result;
   }
-  const paths = [...await walk('src'), 'build/icon.png', 'build/icon.icns', 'build/icon.ico', 'runtime-manifest.json', 'tokens.css', 'LICENSE', 'package.json', 'package-lock.json', 'scripts/build.mjs', 'scripts/check-package-boundary.mjs', 'scripts/prepare-windows-helper.mjs', 'vite.config.ts', 'tsconfig.json', 'index.html'].sort();
+  const paths = [...await walk('src'), ...await walk('build/third-party-notices'), 'build/icon.png', 'build/icon.icns', 'build/icon.ico', 'runtime-manifest.json', 'tokens.css', 'LICENSE', 'package.json', 'package-lock.json', 'scripts/build.mjs', 'scripts/check-package-boundary.mjs', 'scripts/prepare-windows-helper.mjs', 'scripts/package-desktop.mjs', 'scripts/update-artifacts.mjs', 'scripts/package-notices.mjs', 'vite.config.ts', 'tsconfig.json', 'index.html'].sort();
   const inputs = [];
   for (const path of paths) {
     assert.ok((await lstat(join(root, path))).isFile(), 'Source provenance requires ordinary files');
@@ -100,7 +102,7 @@ export function validateBuildInfo(build, expected) {
   assert.deepEqual(build.sourceInputs, expected.inputs, 'Build source inputs do not match checked-out HEAD');
   assert.equal(build.sourceHash, sha256(JSON.stringify(expected.inputs)), 'Build source hash does not match HEAD');
   assert.deepEqual(build.runtimeManifest, expected.manifest, 'Build runtime manifest changed');
-  assert.deepEqual(build.dependencies, expected.pkg.devDependencies, 'Build dependencies changed');
+  assert.deepEqual(build.dependencies, { ...expected.pkg.devDependencies, ...expected.pkg.dependencies }, 'Build dependencies changed');
   assert.ok(Array.isArray(build.noticeInventory) && build.noticeInventory.length > 0, 'Third-party notices are missing');
 }
 
@@ -134,7 +136,47 @@ export function runtimeAssets(manifest) {
 }
 
 export function expectedReleaseAssets(version, manifest) {
-  return [...platforms.flatMap(platform => [`AlgoPractice-${version}-${platform.suffix}.${platform.key === 'windows' ? 'exe' : 'dmg'}`, `AlgoPractice-${version}-${platform.suffix}.zip`]), ...runtimeAssets(manifest).map(asset => asset.name), 'runtime-manifest.json', 'SHA256SUMS.txt'];
+  return [...platforms.flatMap(platform => platformUpdateArtifacts(version, platform.target)), ...runtimeAssets(manifest).map(asset => asset.name), 'runtime-manifest.json', 'SHA256SUMS.txt'];
+}
+
+/** Exactly these regular files may leave a platform's CI artifact; safe directory entries are checked separately. */
+export function validateCiArtifactFiles(files, { version, target }) {
+  assertSafePaths(files, false);
+  const expected = ['dist/build-info.json', ...platformUpdateArtifacts(version, target).map(name => `release/${name}`)];
+  assert.deepEqual([...files].sort(), expected.sort(), 'CI artifact files differ from the platform release allowlist');
+}
+
+/** The packaged updater must read the same repository and architecture channel that this draft publishes. */
+export function validatePackagedUpdateConfig(value, target) {
+  assert.ok(value && typeof value === 'object' && !Array.isArray(value), 'Packaged update configuration is invalid');
+  assert.equal(value.provider, 'github'); assert.equal(value.owner, 'xhuandy666'); assert.equal(value.repo, 'AlgoPractice');
+  const channel = { 'darwin-arm64': 'latest-arm64', 'darwin-x64': 'latest-x64', 'win32-x64': 'latest' }[target];
+  assert.ok(channel, 'Unknown update platform');
+  assert.equal(value.channel ?? 'latest', channel, 'Packaged updater channel differs from the published architecture');
+  assert.notEqual(value.verifyUpdateCodeSignature, false, 'Update signature verification must remain enabled');
+  assert.ok(!Object.hasOwn(value, 'token'), 'Packaged updater configuration must not contain a private token');
+  return { provider: value.provider, owner: value.owner, repo: value.repo, channel };
+}
+
+/** Only actual codesign output is evidence of the app's signing identity; build environment variables are not. */
+export function macSignatureInfo(display) {
+  const authorities = [...display.matchAll(/^Authority=(.+)$/gm)].map(match => match[1].trim());
+  const team = /^TeamIdentifier=(.+)$/m.exec(display)?.[1].trim();
+  const teamIdentifier = team && team !== 'not set' ? team : null;
+  const adhoc = /^Signature=adhoc\s*$/m.test(display);
+  const developerId = /^Developer ID Application: /.test(authorities[0] ?? '') && /^[A-Z0-9]{10}$/.test(teamIdentifier ?? '');
+  return { kind: adhoc ? 'adhoc' : developerId ? 'developer-id' : 'other', teamIdentifier, authority: authorities[0] ?? null };
+}
+
+export function releaseSigningNotes(verified) {
+  const mac = verified.filter(item => item.platform.startsWith('macos-')).map(item => {
+    const label = item.platform === 'macos-arm64' ? 'macOS Apple Silicon' : 'macOS Intel';
+    const signature = item.macSignature;
+    if (signature?.kind === 'developer-id') return `${label}：实际应用的 Developer ID 签名已通过 codesign 校验（Team ${signature.teamIdentifier}）；匹配签名的安装可使用原生更新。`;
+    if (signature?.kind === 'adhoc') return `${label}：实际应用使用临时签名；应用下载并校验 DMG 后打开安装，不执行原生替换。`;
+    return `${label}：应用签名已通过 codesign 校验，但未识别为 Developer ID；使用经校验的 DMG 安装流程。`;
+  });
+  return [...mac, '公证状态及 Windows Authenticode 签名未由本流程核验。'].join('\n');
 }
 
 async function command(program, args, options = {}) {
@@ -217,6 +259,10 @@ async function verifyZip(archive, platform, expected, temporary, asar) {
   const folder = await mkdtemp(join(temporary, `${platform.key}-zip-`));
   const payload = await extractZipEntry(archive, payloads[0], folder);
   const result = verifyPayload(payload, expected, asar);
+  const configs = entries.filter(entry => platform.key === 'windows' ? /(?:^|\/)resources\/app-update\.yml$/.test(entry) : entry.endsWith('.app/Contents/Resources/app-update.yml'));
+  assert.equal(configs.length, 1, 'Archive must contain exactly one updater configuration');
+  const configPath = await extractZipEntry(archive, configs[0], folder);
+  const updateConfig = validatePackagedUpdateConfig(loadYaml(await readFile(configPath, 'utf8')), platform.target);
   const executable = entries.filter(entry => platform.key === 'windows' ? /(?:^|\/)题炼\.exe$/.test(entry) : entry.endsWith('.app/Contents/MacOS/题炼'));
   assert.equal(executable.length, 1);
   const executablePath = await extractZipEntry(archive, executable[0], folder);
@@ -230,7 +276,7 @@ async function verifyZip(archive, platform, expected, temporary, asar) {
     const iconPath = await extractZipEntry(archive, icons[0], folder);
     assert.equal(await fileDigest(iconPath), expected.iconHash, 'macOS icon differs from HEAD');
   }
-  return { ...result, payloadHash: await fileDigest(payload) };
+  return { ...result, payloadHash: await fileDigest(payload), updateConfig, updateConfigHash: await fileDigest(configPath) };
 }
 
 async function sevenZipEntries(archive) {
@@ -250,13 +296,17 @@ async function verifyInstaller(archive, platform, expected, portable, temporary,
     const folder = await mkdtemp(join(temporary, 'nsis-'));
     await command('7zz', ['x', archive, nested[0], `-o${folder}`, '-y']);
     const inner = join(folder, ...nested[0].replaceAll('\\', '/').split('/'));
-    await sevenZipEntries(inner); await command('7zz', ['t', inner]);
+    const innerEntries = await sevenZipEntries(inner); await command('7zz', ['t', inner]);
+    assert.equal(innerEntries.filter(entry => entry.replaceAll('\\', '/') === 'resources/app-update.yml').length, 1, 'Installer must contain the updater configuration');
     const payloadFolder = await mkdtemp(join(temporary, 'nsis-payload-'));
-    await command('7zz', ['x', inner, 'resources/app.asar', `-o${payloadFolder}`, '-y']);
+    await command('7zz', ['x', inner, 'resources/app.asar', 'resources/app-update.yml', `-o${payloadFolder}`, '-y']);
     const payload = join(payloadFolder, 'resources/app.asar');
     verifyPayload(payload, expected, asar);
     assert.equal(await fileDigest(payload), portable.payloadHash, 'Installer and portable archive application payloads differ');
-    return;
+    const updater = join(payloadFolder, 'resources/app-update.yml');
+    validatePackagedUpdateConfig(loadYaml(await readFile(updater, 'utf8')), platform.target);
+    assert.equal(await fileDigest(updater), portable.updateConfigHash, 'Installer and portable updater configurations differ');
+    return {};
   }
   await command('hdiutil', ['verify', archive]);
   const mountpoint = await mkdtemp(join(temporary, `${platform.key}-dmg-`));
@@ -269,7 +319,15 @@ async function verifyInstaller(archive, platform, expected, portable, temporary,
     assert.equal(await fileDigest(payload), portable.payloadHash, 'DMG and ZIP application payloads differ');
     const resources = join(payload, '..');
     assert.equal(await fileDigest(join(resources, 'icon.icns')), expected.iconHash);
-    await command('codesign', ['--verify', '--deep', '--strict', join(resources, '../..')]);
+    const updater = join(resources, 'app-update.yml');
+    validatePackagedUpdateConfig(loadYaml(await readFile(updater, 'utf8')), platform.target);
+    assert.equal(await fileDigest(updater), portable.updateConfigHash, 'DMG and ZIP updater configurations differ');
+    const app = join(resources, '../..');
+    await command('codesign', ['--verify', '--deep', '--strict', app]);
+    let display;
+    try { const result = await execute('codesign', ['--display', '--verbose=4', app], { encoding: 'utf8', timeout: 30_000 }); display = `${result.stdout}\n${result.stderr}`; }
+    catch { throw new Error('Cannot inspect the actual macOS signing identity'); }
+    return { macSignature: macSignatureInfo(display) };
   } finally { await command('hdiutil', ['detach', mountpoint]); }
 }
 
@@ -318,7 +376,7 @@ export async function prepareReleaseDraft(argv = process.argv.slice(2), env = pr
   const selected = validateCiEvidence(run, jobs.jobs, artifactList.artifacts, configuration);
   const manifest = JSON.parse(await readFile(join(root, 'runtime-manifest.json'), 'utf8'));
   const expected = { pkg, manifest, inputs: await collectSourceInputs(root), iconHash: await fileDigest(join(root, 'build/icon.icns')) };
-  assert.deepEqual(pkg.build.files, ['dist/**/*', 'package.json', 'LICENSE']);
+  assert.deepEqual(pkg.build.files, ['dist/**/*', 'package.json', 'LICENSE', '!node_modules/**/*']);
   assert.ok(!pkg.build.extraResources && !pkg.build.mac.extraResources);
   assert.deepEqual(pkg.build.win.extraResources, [{ from: '.runtime-tools/windows-job-helper.exe', to: 'windows-job-helper.exe' }]);
   const temporary = await mkdtemp(join(env.RUNNER_TEMP || tmpdir(), 'algopractice-release-draft-'));
@@ -329,15 +387,21 @@ export async function prepareReleaseDraft(argv = process.argv.slice(2), env = pr
     const destination = join(temporary, platform.key); await mkdir(destination);
     await command('gh', ['run', 'download', runId, '--repo', repo, '--name', platform.name, '--dir', destination], { env, timeout: 300_000 });
     const entries = await fileTree(destination); assertSafePaths(entries, false);
-    for (const entry of entries) assert.ok(!(await lstat(join(destination, entry))).isSymbolicLink(), 'CI artifact contains a link');
+    const files = [];
+    for (const entry of entries) {
+      const info = await lstat(join(destination, entry));
+      assert.ok(!info.isSymbolicLink() && (info.isDirectory() || info.isFile()), 'CI artifact contains a link or special file');
+      if (info.isFile()) files.push(entry);
+    }
+    validateCiArtifactFiles(files, { version, target: platform.target });
     validateBuildInfo(JSON.parse(await readFile(join(destination, 'dist/build-info.json'), 'utf8')), expected);
     const installerName = `AlgoPractice-${version}-${platform.suffix}.${platform.key === 'windows' ? 'exe' : 'dmg'}`;
     const zipName = `AlgoPractice-${version}-${platform.suffix}.zip`;
-    assert.deepEqual(entries.filter(entry => !entry.endsWith('/') && /\.(?:dmg|zip|exe)$/.test(entry)).sort(), [`release/${installerName}`, `release/${zipName}`].sort(), 'Unexpected application assets');
+    await validateUpdateArtifacts(join(destination, 'release'), { version, target: platform.target });
     const portable = await verifyZip(join(destination, 'release', zipName), platform, expected, temporary, asar);
-    await verifyInstaller(join(destination, 'release', installerName), platform, expected, portable, temporary, asar);
-    for (const name of [installerName, zipName]) await copyFile(join(destination, 'release', name), join(assetsDirectory, name));
-    verified.push({ platform: platform.key, ...portable });
+    const installer = await verifyInstaller(join(destination, 'release', installerName), platform, expected, portable, temporary, asar);
+    for (const name of platformUpdateArtifacts(version, platform.target)) await copyFile(join(destination, 'release', name), join(assetsDirectory, name));
+    verified.push({ platform: platform.key, ...portable, ...installer });
   }
   // No authorization header is sent to upstream URLs or their CDN redirects.
   const downloadEnvironment = { ...env }; delete downloadEnvironment.GH_TOKEN; delete downloadEnvironment.GITHUB_TOKEN;
@@ -359,7 +423,7 @@ export async function prepareReleaseDraft(argv = process.argv.slice(2), env = pr
   digests.set('SHA256SUMS.txt', await fileDigest(join(assetsDirectory, 'SHA256SUMS.txt')));
   assert.deepEqual((await readdir(assetsDirectory)).sort(), [...names].sort());
   const notesPath = join(temporary, 'release-notes.md');
-  await writeFile(notesPath, `题炼 ${tag} 草稿。\n\n构建提交：${sha}\n三平台验证：[Desktop checks](https://github.com/${repo}/actions/runs/${runId})\n\n包含 macOS Apple Silicon、macOS Intel 与 Windows x64 的安装器和便携包，以及清单固定的 Python、Java、Go 与 C++17（Zig 后端）独立离线环境；应用不内置语言运行环境。\n\nmacOS 使用临时签名，未进行开发者签名或公证；Windows 安装器未签名。升级前请先导出本机学习备份。AI 使用自带 Key，费用由所选服务商决定。\n\n本工具仅创建草稿，不发布、不覆盖已有版本。\n`);
+  await writeFile(notesPath, `题炼 ${tag} 草稿。\n\n构建提交：${sha}\n三平台验证：[Desktop checks](https://github.com/${repo}/actions/runs/${runId})\n\n包含 macOS Apple Silicon、macOS Intel 与 Windows x64 的安装器、便携包、按架构区分的更新元数据与 blockmap，以及清单固定的 Python、Java、Go 与 C++17（Zig 后端）独立离线环境；应用不内置语言运行环境。\n\n${releaseSigningNotes(verified)}\n\n升级前请先导出本机学习备份。AI 使用自带 Key，费用由所选服务商决定。\n\n本工具仅创建草稿，不发布、不覆盖已有版本。\n`);
   // Recheck immediately before the only release mutation.
   await ensureReleaseAbsent(); await ensureAbsent(`repos/${repo}/git/ref/tags/${tag}`);
   await command('gh', releaseCreateArguments(configuration, names.map(name => join(assetsDirectory, name)), notesPath, manifest), { env, timeout: 600_000 });

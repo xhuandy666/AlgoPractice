@@ -8,11 +8,11 @@ import { test } from 'node:test';
 import { fileURLToPath } from 'node:url';
 // The release entry point is intentionally plain Node.js for the manual workflow.
 // @ts-expect-error The standalone .mjs tool has no TypeScript declaration.
-import { assertSafePaths, collectSourceInputs, expectedReleaseAssets, extractZipEntry, listZipEntries, releaseConfiguration, releaseCreateArguments, releaseForTag, runtimeAssets, validateBuildInfo, validateCiEvidence } from '../../scripts/prepare-release-draft.mjs';
+import { assertSafePaths, collectSourceInputs, expectedReleaseAssets, extractZipEntry, listZipEntries, macSignatureInfo, releaseConfiguration, releaseCreateArguments, releaseForTag, releaseSigningNotes, runtimeAssets, validateBuildInfo, validateCiArtifactFiles, validateCiEvidence, validatePackagedUpdateConfig } from '../../scripts/prepare-release-draft.mjs';
 
 const sha = 'a'.repeat(40);
 const configuration = { runId: '123456', tag: 'v0.90.0', sha, repo: 'xhuandy666/AlgoPractice', version: '0.90.0' };
-const pkg = { name: 'algopractice', version: '0.90.0', repository: { url: 'git+https://github.com/xhuandy666/AlgoPractice.git' }, devDependencies: { electron: '44.2.0' } };
+const pkg = { name: 'algopractice', version: '0.90.0', repository: { url: 'git+https://github.com/xhuandy666/AlgoPractice.git' }, devDependencies: { electron: '44.2.0' }, dependencies: { 'electron-updater': '6.8.11' } };
 const env = { GH_REPO: configuration.repo, GITHUB_SHA: sha, GITHUB_REF_NAME: 'main', GH_TOKEN: 'fixture-not-a-real-token' };
 const argv = ['--ci-run-id', configuration.runId, '--release-tag', configuration.tag];
 const manifest = JSON.parse(await readFile(new URL('../../runtime-manifest.json', import.meta.url), 'utf8'));
@@ -55,6 +55,46 @@ test('payload boundaries reject traversal, duplicate paths, private data and bun
   assert.doesNotThrow(() => assertSafePaths(['release/AlgoPractice-0.90.0-win-x64.zip'], false));
 });
 
+test('a platform artifact must contain all update files and no unrelated files', () => {
+  const options = { version: pkg.version, target: 'win32-x64' };
+  const files = ['dist/build-info.json', 'release/AlgoPractice-0.90.0-win-x64.exe', 'release/AlgoPractice-0.90.0-win-x64.zip',
+    'release/AlgoPractice-0.90.0-win-x64.exe.blockmap', 'release/latest.yml'];
+  assert.doesNotThrow(() => validateCiArtifactFiles(files, options));
+  assert.throws(() => validateCiArtifactFiles(files.filter(file => !file.endsWith('.yml')), options), /allowlist/);
+  assert.throws(() => validateCiArtifactFiles(files.filter(file => !file.endsWith('.blockmap')), options), /allowlist/);
+  assert.throws(() => validateCiArtifactFiles([...files, 'release/latest-arm64-mac.yml'], options), /allowlist/);
+  assert.throws(() => validateCiArtifactFiles([...files, 'dist/private.json'], options), /allowlist/);
+  assert.throws(() => validateCiArtifactFiles([...files, 'release/../elsewhere'], options), /Unsafe archive path/);
+  assert.throws(() => validateCiArtifactFiles([...files, files[0]], options), /Duplicate archive path/);
+});
+
+test('packaged updater configuration binds repository, architecture and enabled signature verification', () => {
+  const base = { provider: 'github', owner: 'xhuandy666', repo: 'AlgoPractice', channel: 'latest' };
+  assert.deepEqual(validatePackagedUpdateConfig(base, 'win32-x64'), base);
+  assert.deepEqual(validatePackagedUpdateConfig({ ...base, channel: 'latest-arm64' }, 'darwin-arm64'), { ...base, channel: 'latest-arm64' });
+  assert.deepEqual(validatePackagedUpdateConfig({ ...base, channel: 'latest-x64' }, 'darwin-x64'), { ...base, channel: 'latest-x64' });
+  for (const patch of [{ provider: 'generic' }, { owner: 'foreign' }, { repo: 'Other' }, { channel: 'latest-arm64' },
+    { verifyUpdateCodeSignature: false }, { token: 'fixture-secret' }]) {
+    assert.throws(() => validatePackagedUpdateConfig({ ...base, ...patch }, 'win32-x64'));
+  }
+  assert.throws(() => validatePackagedUpdateConfig({ ...base, channel: 'latest-arm64' }, 'darwin-x64'));
+  assert.throws(() => validatePackagedUpdateConfig(base, 'darwin-arm64'));
+});
+
+test('release signing descriptions come from actual codesign output and do not claim notarization', () => {
+  const adhoc = macSignatureInfo('Executable=/fixture/题炼\nSignature=adhoc\nTeamIdentifier=not set\n');
+  assert.deepEqual(adhoc, { kind: 'adhoc', teamIdentifier: null, authority: null });
+  const developerId = macSignatureInfo('Authority=Developer ID Application: Fixture (AB12CD34EF)\nAuthority=Developer ID Certification Authority\nTeamIdentifier=AB12CD34EF\n');
+  assert.deepEqual(developerId, { kind: 'developer-id', teamIdentifier: 'AB12CD34EF', authority: 'Developer ID Application: Fixture (AB12CD34EF)' });
+  assert.equal(macSignatureInfo('Authority=Apple Development: Fixture\nTeamIdentifier=AB12CD34EF\n').kind, 'other');
+  assert.equal(macSignatureInfo('').kind, 'other');
+  const adhocNotes: string = releaseSigningNotes([{ platform: 'macos-arm64', macSignature: adhoc }]);
+  assert.match(adhocNotes, /临时签名/); assert.match(adhocNotes, /下载并校验 DMG/);
+  assert.doesNotMatch(adhocNotes, /Developer ID 签名已通过/);
+  const signedNotes: string = releaseSigningNotes([{ platform: 'macos-x64', macSignature: developerId }]);
+  assert.match(signedNotes, /Team AB12CD34EF/); assert.match(signedNotes, /公证状态.*未由本流程核验/);
+});
+
 test('macOS ZIP inspection preserves exact Chinese member names and binary contents', { skip: process.platform !== 'darwin', timeout: 15000 }, async t => {
   const directory = await mkdtemp(join(tmpdir(), 'algopractice-release-unicode-'));
   t.after(() => rm(directory, { recursive: true, force: true }));
@@ -76,10 +116,11 @@ test('macOS ZIP inspection preserves exact Chinese member names and binary conte
 
 test('build verification binds every individual source input, runtime manifest and dependency version', () => {
   const inputs = [{ path: 'src/main.ts', sha256: '1'.repeat(64) }, { path: 'runtime-manifest.json', sha256: '2'.repeat(64) }];
-  const build = { application: pkg.name, version: pkg.version, sourceInputs: inputs, sourceHash: createHash('sha256').update(JSON.stringify(inputs)).digest('hex'), runtimeManifest: manifest, dependencies: pkg.devDependencies, noticeInventory: [{ name: 'electron' }] };
+  const build = { application: pkg.name, version: pkg.version, sourceInputs: inputs, sourceHash: createHash('sha256').update(JSON.stringify(inputs)).digest('hex'), runtimeManifest: manifest, dependencies: { ...pkg.devDependencies, ...pkg.dependencies }, noticeInventory: [{ name: 'electron' }] };
   const expected = { pkg, inputs, manifest };
   assert.doesNotThrow(() => validateBuildInfo(build, expected));
   for (const patch of [{ version: '0.85.0' }, { application: 'other' }, { sourceHash: '3'.repeat(64) }, { sourceInputs: inputs.slice(1) }, { sourceInputs: [{ ...inputs[0], sha256: '4'.repeat(64) }, inputs[1]] }, { runtimeManifest: { schemaVersion: 99 } }, { dependencies: { electron: '1' } }, { noticeInventory: [] }]) assert.throws(() => validateBuildInfo({ ...build, ...patch }, expected));
+  assert.throws(() => validateBuildInfo({ ...build, dependencies: pkg.devDependencies }, expected), /dependencies changed/);
 });
 
 test('source inputs are rehashed from current files using the build provenance contract', async () => {
@@ -88,7 +129,7 @@ test('source inputs are rehashed from current files using the build provenance c
   assert.ok(inputs.length > 100);
   assert.deepEqual(inputs.map(item => item.path), inputs.map(item => item.path).sort());
   assert.equal(new Set(inputs.map(item => item.path)).size, inputs.length);
-  for (const path of ['src/desktop/main.ts', 'runtime-manifest.json', 'package-lock.json', 'scripts/build.mjs', 'build/icon.icns']) {
+  for (const path of ['src/desktop/main.ts', 'runtime-manifest.json', 'package-lock.json', 'scripts/build.mjs', 'scripts/package-desktop.mjs', 'scripts/update-artifacts.mjs', 'build/icon.icns']) {
     const input = inputs.find(item => item.path === path);
     assert.ok(input); assert.equal(input.sha256, createHash('sha256').update(await readFile(resolve(root, path))).digest('hex'));
   }
@@ -113,16 +154,18 @@ test('twelve standalone runtime archives are pinned to family-specific official 
   }
 });
 
-test('release command derives all 20 known assets and can only create a draft at the verified commit', () => {
+test('release command includes all 28 application, update and runtime assets and only creates a verified draft', () => {
   const names: string[] = expectedReleaseAssets(pkg.version, manifest);
-  assert.equal(names.length, 20); assert.equal(new Set(names).size, 20);
-  assert.equal(names.filter(name => name.startsWith('AlgoPractice-0.90.0-')).length, 6);
+  assert.equal(names.length, 28); assert.equal(new Set(names).size, 28);
+  assert.equal(names.filter(name => name.startsWith('AlgoPractice-0.90.0-')).length, 11);
   assert.equal(names.filter(name => name.startsWith('AlgoPractice-runtime-')).length, 12);
   assert.equal(names.filter(name => name.endsWith('.dmg')).length, 2);
   assert.equal(names.filter(name => name.endsWith('-win-x64.exe')).length, 1);
+  assert.equal(names.filter(name => name.endsWith('.blockmap')).length, 5);
+  assert.deepEqual(names.filter(name => name.endsWith('.yml')).sort(), ['latest-arm64-mac.yml', 'latest-x64-mac.yml', 'latest.yml']);
   const files = names.map(name => `/isolated-assets/${name}`);
   const args: string[] = releaseCreateArguments(configuration, files, '/isolated-notes/release.md', manifest);
-  assert.deepEqual(args.slice(-20), files);
+  assert.deepEqual(args.slice(-names.length), files);
   assert.ok(args.includes('--draft')); assert.equal(args[args.indexOf('--target') + 1], sha);
   for (const flag of ['--latest', '--clobber', '--generate-notes', '--prerelease']) assert.ok(!args.includes(flag));
   assert.throws(() => releaseCreateArguments(configuration, files.slice(1), '/notes', manifest));
@@ -130,10 +173,10 @@ test('release command derives all 20 known assets and can only create a draft at
   assert.throws(() => releaseCreateArguments(configuration, ['unexpected.exe', ...files.slice(1)], '/notes', manifest));
 });
 
-test('historical two-language manifests retain their fourteen-asset contract without hard-coded counts', () => {
+test('asset counts follow runtime families while retaining every required updater asset', () => {
   const oldManifest = { schemaVersion: manifest.schemaVersion, python: manifest.python, java: manifest.java };
   const names: string[] = expectedReleaseAssets(pkg.version, oldManifest);
-  assert.equal(runtimeAssets(oldManifest).length, 6); assert.equal(names.length, 14);
+  assert.equal(runtimeAssets(oldManifest).length, 6); assert.equal(names.length, 22);
   assert.doesNotThrow(() => releaseCreateArguments(configuration, names.map(name => `/isolated-old-assets/${name}`), '/notes', oldManifest));
 });
 

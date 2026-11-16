@@ -37,13 +37,15 @@ import { SourceSession } from './source-session';
 import { createLogger } from './logger';
 import { RendererRecovery } from './renderer-recovery';
 import { createFatalErrorHandlers } from './fatal-errors';
+import { AppUpdateService } from './app-update-service';
+import { nativeUpdateEngine, updateInstallMode } from './update-runtime';
 import type { EnvironmentInfo, RunArchive, WorkspaceData } from '../shared/bridge';
 import type { ImportJob } from '../shared/library';
 import type { ImportInput } from '../source/index';
 import type { Language, RunResult } from '../runner/types';
 import { LANGUAGES, LANGUAGE_DETAILS, isLanguage, languageLabel } from '../shared/languages';
 
-// This version keeps its data in its own folder. Versions 0.x used appData/AlgoPractice; that folder (database, backups,
+// This lineage keeps its data in its own folder. v0.91 and earlier used appData/AlgoPractice; that folder (database, backups,
 // backup copies, credentials, runtimes) is never read, changed or removed.
 app.setPath('userData', process.env.ALGOPRACTICE_DATA_DIR ? resolve(process.env.ALGOPRACTICE_DATA_DIR) : join(app.getPath('appData'), 'TiLian'));
 // The internal name names the single-instance lock and the macOS Keychain entry.
@@ -62,6 +64,7 @@ let sourceSession: SourceSession;
 let official: OfficialService;
 let learning: LearningController;
 let interviews: InterviewService;
+let updates: AppUpdateService;
 let interviewTimer: ReturnType<typeof setInterval> | null = null;
 const maintenance = new MaintenanceGate();
 let maintenanceAck: { id: string; resolve(): void; reject(error: Error): void } | null = null;
@@ -83,7 +86,7 @@ const runtimeChecks = new Map<Language, Promise<RuntimeState>>();
 const runtimeStateEpochs = new Map<Language, number>();
 let runtimeNotices: string[] = [];
 let reminderTimer: ReturnType<typeof setTimeout> | null = null;
-let config: { runtimes: Partial<Record<Language, string>>; reminder: { dueAt: string; deliveredAt?: string } | null; autoInstallRuntimes?: boolean; answerFormats?: Record<string, AnswerFormat>;
+let config: { runtimes: Partial<Record<Language, string>>; reminder: { dueAt: string; deliveredAt?: string } | null; autoInstallRuntimes?: boolean; answerFormats?: Record<string, AnswerFormat>; automaticUpdates?: boolean;
   /** Device-specific folder for copies of the automatic backups; never part of a backup. */
   backupMirror?: { directory: string; installId: string };
   /** Kept when copies are turned off, so turning them on again keeps managing (and pruning) the same copies. */
@@ -329,6 +332,7 @@ function databaseDamaged(operation: string) {
     buttons: ['重新启动', '稍后'], defaultId: 0, cancelId: 1 }).then(({ response }) => { if (response === 0) { app.relaunch(); app.quit(); } });
 }
 async function stopAndQuit() {
+  await updates?.stop();
   preparations.cancel(); activeRun?.controller.abort(); runtimes?.cancelAll();
   if (interviewTimer) clearInterval(interviewTimer);
   try { interviews?.tick(); } catch { log('interview.quit-check-failed', { operation: 'deadline' }); }
@@ -337,6 +341,36 @@ async function stopAndQuit() {
   sourceSession?.close();
   try { await Promise.allSettled([activeRun?.promise, ...(runtimes?.pendingPromises ?? []), importer?.stop()]); } catch { /* Interrupted snapshots recover on next startup. */ }
   readyToQuit = true; app.quit();
+}
+
+function updateInstallationBlocker(): string | null {
+  if (quitting || maintenance.phase !== 'idle') return '正在保存或维护数据，请稍后更新。';
+  if (interviews?.starting || interviews?.active()) return '请先结束当前模拟面试，再安装更新。';
+  if (activeRun || runtimes?.busy || learning?.backups.status().busy) return '请先等待代码运行、环境安装或备份结束，再安装更新。';
+  return null;
+}
+async function installAppUpdate(action: () => void | Promise<void>) {
+  const blocker = updateInstallationBlocker(); if (blocker) throw new Error(blocker);
+  maintenance.beginFlush();
+  try {
+    await new Promise<void>((resolve, reject) => {
+      const requestId = randomUUID(), timer = setTimeout(() => { maintenanceAck = null; reject(new Error('等待草稿保存超时，更新已取消。')); }, 15000);
+      maintenanceAck = { id: requestId, resolve: () => { clearTimeout(timer); maintenanceAck = null; resolve(); }, reject: error => { clearTimeout(timer); maintenanceAck = null; reject(error); } };
+      win.webContents.send('app:maintenance', requestId);
+    });
+    // This gate rejects new work while accepted saves and background services are drained.
+    if (interviews?.starting || interviews?.active() || activeRun || runtimes.busy) throw new Error('请先结束正在进行的操作，再安装更新。');
+    preparations.cancel();
+    await official.pause(); await learning.pause(); await importer.stop();
+    await maintenance.lockAndDrain(['app:update-install']);
+    readyToQuit = true; quitting = true;
+    await action();
+    await updates.stop(); app.quit();
+  } catch (error) {
+    readyToQuit = false; quitting = false; maintenance.release();
+    if (!win.isDestroyed()) win.webContents.send('app:maintenance-end');
+    await learning.resume(); throw error;
+  }
 }
 
 if (!app.requestSingleInstanceLock()) app.quit();
@@ -350,6 +384,7 @@ else {
     closePending = true; win.webContents.send('app:closing');
   });
   app.on('will-quit', () => {
+    void updates?.stop();
     fatalErrors.settled();
     tray?.destroy();
     try { store?.close(); } catch { log('store.close-failed', { operation: 'quit' }); }
@@ -428,7 +463,7 @@ else {
       preparations.cancel(); closePending = true; win.webContents.send('app:closing');
     });
     ipcMain.on('app:close-ready', event => { trusted(event); if (!closePending) return; closePending = false; if (quitting) void stopAndQuit(); else win.hide(); });
-    ipcMain.on('app:maintenance-ready', (event, requestId, error) => { trusted(event); const ack = maintenanceAck; if (!ack || ack.id !== requestId) return; if (error) ack.reject(new Error('草稿未能完整保存，恢复已取消。')); else ack.resolve(); });
+    ipcMain.on('app:maintenance-ready', (event, requestId, error) => { trusted(event); const ack = maintenanceAck; if (!ack || ack.id !== requestId) return; if (error) ack.reject(new Error('草稿未能完整保存，操作已取消。')); else ack.resolve(); });
     learning = new LearningController({ dataDirectory, version: app.getVersion(), window: win, store: () => store, handle, changed, onDatabaseError: (error, operation) => { if (isDatabaseCorruption(error)) databaseDamaged(operation); },
       backupMirror: { get: () => validMirrorSetting(config.backupMirror), installId: () => validMirrorSetting(config.backupMirror)?.installId ?? (/^[a-f0-9]{8}$/.test(config.backupInstallId ?? '') ? config.backupInstallId! : null),
         set: value => { const { backupMirror: previous, ...rest } = config; const installId = value?.installId ?? validMirrorSetting(previous)?.installId ?? rest.backupInstallId; saveConfig({ ...rest, ...(value ? { backupMirror: value } : {}), ...(installId ? { backupInstallId: installId } : {}) }); } }, reveal, interviewContext: context => interviews?.assertAiContext(context) ?? context, isIdle: () => !quitting && maintenance.phase === 'idle', allowAutomaticAi: () => !interviews?.starting && !interviews?.active(), allowReviewPrompt: () => !closePending && !interviews?.starting && !interviews?.active(), log,
@@ -461,6 +496,20 @@ else {
       requireIdle();
       await official.pause(); await learning.ai.stopAll(); await importer.stop(); sourceSession.close();
     } });
+    const updateMode = updateInstallMode(app.isPackaged, process.platform, process.arch, app.getPath('exe'));
+    updates = new AppUpdateService({ version: app.getVersion(), platform: process.platform, arch: process.arch,
+      mode: updateMode, directory: join(dataDirectory, 'updates'), automatic: config.automaticUpdates !== false,
+      fetch: (url, options) => net.fetch(url, options), native: updateMode === 'native' ? nativeUpdateEngine(process.platform, process.arch) : undefined,
+      persistAutomatic: enabled => saveConfig({ ...config, automaticUpdates: enabled }),
+      changed: state => { if (!win.isDestroyed()) win.webContents.send('app:update-state', state); },
+      installationBlocker: updateInstallationBlocker, install: installAppUpdate,
+      openInstaller: async path => { const error = await shell.openPath(path); if (error) throw new Error('无法打开更新安装包，请重新下载后重试。'); },
+    });
+    handle('app:update-state', () => updates.state());
+    handle('app:update-check', () => updates.check());
+    handle('app:update-download', () => updates.download());
+    handle('app:update-install', () => updates.install());
+    handle('app:update-automatic', enabled => { if (typeof enabled !== 'boolean') throw new Error('自动更新设置无效。'); return updates.setAutomatic(enabled); });
     interviewTimer = setInterval(() => { try { if (maintenance.phase === 'idle') interviews.tick(); } catch { log('interview.tick-failed', { operation: 'deadline' }); } }, 250);
     powerMonitor.on('resume', () => { try { interviews.tick(true); } catch { log('interview.resume-failed', { operation: 'deadline' }); } });
     handle('interview:state', () => interviews.state());
@@ -723,5 +772,6 @@ else {
     armReminder();
     await win.loadURL(APP_URL);
     await learning.start();
+    if (process.env.ALGOPRACTICE_DISABLE_AUTO_UPDATE !== '1') updates.start();
   }).catch(error => { const failure = startupFailure(error, app.getPath('userData')); log('app.startup-failed', { category: failure.kind }); dialog.showErrorBox(failure.title, failure.message); readyToQuit = true; app.quit(); });
 }

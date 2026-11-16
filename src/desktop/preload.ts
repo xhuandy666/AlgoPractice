@@ -2,6 +2,7 @@ import type { OfficialSubmission } from '../shared/official';
 import { contextBridge, ipcRenderer } from 'electron';
 import type { DesktopBridge, Page, RuntimeProgress } from '../shared/bridge';
 import type { AiEvent } from '../shared/ai';
+import type { AppUpdateState } from '../shared/update';
 import type { RunEvent } from '../runner/types';
 function listen<T>(channel: string, callback: (value: T) => void) { const handler = (_: unknown, value: T) => callback(value); ipcRenderer.on(channel, handler); return () => ipcRenderer.removeListener(channel, handler); }
 const bridge: DesktopBridge = {
@@ -82,6 +83,12 @@ const bridge: DesktopBridge = {
   applyAiPatch: (...args) => ipcRenderer.invoke('ai:apply-patch', ...args),
   openWebLink: (...args) => ipcRenderer.invoke('app:open-web-link', ...args),
   checkForUpdate: () => ipcRenderer.invoke('app:check-update'),
+  updateState: () => ipcRenderer.invoke('app:update-state'),
+  checkForAppUpdate: () => ipcRenderer.invoke('app:update-check'),
+  downloadAppUpdate: () => ipcRenderer.invoke('app:update-download'),
+  installAppUpdate: () => ipcRenderer.invoke('app:update-install'),
+  setAutomaticUpdates: enabled => ipcRenderer.invoke('app:update-automatic', enabled),
+  onAppUpdate: callback => listen<AppUpdateState>('app:update-state', callback),
   copyCode: (...args) => ipcRenderer.invoke('app:copy-code', ...args),
   activityPulse: (...args) => ipcRenderer.invoke('learning:pulse', ...args),
   pauseActivity: () => ipcRenderer.invoke('learning:pause-activity'),

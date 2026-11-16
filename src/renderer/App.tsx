@@ -30,6 +30,7 @@ import { LibraryPage } from './LibraryPage';
 import { ImportPage } from './ImportPage';
 import { ArchivePage } from './ArchivePage';
 import { EnvironmentPage } from './EnvironmentPage';
+import { AppUpdateNotice } from './AppUpdate';
 import { usePractice } from './usePractice';
 import { makeFrozenPracticeSource, makeReviewSessionPracticeSource, type PracticeNavigationSource } from '../shared/practice-navigation';
 import { REDO_SCOPE_PREFIX, redoScope } from './redo-scope';
@@ -389,6 +390,7 @@ export function App() {
       {maintenance && <div className="maintenance-banner" role="status">正在保存编辑并恢复备份，请等待应用重新打开。</div>}
       {error && <div role="alert" className="error-banner"><span>{error}</span><button onClick={() => setError('')}>收起</button></div>}
       {notice && <div role="status" className="preview-banner"><span>{notice}</span><button className="text-button" onClick={() => setPage(/自评|复习/.test(notice) ? 'reviews' : 'archives')}>{/自评|复习/.test(notice) ? '查看复习计划' : '查看档案'}</button><button onClick={() => setNotice('')}>收起</button></div>}
+      {page !== 'interview' && <AppUpdateNotice api={api} disabled={maintenance || frozen || running || officialBusy || finishing} />}
       {environment?.reminder && !environment.reminder.deliveredAt && Date.parse(environment.reminder.dueAt) <= Date.now() && <div className="preview-banner overdue-banner" role="status">有一条测试提醒已逾期。<button className="text-button" onClick={() => setPage('environment')}>查看提醒</button></div>}
       {!api && <p className="preview-banner">当前为浏览器设计预览。运行、导入和保存需要打开桌面应用。</p>}
       {page === 'interview' && <InterviewPage api={api} onError={setError} onNavigate={next => { void setPage(next); }} />}

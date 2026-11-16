@@ -302,7 +302,7 @@ export class PracticeStore {
       const version = Number((this.#db.prepare('PRAGMA user_version').get() as Row).user_version);
       const applicationId = Number((this.#db.prepare('PRAGMA application_id').get() as Row).application_id);
       const fresh = version === 0 && applicationId === 0 && !this.#db.prepare('SELECT 1 FROM sqlite_schema LIMIT 1').get();
-      // Databases of earlier versions (0.x) are never read or changed: no migrations exist for them.
+      // Databases from v0.91 and earlier are never read or changed: no migrations exist for that lineage.
       if (!fresh && (applicationId !== APPLICATION_ID || version !== SCHEMA_VERSION)) throw new Error(`Unsupported schema version: ${version}`);
       this.#db.exec('PRAGMA foreign_keys = ON; PRAGMA journal_mode = WAL; PRAGMA synchronous = FULL; PRAGMA busy_timeout = 5000;');
       if (fresh) {

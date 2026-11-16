@@ -29,7 +29,7 @@ test('a new database is created in one step with this lineage\'s marker and reop
 test('databases of earlier versions and foreign SQLite files are refused without changing a byte', t => {
   const root = directory(t);
   const cases = {
-    // What a 0.x database looks like: schema version 10, no lineage marker.
+    // What a v0.91 database looks like: schema version 10, no lineage marker.
     'earlier-version.sqlite': 'PRAGMA user_version = 10; CREATE TABLE problems (id TEXT PRIMARY KEY NOT NULL) STRICT;',
     'earlier-wal.sqlite': 'PRAGMA journal_mode = WAL; PRAGMA user_version = 3; CREATE TABLE drafts (code TEXT);',
     'foreign.sqlite': 'CREATE TABLE notes (body TEXT); INSERT INTO notes VALUES (\'someone else\');',

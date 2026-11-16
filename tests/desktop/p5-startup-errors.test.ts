@@ -4,7 +4,7 @@ import {startupFailure} from '../../src/desktop/startup-errors';
 
 test('a database of another version explains the clean break without exposing raw error data',()=>{
  const result=startupFailure(new Error('Unsupported schema version: 999\nSECRET_FROM_UNTRUSTED_ERROR'),'/tmp/中文 数据');
- assert.equal(result.kind,'version');assert.match(result.message,/0\.x 旧版本的数据，当前版本不再读取/);assert.match(result.message,/更新版本的数据，请使用相同或更新的题炼/);assert.match(result.message,/请勿删除数据库/);assert.match(result.message,/中文 数据/);assert.ok(!result.message.includes('SECRET'));
+ assert.equal(result.kind,'version');assert.match(result.message,/v0\.91\.0 及更早版本的数据，当前版本不再读取/);assert.match(result.message,/更新版本的数据，请使用相同或更新的题炼/);assert.match(result.message,/请勿删除数据库/);assert.match(result.message,/中文 数据/);assert.ok(!result.message.includes('SECRET'));
 });
 test('startup classifies disk full, readonly, corruption and settings failures with actionable local recovery',()=>{
  for(const [message,kind] of [['SQLITE_FULL: database or disk is full','disk-full'],['EACCES permission denied','permission'],['attempt to write a readonly database','permission'],['设置文件不可读取','settings']] as const){const result=startupFailure(new Error(message),'/tmp/data');assert.equal(result.kind,kind);assert.match(result.message,/数据目录：\/tmp\/data/);assert.match(result.message,/保留|复制|请勿/);}

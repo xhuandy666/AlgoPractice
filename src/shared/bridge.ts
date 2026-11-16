@@ -9,6 +9,7 @@ import type { ImportJob, LibraryProblem, StudyList, ListRefreshPreview } from '.
 import type { ImportInput, ImportPreview } from '../source/index';
 import type { AiProviderConfig, AiProviderState, AiConnectionResult, AiRequestInput, AiRequestRecord, AiEvent, AiHelpDecision, AiPatchApplication, AiUsageSummary } from './ai';
 import type { ReminderSettings, ReminderStatus, BackupSummary, BackupManifest, MirrorStatus, RestoreResult, UpdateCheck } from './maintenance';
+import type { AppUpdateState } from './update';
 import type { Note, NoteVersion, SaveNoteInput, ConfirmNoteInput, NoteFilter, Attachment, LearningSettings, LearningSettingsInput, LearningDashboard, ArchiveStatistics, TopicInsights } from './learning';
 import type { PageResult, ProblemPageFilter, ProblemListItem, NotePageFilter, NoteListItem, AttemptPageFilter, AttemptListItem, RunPageFilter, RunListItem, ListProgress, CompletionBlocker } from './learning';
 import type { AdvanceReviewSessionInput, ProblemReviewAssessmentInput, ProblemReviewBatchInput, ProblemReviewCorrectionInput,
@@ -134,6 +135,12 @@ export interface DesktopBridge {
   openWebLink(url: string): Promise<void>;
   /** One anonymous request to the project's public releases; nothing is downloaded or installed. */
   checkForUpdate(): Promise<UpdateCheck>;
+  updateState(): Promise<AppUpdateState>;
+  checkForAppUpdate(): Promise<AppUpdateState>;
+  downloadAppUpdate(): Promise<AppUpdateState>;
+  installAppUpdate(): Promise<void>;
+  setAutomaticUpdates(enabled: boolean): Promise<AppUpdateState>;
+  onAppUpdate(callback: (state: AppUpdateState) => void): () => void;
   copyCode(code: string): Promise<void>;
   exportAttachment(hash: string): Promise<boolean>;
   onMaintenance(callback: (requestId: string) => void): () => void;

@@ -1,31 +1,14 @@
 import { useCallback, useEffect, useId, useRef, useState, useSyncExternalStore } from 'react';
 import type { Language } from '../runner/types';
 import type { DesktopBridge, EnvironmentInfo, RuntimeProgress } from '../shared/bridge';
-import { dateTime, errorText, PageIntro } from './ui';
-import type { UpdateCheck } from '../shared/maintenance';
+import { errorText, PageIntro } from './ui';
+import { AppUpdateSection } from './AppUpdate';
 import { getPerformanceState, performanceReport, startPerformanceRecording, stopPerformanceRecording, subscribePerformance } from './performance-monitor';
 import { RuntimeArtifactDetails, RuntimeInstallProgress } from './RuntimePreparation';
 import { runtimeBytes, runtimeSourceLabels } from './runtime-presentation';
 import { HelpHint } from './HelpHint';
 import { LANGUAGES, LANGUAGE_DETAILS, languageLabel } from '../shared/languages';
 
-/** Manual only: one anonymous request to the project's public releases when the user clicks; nothing is installed. */
-function UpdateSection({ api, onError }: { api: DesktopBridge | undefined; onError: (message: string) => void }) {
-  const [checking, setChecking] = useState(false), [result, setResult] = useState<UpdateCheck | null>(null);
-  async function check() {
-    if (!api || checking) return;
-    setChecking(true); setResult(null);
-    try { setResult(await api.checkForUpdate()); } catch (error) { onError(errorText(error)); } finally { setChecking(false); }
-  }
-  return <section className="update-section" aria-label="版本与更新">
-    <div className="heading-with-help"><h3>版本与更新</h3><HelpHint label="检查更新说明">向 GitHub 查询题炼最新的正式版本：仅发送一次匿名请求，不上传任何学习数据。应用不会自动下载或安装；发现新版本时可打开下载页面。</HelpHint></div>
-    <div className="button-row">
-      <button className="button" disabled={!api || checking} onClick={() => { void check(); }}>{checking ? '正在检查…' : '检查更新'}</button>
-      {result?.newer && <button className="button primary" onClick={() => { void api!.openWebLink(result.url).catch(error => onError(errorText(error))); }}>打开 v{result.latest} 下载页面</button>}
-    </div>
-    {result && <p className="field-help" role="status">{result.newer ? `发现新版本 v${result.latest}${result.publishedAt ? `（${dateTime(result.publishedAt)} 发布）` : ''}，当前为 v${result.current}。` : `已是最新版本 v${result.current}。`}</p>}
-  </section>;
-}
 type Installations = Partial<Record<Language, { progress: RuntimeProgress | null }>>;
 type LanguageMessages = Partial<Record<Language, string>>;
 
@@ -213,7 +196,7 @@ export function EnvironmentPage({ api, onChanged, onError }: {
       </div>
       <p className="field-help" role="status">{performanceState.recording ? '正在记录…' : performanceNotice || (performanceState.hasReport ? '记录已停止' : '尚未记录')}</p>
     </details>
-    <UpdateSection api={api} onError={onError} />
+    <AppUpdateSection api={api} />
     <details><summary>系统信息</summary><dl className="system-details">
       <dt>当前环境</dt><dd>{environment ? `${environment.platform} / ${environment.arch}` : '桌面环境未连接'}</dd>
       <dt>应用组件</dt><dd>{environment ? `Electron ${environment.electron} · Node ${environment.node} · SQLite ${environment.sqlite}` : '—'}</dd>
