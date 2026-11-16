@@ -12,7 +12,17 @@ import { demoProblems } from '../shared/demo-problems';
 const hash = (text: string) => createHash('sha256').update(text).digest('hex');
 const HOT100_REQUEST_KEY = `builtin:${HOT100.id}:v1`;
 const hasPreparedContent = (content: ProblemContent) => Boolean(content.description.trim() || content.cases.length || Object.values(content.starter).some(text => text?.trim()) || content.adapter);
-const asError = (error: unknown) => error instanceof SourceError ? { code: error.code, message: error.message, retryable: error.retryable } : { code: 'IMPORT_ERROR', message: error instanceof Error ? error.message : String(error), retryable: true };
+/** The site's Retry-After is shown to the user; resuming stays manual. */
+function waitText(ms: number): string {
+  return ms < 60000 ? `${Math.max(1, Math.ceil(ms / 1000))} 秒` : ms < 7200000 ? `${Math.ceil(ms / 60000)} 分钟` : `${Math.ceil(ms / 3600000)} 小时`;
+}
+const asError = (error: unknown) => {
+  if (!(error instanceof SourceError)) return { code: 'IMPORT_ERROR', message: error instanceof Error ? error.message : String(error), retryable: true };
+  const wait = error.code === 'RATE_LIMITED' ? error.details.retryAfterMs : null;
+  return { code: error.code, message: typeof wait === 'number' && wait > 0 ? `${error.message}建议约 ${waitText(wait)}后再继续。` : error.message, retryable: error.retryable };
+};
+/** One oddly shaped problem must not stop a list, but a run of first-time structure failures means the site changed. */
+const SCHEMA_PAUSE_STREAK = 3;
 function placeholder(item: ImportPreviewItem): ProblemContent {
   return { id: item.problemId, title: item.title, difficulty: item.difficulty, tags: item.tags,
     ...(item.sourceUrl ? { sourceUrl: item.sourceUrl } : {}), description: '', descriptionFormat: 'plain', constraints: [],
@@ -132,12 +142,14 @@ export class ImportService {
   async stop() { this.#stopGeneration++; for (const controller of this.#fetches) controller.abort(); if (this.#active) await this.pause(this.#active.id); }
 
   private async process(id: string, preview: ImportPreview, signal: AbortSignal) {
-    let current: ImportPreviewItem | null = null;
+    let current: ImportPreviewItem | null = null, schemaStreak = 0;
     try {
       for (const item of preview.items) {
         signal.throwIfAborted();
         const saved = this.job(id).items.find(row => row.key === item.key)!;
         if (saved.status !== 'pending') continue;
+        // Retried items that failed before do not count, so a resume cannot wedge on the same odd problems.
+        const firstTry = saved.attempts === 0;
         current = item; this.store.updateImportItem(id, item.key, { status: 'running' }); this.changed();
         try {
           const existing = this.store.getProblem(item.problemId);
@@ -146,7 +158,7 @@ export class ImportService {
           }
           let content: ProblemContent;
           if (item.content) content = item.content;
-          else if (item.sourceUrl) { await delay(this.requestDelayMs, undefined, { signal }); content = (await this.adapter.fetchProblemContent(item.sourceUrl, { signal })).content; }
+          else if (item.sourceUrl) { await delay(this.requestDelayMs, undefined, { signal }); content = (await this.adapter.fetchProblemContent(item.sourceUrl, { signal })).content; schemaStreak = 0; }
           else content = placeholder(item);
           signal.throwIfAborted(); content = await cacheProblemMedia(content, this.mediaDirectory, signal); signal.throwIfAborted();
           const completion = this.store.updateImportItem(id, item.key, { status: content.description.trim() || (item.content && hasPreparedContent(content)) ? 'imported' : 'link_only', content });
@@ -157,6 +169,11 @@ export class ImportService {
           this.store.updateImportItem(id, item.key, { status: restricted ? 'restricted' : 'failed', error: failure });
           this.log('import.item.failed', { category: failure.code });
           if (['AUTH_REQUIRED', 'ACCESS_DENIED', 'ACCESS_CHALLENGE', 'RATE_LIMITED', 'NETWORK_ERROR', 'TIMEOUT'].includes(failure.code)) { this.store.updateImportJob(id, { status: 'paused', error: failure }); return; }
+          if (failure.code === 'SCHEMA_CHANGED' && firstTry && ++schemaStreak >= SCHEMA_PAUSE_STREAK) {
+            this.store.updateImportJob(id, { status: 'paused', error: { code: 'SCHEMA_CHANGED', retryable: true,
+              message: `连续 ${SCHEMA_PAUSE_STREAK} 道题的题面结构无法识别，力扣页面可能已经改版。导入已暂停，已导入的内容会保留；可稍后继续，或等待应用更新。` } });
+            return;
+          }
         }
         current = null; this.changed();
       }

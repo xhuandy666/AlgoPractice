@@ -4,12 +4,14 @@ import type { ReviewRating } from '../shared/learning';
 import type { ProblemReviewEvent, ProblemReviewPreview, ProblemReviewResult, ReviewAssessmentDraft, ReviewAssessmentDraftInput, ReviewOpportunity } from '../shared/review-plan';
 import { errorText } from './ui';
 import { registerPendingSave, useEditsFrozen } from './pending-saves';
+import { celebrate, checkReviewsCleared, rewardActivity } from './reward-bus';
 import { canDiscardConflictedReviewDraft, equivalentCommittedReviewDraft, matchesReviewDraftIdentity, type ReviewDraftRecoveryExpectation } from './review-draft-recovery';
+import { reviewDraftKey } from './local-review-prompt';
 import './review-rating.css';
 
 export const problemRatings = [
-  { value: 1 as const, title: '忘了', hint: '未能独立回忆解法，或需要关键提示' },
-  { value: 2 as const, title: '困难', hint: '独立完成，但回忆或实现费劲' },
+  { value: 1 as const, title: '忘记', hint: '未能独立回忆解法，或需要关键提示' },
+  { value: 2 as const, title: '困难', hint: '独立完成，但回忆或实现较吃力' },
   { value: 3 as const, title: '良好', hint: '独立完成，过程基本顺利' },
   { value: 4 as const, title: '轻松', hint: '无需提示，轻松完成并能解释关键点' },
 ];
@@ -34,7 +36,7 @@ export function ProblemReviewRating({ api, problem, mode, onSaved, onDismiss, on
   const editVersion = useRef(0), savedVersion = useRef(0), sent = useRef(false), resolved = useRef(false);
   const callbacks = useRef({ onSaved, onDismiss, onError }); callbacks.current = { onSaved, onDismiss, onError };
   const sourceId = mode.kind === 'official' ? mode.opportunity.id : mode.kind === 'correction' ? mode.event.id : problem.id;
-  const key = `problem-review:${mode.kind}:${sourceId}`;
+  const key = reviewDraftKey(mode.kind, sourceId);
   const [rating, setRating] = useState<ReviewRating | null>(null), [loading, setLoading] = useState(true), [loadFailed, setLoadFailed] = useState(false);
   const [busy, setBusy] = useState(false), [locked, setLocked] = useState(false), [failure, setFailure] = useState('');
   const [preview, setPreview] = useState<ProblemReviewPreview | null>(null), [previewBusy, setPreviewBusy] = useState(false);
@@ -184,7 +186,7 @@ export function ProblemReviewRating({ api, problem, mode, onSaved, onDismiss, on
           obsolete = detail.events.items.some(event => event.id === mode.event.id && event.effectiveRating !== mode.event.effectiveRating);
         }
       }
-      if (alive && obsolete && !operation.current && !resolved.current) { setInvalidated(true); setFailure('这次自评已由另一入口记录或更正。当前输入不会自动写成新观察；请关闭后在评分历史查看。'); }
+      if (alive && obsolete && !operation.current && !resolved.current) { setInvalidated(true); setFailure('本次自评已由其他入口记录或更正。当前输入不会自动写成新观察；请关闭后在评分历史查看。'); }
     })().catch(error => { if (alive) callbacks.current.onError(errorText(error)); }); });
     return () => { alive = false; remove(); };
   }, [api, mode.kind, sourceId, problem.id, acceptResult]);
@@ -210,6 +212,7 @@ export function ProblemReviewRating({ api, problem, mode, onSaved, onDismiss, on
         : mode.kind === 'correction' ? await api.correctProblemReview({ requestId: requestId.current, eventId: mode.event.id, rating: value })
           : await api.recordProblemReview({ requestId: requestId.current, problemId: problem.id, rating: value, ...(mode.attemptId ? { attemptId: mode.attemptId } : {}) });
       await acceptResult(result);
+      if (mode.kind !== 'correction') { celebrate({ kind: 'review' }); rewardActivity(); void checkReviewsCleared(api).catch(() => {}); }
     } catch (error) {
       let permanentCollision = false;
       try {
@@ -251,7 +254,7 @@ export function ProblemReviewRating({ api, problem, mode, onSaved, onDismiss, on
   const disabled = loading || loadFailed || busy || frozen || locked || invalidated || Boolean(saved);
   const zone = saved?.event.timeZone ?? source?.timeZone ?? context?.timeZone ?? preview?.timeZone;
   const learningDate = saved?.event.learningDate ?? source?.learningDate ?? context?.learningDate ?? preview?.learningDate;
-  const title = mode.kind === 'correction' ? '修改这次自评' : mode.kind === 'official' ? autoPrompt ? '这次通过时表现如何' : '补填这次解答的自评' : '记录今天的复习';
+  const title = mode.kind === 'correction' ? '修改本次自评' : autoPrompt ? '本次解答表现如何' : mode.kind === 'official' ? '补填本次解答的自评' : '记录今天的复习';
   const previewMatchesFrozenSource = !locked || Boolean(context && preview && preview.learningDate === context.learningDate
     && preview.timeZone === context.timeZone && preview.observedAt === context.observedAt);
   const conflict = Boolean(preview?.conflictEventId && mode.kind !== 'correction' && previewMatchesFrozenSource);

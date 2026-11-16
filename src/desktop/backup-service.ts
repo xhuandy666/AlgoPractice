@@ -1,6 +1,6 @@
 import { createHash, randomUUID } from 'node:crypto';
 import { constants } from 'node:fs';
-import { link, lstat, mkdir, mkdtemp, open, readdir, readFile, rename, rm, stat, unlink, writeFile } from 'node:fs/promises';
+import { copyFile, link, lstat, mkdir, mkdtemp, open, readdir, rename, rm, stat, unlink, writeFile } from 'node:fs/promises';
 import { basename, dirname, join, resolve } from 'node:path';
 import { CONTENT_HASH, MAX_ATTACHMENT_BYTES, contentHash, readRegularFile, validateAttachment } from './attachment-service';
 import { localClock, validateReminderSettings } from './reminder-service';
@@ -8,6 +8,8 @@ import { AI_PROVIDER_SETTINGS_FILE, REMINDER_SETTINGS_FILE } from '../shared/mai
 import type { BackupFile, BackupKind, BackupManifest, BackupServiceOptions, BackupSettings, BackupSnapshot, BackupSummary, RestoreResult } from '../shared/maintenance';
 import type { LearningSettings } from '../shared/learning';
 import { normalizeProviderConfig } from '../ai/canonical';
+import { isDatabaseCorruption } from './startup-errors';
+import { cachedMediaType } from './media-cache';
 
 export const BACKUP_LIMITS = { archive: 512 * 1024 * 1024, database: 256 * 1024 * 1024, attachment: MAX_ATTACHMENT_BYTES, media: 8 * 1024 * 1024, manifest: 1024 * 1024, settings: 16384, files: 5000 };
 const JOURNAL = '.restore-journal.json';
@@ -23,11 +25,11 @@ function learningSettings(value: unknown): LearningSettings {
   const v = value as LearningSettings;
   if (!v || typeof v !== 'object' || Object.keys(v).some(key => !['dailyReviewBudget', 'dailyPracticeGoal', 'timeZone', 'updatedAt', 'aiAutoAnalyzeOfficial'].includes(key))
     || (v.dailyReviewBudget !== null && (!Number.isInteger(v.dailyReviewBudget) || v.dailyReviewBudget < 0 || v.dailyReviewBudget > 1000))
-    || (v.dailyPracticeGoal !== undefined && (!Number.isInteger(v.dailyPracticeGoal) || v.dailyPracticeGoal < 1 || v.dailyPracticeGoal > 1000))
-    || (v.aiAutoAnalyzeOfficial !== undefined && typeof v.aiAutoAnalyzeOfficial !== 'boolean')
+    || !Number.isInteger(v.dailyPracticeGoal) || v.dailyPracticeGoal < 1 || v.dailyPracticeGoal > 1000
+    || typeof v.aiAutoAnalyzeOfficial !== 'boolean'
     || typeof v.timeZone !== 'string' || v.timeZone.length > 128 || typeof v.updatedAt !== 'string' || !Number.isFinite(Date.parse(v.updatedAt))) throw new Error('备份学习设置无效。');
   localClock(new Date(), v.timeZone);
-  return { dailyReviewBudget: v.dailyReviewBudget, dailyPracticeGoal: v.dailyPracticeGoal ?? 3, timeZone: v.timeZone, updatedAt: v.updatedAt, aiAutoAnalyzeOfficial: v.aiAutoAnalyzeOfficial ?? false };
+  return { dailyReviewBudget: v.dailyReviewBudget, dailyPracticeGoal: v.dailyPracticeGoal, timeZone: v.timeZone, updatedAt: v.updatedAt, aiAutoAnalyzeOfficial: v.aiAutoAnalyzeOfficial };
 }
 function safeSettings(value: unknown): BackupSettings {
   const v = value as BackupSettings;
@@ -43,7 +45,8 @@ function pathLimit(path: string): number {
 }
 function validateManifest(value: unknown): BackupManifest {
   const m = value as BackupManifest;
-  if (!m || m.format !== 'algopractice-backup' || m.formatVersion !== 1 || !idPattern.test(m.id)
+  if (m?.format === 'algopractice-backup' && (m as { formatVersion?: unknown }).formatVersion !== 2) throw new Error('这是旧版本题炼的备份，当前版本不能恢复。');
+  if (!m || m.format !== 'algopractice-backup' || m.formatVersion !== 2 || !idPattern.test(m.id)
     || typeof m.appVersion !== 'string' || !/^\d+\.\d+\.\d+(?:[-+][a-zA-Z0-9.-]+)?$/.test(m.appVersion)
     || !Number.isInteger(m.databaseVersion) || m.databaseVersion < 1 || !Number.isFinite(Date.parse(m.createdAt))
     || !['manual', 'automatic', 'before-restore'].includes(m.kind) || (m.localDay !== null && !/^\d{4}-\d{2}-\d{2}$/.test(m.localDay))
@@ -92,6 +95,18 @@ async function writeTar(destination: string, directory: string, manifest: Backup
     }
     await output.writeFile(Buffer.alloc(1024)); await output.sync();
   } finally { await output.close(); }
+}
+/** The manifest only (the first TAR entry), for ordering candidates; full validation still follows. */
+async function readManifest(archive: string): Promise<BackupManifest> {
+  const input = await open(archive, constants.O_RDONLY | constants.O_NOFOLLOW);
+  try {
+    const header = Buffer.alloc(512);
+    if ((await input.read(header, 0, 512, 0)).bytesRead !== 512 || header.toString('utf8', 0, 100).replace(/\0.*$/, '') !== 'manifest.json') throw new Error('备份首项必须是 manifest.json。');
+    const sizeText = header.toString('ascii', 124, 136).replace(/\0.*$/, '').trim(), size = /^[0-7]+$/.test(sizeText) ? parseInt(sizeText, 8) : NaN;
+    if (!Number.isSafeInteger(size) || size < 1 || size > BACKUP_LIMITS.manifest) throw new Error('备份清单大小无效。');
+    const body = Buffer.alloc(size); if ((await input.read(body, 0, size, 512)).bytesRead !== size) throw new Error('备份文件被截断。');
+    return validateManifest(JSON.parse(body.toString('utf8')));
+  } finally { await input.close(); }
 }
 async function extractValidated(archive: string, directory: string): Promise<BackupManifest> {
   const input = await open(archive, constants.O_RDONLY | constants.O_NOFOLLOW);
@@ -159,9 +174,11 @@ export async function recoverInterruptedRestore(dataDirectory: string): Promise<
   await unlink(join(directory, JOURNAL)); await rm(join(directory, `.restore-${journal.id}`), { recursive: true, force: true });
   return { recovered: true, outcome: journal.phase === 'swapping' ? 'rolled-back' : 'committed' };
 }
+const AUTO_BACKUP_QUIET_MS = 15 * 60 * 1000;
 export class BackupService {
   readonly directory: string; readonly backupDirectory: string;
   #phase: 'idle' | 'backup' | 'validating' | 'restoring' = 'idle'; #lastError: string | null = null;
+  #autoDoneDay: string | null = null; #autoQuietUntil = 0; readonly #autoValidated = new Map<string, { stamp: string; summary: BackupSummary }>();
   constructor(private readonly options: BackupServiceOptions) { this.directory = resolve(options.dataDirectory); this.backupDirectory = join(this.directory, 'backups'); }
   status() { return { busy: this.#phase !== 'idle', phase: this.#phase, lastError: this.#lastError }; }
   #now() { return this.options.now?.() ?? new Date(); }
@@ -173,13 +190,18 @@ export class BackupService {
   async #validate(file: string) {
     await mkdir(this.directory, { recursive: true }); const staging = await mkdtemp(join(this.directory, '.verify-'));
     try {
-      const manifest = await extractValidated(resolve(file), staging), snapshot = await this.options.inspectSnapshot(join(staging, 'database.sqlite'));
+      const manifest = await extractValidated(resolve(file), staging), snapshot = await this.#inspectPackaged(join(staging, 'database.sqlite'));
       if (snapshot.schemaVersion !== manifest.databaseVersion) throw new Error('备份数据库版本与清单不匹配。');
       const settings = safeSettings(JSON.parse((await readRegularFile(join(staging, 'settings.json'), BACKUP_LIMITS.settings)).toString('utf8')));
       if (JSON.stringify(learningSettings(snapshot.learningSettings)) !== JSON.stringify(settings.learning)) throw new Error('备份学习设置与数据库快照不一致。');
       await this.#verifyReferences(staging, snapshot, manifest.files);
       return { staging, manifest, settings, summary: { path: resolve(file), manifest, bytes: (await stat(file)).size } as BackupSummary };
     } catch (error) { await rm(staging, { recursive: true, force: true }); throw error; }
+  }
+  /** Damage inside a backup file is a property of that file, not of the live database: it must not read as live damage. */
+  async #inspectPackaged(path: string): Promise<BackupSnapshot> {
+    try { return await this.options.inspectSnapshot(path); }
+    catch (error) { if (isDatabaseCorruption(error)) throw new Error('备份中的数据库未通过完整性检查。'); throw error; }
   }
   async #verifyReferences(directory: string, snapshot: BackupSnapshot, files: BackupFile[]) {
     const referenced = new Set(['database.sqlite', 'settings.json']);
@@ -192,8 +214,7 @@ export class BackupService {
       if (!CONTENT_HASH.test(hash)) throw new Error('数据库题面媒体引用无效。');
       const path = `media/${hash}`, bytes = await readRegularFile(join(directory, path), BACKUP_LIMITS.media);
       if (contentHash(bytes) !== hash) throw new Error('题面媒体校验失败。');
-      const extension = bytes[0] === 137 ? 'png' : bytes[0] === 255 ? 'jpg' : bytes.toString('ascii', 0, 3) === 'GIF' ? 'gif' : 'webp';
-      validateAttachment(bytes, `media.${extension}`); referenced.add(path);
+      validateAttachment(bytes, `media.${cachedMediaType(bytes).extension}`); referenced.add(path);
     }
     if (files.length !== referenced.size || files.some(file => !referenced.has(file.path))) throw new Error('备份文件集合与数据库快照引用不一致。');
   }
@@ -228,7 +249,7 @@ export class BackupService {
       await this.#verifyReferences(staging, snapshot, files);
       const fingerprint = contentHash(Buffer.from(JSON.stringify(files)));
       if (fingerprint === skipFingerprint) return null;
-      const manifest = validateManifest({ format: 'algopractice-backup', formatVersion: 1, id: randomUUID(), appVersion: this.options.appVersion, databaseVersion: snapshot.schemaVersion,
+      const manifest = validateManifest({ format: 'algopractice-backup', formatVersion: 2, id: randomUUID(), appVersion: this.options.appVersion, databaseVersion: snapshot.schemaVersion,
         createdAt: this.#now().toISOString(), kind, localDay, dataFingerprint: fingerprint, files });
       const file = resolve(destination ?? join(this.backupDirectory, `${kind}-${manifest.id}.algobak`));
       if (await exists(file)) throw new Error('备份目标已存在，请选择新文件名。');
@@ -242,40 +263,95 @@ export class BackupService {
     if (!['manual', 'before-restore'].includes(kind)) return Promise.reject(new Error('自动备份由每日变化检查管理。'));
     return this.#operation('backup', async () => (await this.#create(kind, destination))!);
   }
+  /** The newest manual or automatic backup in the backup folder that passes full validation. Candidates are validated
+   * newest first and the search stops at the first valid one. Backups taken right before a restore are skipped: they
+   * hold the data the user chose to replace. */
+  async newestValidBackup(): Promise<BackupSummary | null> {
+    return this.#operation('validating', async () => {
+      const names = (await readdir(this.backupDirectory).catch(() => [] as string[])).filter(name => /^(manual|automatic)-[a-f0-9-]{36}\.algobak$/.test(name));
+      const candidates: { path: string; created: number }[] = [];
+      for (const name of names) {
+        const path = join(this.backupDirectory, name);
+        try { const manifest = await readManifest(path); if (manifest.kind !== 'before-restore') candidates.push({ path, created: Date.parse(manifest.createdAt) }); }
+        catch { /* Not a readable backup; full validation would reject it too. */ }
+      }
+      for (const candidate of candidates.sort((a, b) => b.created - a.created)) {
+        try { const value = await this.#validate(candidate.path); await rm(value.staging, { recursive: true, force: true }); return value.summary; }
+        catch (error) { this.#lastError = `有备份未通过校验：${basename(candidate.path)}；${String(error)}`; }
+      }
+      return null;
+    });
+  }
+  /** Automatic backups on disk, without validation: they only appear after #create validated them (temporary + link). */
+  async automaticBackups(): Promise<{ path: string; id: string; modified: Date }[]> {
+    const names = await readdir(this.backupDirectory).catch(() => [] as string[]), result: { path: string; id: string; modified: Date }[] = [];
+    for (const name of names) {
+      const id = /^automatic-([a-f0-9-]{36})\.algobak$/.exec(name)?.[1]; if (!id) continue;
+      const info = await lstat(join(this.backupDirectory, name)).catch(() => null);
+      if (info?.isFile()) result.push({ path: join(this.backupDirectory, name), id, modified: info.mtime });
+    }
+    return result;
+  }
+  /** The minute timer must not hold the busy lock for a full validation pass; other backup and interview actions are rejected while busy. */
   async autoBackup(timeZone: string): Promise<BackupSummary | null> {
     if (this.#phase !== 'idle') return null;
+    const now = this.#now(), day = localClock(now, timeZone).day;
+    if (this.#autoDoneDay === day || now.getTime() < this.#autoQuietUntil) return null;
     return this.#operation('backup', async () => {
-      await mkdir(this.backupDirectory, { recursive: true }); const day = localClock(this.#now(), timeZone).day;
-      const backups: BackupSummary[] = [];
+      await mkdir(this.backupDirectory, { recursive: true });
+      const backups: BackupSummary[] = [], present = new Set<string>();
       for (const name of (await readdir(this.backupDirectory)).filter(name => /^automatic-[a-f0-9-]{36}\.algobak$/.test(name))) {
-        try { const value = await this.#validate(join(this.backupDirectory, name)); backups.push(value.summary); await rm(value.staging, { recursive: true, force: true }); }
-        catch (error) { this.#lastError = `已有自动备份损坏，已保留：${String(error)}`; }
+        const path = join(this.backupDirectory, name), info = await stat(path).catch(() => null); if (!info) continue;
+        const stamp = `${info.size}:${info.mtimeMs}`, cached = this.#autoValidated.get(name); present.add(name);
+        if (cached?.stamp === stamp) { backups.push(cached.summary); continue; }
+        try { const value = await this.#validate(path); backups.push(value.summary); this.#autoValidated.set(name, { stamp, summary: value.summary }); await rm(value.staging, { recursive: true, force: true }); }
+        catch (error) { this.#autoValidated.delete(name); this.#lastError = `已有自动备份损坏，已保留：${String(error)}`; }
       }
-      if (backups.some(backup => backup.manifest.localDay === day)) return null;
+      for (const name of [...this.#autoValidated.keys()]) if (!present.has(name)) this.#autoValidated.delete(name);
+      if (backups.some(backup => backup.manifest.localDay === day)) { this.#autoDoneDay = day; return null; }
       backups.sort((a, b) => b.manifest.createdAt.localeCompare(a.manifest.createdAt));
-      const created = await this.#create('automatic', undefined, day, backups[0]?.manifest.dataFingerprint); if (!created) return null;
+      const created = await this.#create('automatic', undefined, day, backups[0]?.manifest.dataFingerprint);
+      if (!created) { this.#autoQuietUntil = this.#now().getTime() + AUTO_BACKUP_QUIET_MS; return null; }
+      this.#autoDoneDay = day;
       for (const obsolete of [created, ...backups].slice(7)) await unlink(obsolete.path);
       return created;
     });
   }
   restore(file: string, expected?: Pick<BackupManifest, 'id' | 'dataFingerprint'>): Promise<RestoreResult> {
+    return this.#restore(file, expected, null).then(result => ({ restored: true, preRestoreBackup: result.preRestoreBackup!, manifest: result.manifest }));
+  }
+  /** Startup recovery of a database that failed its integrity check, before anything opened it. No backup of the damaged
+   * data can be made, so its files are first copied into `keptDirectory` (a new folder in the data directory). This
+   * device's reminder and AI settings stay as they are, attachments and media keep every current file next to the
+   * backup's, and credentials are not touched. The same journaled swap as restore() keeps it all-or-nothing. */
+  async recoverDamaged(file: string, expected: Pick<BackupManifest, 'id' | 'dataFingerprint'>, keptDirectory: string): Promise<{ manifest: BackupManifest; keptDirectory: string }> {
+    const result = await this.#restore(file, expected, keptDirectory);
+    return { manifest: result.manifest, keptDirectory: result.keptDirectory! };
+  }
+  #restore(file: string, expected: Pick<BackupManifest, 'id' | 'dataFingerprint'> | undefined, keptName: string | null) {
+    const damaged = keptName !== null;
     return this.#operation('restoring', async () => {
       if (await exists(join(this.directory, JOURNAL))) throw new Error('请先恢复上次中断的恢复事务，再开始新恢复。');
       if (this.options.lifecycle.hasActiveInterview()) throw new Error('活动面试未结束，不能恢复备份。');
       const validated = await this.#validate(file);
-      let entered = false, closed = false, committed = false, safeToUnlock = true; let journal: RestoreJournal | undefined; let operation: string | undefined;
+      let entered = false, closed = false, committed = false, safeToUnlock = true; let journal: RestoreJournal | undefined; let operation: string | undefined; let kept: string | undefined;
       try {
         if (expected && (validated.manifest.id !== expected.id || validated.manifest.dataFingerprint !== expected.dataFingerprint)) throw new Error('备份文件在预览后已变化，请重新预览。');
         await this.options.lifecycle.enterMaintenance(); entered = true;
         if (this.options.lifecycle.hasActiveInterview()) throw new Error('活动面试未结束，不能恢复备份。');
-        const preRestoreBackup = (await this.#create('before-restore'))!;
+        const preRestoreBackup = damaged ? undefined : (await this.#create('before-restore'))!;
+        if (keptName !== null) kept = await this.#keepDamagedDatabase(keptName);
         await this.options.lifecycle.closeDatabase(); closed = true;
         const id = randomUUID(); operation = join(this.directory, `.restore-${id}`); await mkdir(join(operation, 'original'), { recursive: true });
         const prepared = join(operation, 'prepared'); await rename(validated.staging, prepared);
         await rename(join(prepared, 'database.sqlite'), join(prepared, 'practice.sqlite'));
-        await writeFile(join(prepared, REMINDER_SETTINGS_FILE), JSON.stringify(validated.settings.reminders), { mode: 0o600 });
-        await writeFile(join(prepared, AI_PROVIDER_SETTINGS_FILE), JSON.stringify(validated.settings.aiProvider), { mode: 0o600 });
+        if (damaged) await this.#keepDeviceSettings(prepared);
+        else {
+          await writeFile(join(prepared, REMINDER_SETTINGS_FILE), JSON.stringify(validated.settings.reminders), { mode: 0o600 });
+          await writeFile(join(prepared, AI_PROVIDER_SETTINGS_FILE), JSON.stringify(validated.settings.aiProvider), { mode: 0o600 });
+        }
         await mkdir(join(prepared, 'attachments'), { recursive: true }); await mkdir(join(prepared, 'media'), { recursive: true });
+        if (damaged) await this.#keepContentFiles(prepared);
         const entries: RestoreJournal['entries'] = [];
         for (const name of managedNames) {
           const current = join(this.directory, name), hadOriginal = await exists(current);
@@ -288,10 +364,10 @@ export class BackupService {
           if (await exists(join(prepared, entry.name))) await rename(join(prepared, entry.name), join(this.directory, entry.name));
         }
         await this.options.lifecycle.openDatabase(); closed = false;
-        await this.options.lifecycle.clearCredentials();
+        if (!damaged) await this.options.lifecycle.clearCredentials();
         journal.phase = 'committed'; await atomicJson(join(this.directory, JOURNAL), journal); committed = true;
         await recoverInterruptedRestore(this.directory); operation = undefined;
-        return { restored: true, preRestoreBackup, manifest: validated.manifest };
+        return { preRestoreBackup, manifest: validated.manifest, keptDirectory: kept };
       } catch (error) {
         if (!committed) {
           try {
@@ -299,11 +375,14 @@ export class BackupService {
               if (!closed) { await this.options.lifecycle.closeDatabase(); closed = true; }
               await rollback(this.directory, journal); await unlink(join(this.directory, JOURNAL));
             }
-            if (closed) { await this.options.lifecycle.openDatabase(); closed = false; }
+            // A damaged database was not open before this call and is not reopened.
+            if (closed && !damaged) { await this.options.lifecycle.openDatabase(); closed = false; }
           } catch (recoveryError) {
             safeToUnlock = false;
             throw new AggregateError([error, recoveryError], '恢复未完成且暂时无法重新打开原数据；已保持维护态，请重启恢复。');
           }
+          // The originals are back in place, so the copy made of them is redundant.
+          if (kept) await rm(kept, { recursive: true, force: true }).catch(() => {});
         }
         throw error;
       } finally {
@@ -312,5 +391,40 @@ export class BackupService {
         if (entered && safeToUnlock) await this.options.lifecycle.leaveMaintenance(committed);
       }
     });
+  }
+  /** Copies (never moves) the damaged database files, so they outlive the swap that removes the originals. */
+  async #keepDamagedDatabase(name: string): Promise<string> {
+    if (!/^damaged-\d{8}-\d{6}-[a-f0-9]{8}$/.test(name)) throw new Error('损坏数据的保留目录名称无效。');
+    const kept = join(this.directory, name); await mkdir(kept, { mode: 0o700 });
+    try {
+      for (const file of ['practice.sqlite', 'practice.sqlite-wal', 'practice.sqlite-shm']) {
+        const source = join(this.directory, file); if (!(await exists(source))) continue;
+        const info = await lstat(source); if (!info.isFile()) throw new Error('当前数据路径类型无效，已停止恢复。');
+        const target = join(kept, file); await copyFile(source, target, constants.COPYFILE_EXCL);
+        const handle = await open(target, 'r+');
+        try { if ((await handle.stat()).size !== info.size) throw new Error('损坏的数据库未能完整保留，已停止恢复。'); await handle.sync(); } finally { await handle.close(); }
+      }
+      return kept;
+    } catch (error) { await rm(kept, { recursive: true, force: true }).catch(() => {}); throw error; }
+  }
+  /** This device's reminder and AI settings stay as they are; a damaged database says nothing about them. */
+  async #keepDeviceSettings(prepared: string) {
+    for (const name of [REMINDER_SETTINGS_FILE, AI_PROVIDER_SETTINGS_FILE]) {
+      const current = join(this.directory, name); if (!(await exists(current))) continue;
+      if (!(await lstat(current)).isFile()) throw new Error('当前数据路径类型无效，已停止恢复。');
+      await copyFile(current, join(prepared, name), constants.COPYFILE_EXCL);
+    }
+  }
+  /** Attachments and media are content-addressed: every current file stays, next to the backup's. */
+  async #keepContentFiles(prepared: string) {
+    for (const folder of ['attachments', 'media']) {
+      const current = join(this.directory, folder); if (!(await exists(current))) continue;
+      const info = await lstat(current); if (info.isSymbolicLink() || !info.isDirectory()) throw new Error('当前数据路径类型无效，已停止恢复。');
+      for (const name of await readdir(current)) {
+        const source = join(current, name), target = join(prepared, folder, name);
+        if (!(await lstat(source)).isFile() || await exists(target)) continue;
+        try { await link(source, target); } catch { await copyFile(source, target, constants.COPYFILE_EXCL); }
+      }
+    }
   }
 }

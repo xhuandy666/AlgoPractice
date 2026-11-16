@@ -14,8 +14,8 @@ const correction = (row: PolicyScenario) => {
 scenario('Empty optional request accepts natural guidance', 'accept');
 scenario('Main coach action can return a justified correction without a separate diagnosis action', 'accept', correction);
 scenario('Explicit full solution request needs no level or unlock', 'accept', row => { row.request.question = '请给完整解法并解释。'; row.response.completeSolution = { explanation: '遍历数组累加，最后返回累加值。', code: 'class Solution:\n    def solve(self, nums):\n        return sum(nums)\n' }; });
-scenario('Response cannot reintroduce a help level', 'reject', row => { row.response.level = 'L4'; });
-scenario('Old response protocol is rejected for new requests', 'reject', row => { row.response.schemaVersion = 1; });
+scenario('Response cannot reintroduce a help level', 'reject', row => { row.raw = canonicalJson({ ...row.response, level: 'L4' }); });
+scenario('Old response protocol is rejected', 'reject', row => { row.raw = canonicalJson({ ...row.response, schemaVersion: 1 }); });
 scenario('Response kind must match the request', 'reject', row => { row.response.kind = 'diagnosis'; });
 scenario('Unknown fields cannot expand permissions', 'reject', row => { row.raw = canonicalJson({ ...row.response, tools: [{ name: 'execute' }] }); });
 scenario('A complete single JSON response can be wrapped in a Markdown fence', 'accept', row => { row.raw = '```json\n' + JSON.stringify(row.response) + '\n```'; });

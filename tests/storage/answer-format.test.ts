@@ -2,11 +2,9 @@ import assert from 'node:assert/strict';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { DatabaseSync } from 'node:sqlite';
 import { test, type TestContext } from 'node:test';
 import { PracticeStore, hashCode, testConfigDigest } from '../../src/storage/practice-store.ts';
-import { resolvePracticeSpec, serializeAcmTestConfig, validateAcmTestConfig, type AcmTestConfig } from '../../src/shared/answer-format.ts';
-import { stripAnswerFormatSchema } from './fixtures/pre-v8.ts';
+import { defaultAcmTestConfig, resolvePracticeSpec, serializeAcmTestConfig, validateAcmTestConfig, type AcmTestConfig } from '../../src/shared/answer-format.ts';
 
 function fixture(t: TestContext) {
   const directory = mkdtempSync(join(tmpdir(), 'tilian-answer-format-')), dbPath = join(directory, 'practice.sqlite');
@@ -45,7 +43,7 @@ test('ACM test edits increment draft revision, stale prior results, and restore 
   assert.equal(draft.testConfigDigest, digest);
   const run = store.beginRun({ id: 'acm-run', attemptId: attempt.id, code: draft.code, expectedDraftRevision: draft.revision,
     answerFormat, specVersion: attempt.specVersion, testConfigDigest: digest, testSuiteVersion: digest,
-    testSnapshot: { cases: tests.cases, acmCompare: tests.compare, answerFormat, specVersion: attempt.specVersion, testConfigDigest: digest } as never,
+    testSnapshot: { cases: tests.cases, acmCompare: tests.compare, answerFormat, specVersion: attempt.specVersion, testConfigDigest: digest } as never, expectedOutputSource: 'user',
     adapterVersion: 'acm-none-v1', runtimeVersion: 'Python 3.14.7' });
   store.finishRun(run.id, { status: 'completed', result: { status: 'completed' } });
   const changed = store.saveDraft({ problemId: problem.id, language: 'python', answerFormat, code: draft.code,
@@ -66,41 +64,9 @@ test('ACM free spec never reuses function args; unknown expected and empty expec
   assert.notEqual(testConfigDigest({ ...tests, cases: [{ stdin: '' }] }), testConfigDigest({ ...tests, cases: [{ stdin: '', expected: '' }] }));
   assert.throws(() => validateAcmTestConfig({ ...tests, cases: [{ stdin: '', expected: null }] }));
   assert.throws(() => validateAcmTestConfig({ ...tests, cases: Array.from({ length: 51 }, () => ({ stdin: '' })) }));
+  const legacy = defaultAcmTestConfig({ ...problem.content, mode: 'acm', cases: Array.from({ length: 80 }, (_, i) => ({ stdin: `${i}\n`, expected: `${i}\n` })) });
+  assert.equal(legacy.cases.length, 50, 'previously imported oversized ACM problems still open with the first 50 cases');
+  assert.doesNotThrow(() => validateAcmTestConfig(legacy));
   assert.throws(() => resolvePracticeSpec({ ...problem.content, mode: 'acm' }, problem.version, 'function'));
   assert.doesNotThrow(() => resolvePracticeSpec({ ...problem.content, adapter: undefined }, problem.version, 'function'));
-});
-
-test('real v7 upgrade preserves native ACM, finished immutability, unknown drafts, and a recoverable backup', t => {
-  const { store, dbPath, directory, problem } = fixture(t);
-  const native = store.upsertProblem({ ...problem.content, id: 'local:acm', source: 'local', mode: 'acm', adapter: undefined,
-    cases: [{ stdin: '', expected: '' }], starter: { python: 'pass' } });
-  const attempt = store.startAttempt({ problemId: native.id, problemVersion: native.version, language: 'python' });
-  store.finishAttempt(attempt.id, { code: 'original ACM' });
-  store.saveDraft({ problemId: 'orphan', language: 'java', code: 'unknown retained' });
-  const oldFunction = store.startAttempt({ problemId: problem.id, problemVersion: problem.version, language: 'python' });
-  store.finishAttempt(oldFunction.id, { code: 'finished original function' });
-  store.upsertProblem({ ...problem.content, mode: 'acm', adapter: undefined, cases: [{ stdin: '' }], starter: { python: 'pass' } });
-  store.close();
-  const old = new DatabaseSync(dbPath); stripAnswerFormatSchema(old); old.close();
-  const upgraded = new PracticeStore(dbPath);
-  try {
-    assert.equal(PracticeStore.inspectBackupSnapshot(upgraded.migrationBackupPath!).schemaVersion, 7);
-    const restoredPath = join(directory, 'restored-v7.sqlite');
-    PracticeStore.restoreBackup(upgraded.migrationBackupPath!, restoredPath);
-    const restored = new PracticeStore(restoredPath);
-    try { assert.equal(restored.getAttempt(attempt.id)?.answerFormat, 'acm'); assert.equal(restored.listLegacyDrafts('orphan')[0].code, 'unknown retained'); restored.integrityCheck(); }
-    finally { restored.close(); }
-    assert.equal(upgraded.getAttempt(attempt.id)?.answerFormat, 'acm');
-    assert.equal(upgraded.getDraft(native.id, 'python', 'practice', 'acm')?.code, 'original ACM');
-    assert.equal(upgraded.listLegacyDrafts(problem.id)[0].code, 'finished original function', 'a new ACM head cannot relabel an old function draft');
-    assert.equal(upgraded.getDraft(problem.id, 'python', 'practice', 'acm'), undefined);
-    assert.equal(upgraded.listLegacyDrafts('orphan')[0].code, 'unknown retained');
-    assert.equal(upgraded.getDraft('orphan', 'java', 'practice', 'function'), undefined);
-    upgraded.saveDraft({ problemId: 'orphan', language: 'java', answerFormat: 'function', code: 'new explicit draft' });
-    assert.equal(upgraded.listLegacyDrafts('orphan')[0].code, 'unknown retained');
-    assert.throws(() => upgraded.finishAttempt(attempt.id, { code: 'overwrite' }), /different final/);
-    upgraded.integrityCheck();
-  } finally { upgraded.close(); }
-  const reopened = new PracticeStore(dbPath);
-  try { assert.equal(reopened.migrationBackupPath, null); assert.equal(reopened.listLegacyDrafts('orphan').length, 1); } finally { reopened.close(); }
 });

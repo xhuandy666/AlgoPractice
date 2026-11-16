@@ -5,7 +5,7 @@ import { pathToFileURL } from 'node:url';
 export async function checkPackageBoundary(root = process.cwd()) {
   const packageJson = JSON.parse(await readFile(join(root, 'package.json'), 'utf8'));
   const files = packageJson.build.files;
-  if (JSON.stringify(files) !== JSON.stringify(['dist/**/*', 'package.json', 'LICENSE'])) throw new Error('Package allowlist changed; review private-data and runtime boundaries before packaging.');
+  if (JSON.stringify(files) !== JSON.stringify(['dist/**/*', 'package.json', 'LICENSE', '!node_modules/**/*'])) throw new Error('Package allowlist changed; review private-data and runtime boundaries before packaging.');
   if (packageJson.build.extraResources || packageJson.build.mac?.extraResources
     || JSON.stringify(packageJson.build.win?.extraResources) !== JSON.stringify([{ from: '.runtime-tools/windows-job-helper.exe', to: 'windows-job-helper.exe' }])) throw new Error('Extra resources changed; explicitly review that no language runtime or private data will be shipped.');
   const output = join(root, 'dist'); let count = 0;

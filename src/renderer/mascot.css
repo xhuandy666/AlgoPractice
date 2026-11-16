@@ -1,0 +1,49 @@
+.mascot { display: inline-grid; place-items: center; flex: none; line-height: 0; }
+.mascot svg { overflow: visible; }
+.mascot-shadow { fill: rgb(0 0 0 / 0.08); transform-origin: 60px 125px; }
+.mascot-figure { transform-origin: 60px 122px; transform-box: view-box; }
+.mascot-eye { fill: #fff; }
+.mascot-pupil { fill: #2b2b2b; }
+.mascot-glint { fill: #fff; }
+.mascot-cheek { fill: #ff7d95; opacity: 0.55; }
+.mascot-line, .mascot-line path { fill: none; stroke: #2b2b2b; stroke-width: 3.6; stroke-linecap: round; stroke-linejoin: round; }
+.mascot-mouth { fill: #7a1f2b; }
+.mascot-tongue { fill: #ff7d95; }
+.mascot-arms path { fill: none; stroke: #ff8a00; stroke-width: 9; stroke-linecap: round; }
+.mascot-sparkles path { fill: var(--color-gold); }
+.mascot-dots circle { fill: var(--color-paper-3); }
+.mascot-zzz text { fill: var(--color-blue-bright); font: 900 16px var(--font-display); }
+
+@media (prefers-reduced-motion: no-preference) {
+  .mascot[data-mood=happy] .mascot-figure { animation: mascot-bob 2.8s var(--ease-in-out) infinite; }
+  .mascot[data-mood=happy] .mascot-shadow { animation: mascot-shadow 2.8s var(--ease-in-out) infinite; }
+  .mascot[data-mood=cheer] .mascot-figure { animation: mascot-jump 0.9s var(--ease-out) infinite; }
+  .mascot[data-mood=cheer] .mascot-shadow { animation: mascot-shadow 0.9s var(--ease-out) infinite; }
+  .mascot[data-mood=cheer] .mascot-arms path:first-child { animation: mascot-wave-left 0.45s ease-in-out infinite alternate; transform-origin: 27px 86px; transform-box: view-box; }
+  .mascot[data-mood=cheer] .mascot-arms path:last-child { animation: mascot-wave-right 0.45s ease-in-out infinite alternate; transform-origin: 93px 86px; transform-box: view-box; }
+  .mascot[data-mood=cheer] .mascot-sparkles path { animation: mascot-twinkle 1.2s ease-in-out infinite; transform-box: fill-box; transform-origin: center; }
+  .mascot[data-mood=cheer] .mascot-sparkles path:nth-child(2) { animation-delay: 0.3s; }
+  .mascot[data-mood=cheer] .mascot-sparkles path:nth-child(3) { animation-delay: 0.6s; }
+  .mascot[data-mood=sad] .mascot-figure { animation: mascot-droop 0.5s var(--ease-out) both, mascot-sway 3.4s 0.5s var(--ease-in-out) infinite; }
+  .mascot[data-mood=think] .mascot-figure { animation: mascot-tilt 3s var(--ease-in-out) infinite; }
+  .mascot[data-mood=think] .mascot-dots circle { animation: mascot-twinkle 1.5s ease-in-out infinite; transform-box: fill-box; transform-origin: center; }
+  .mascot[data-mood=think] .mascot-dots circle:nth-child(2) { animation-delay: 0.2s; }
+  .mascot[data-mood=think] .mascot-dots circle:nth-child(3) { animation-delay: 0.4s; }
+  .mascot[data-mood=sleep] .mascot-figure { animation: mascot-breathe 3.6s ease-in-out infinite; }
+  .mascot[data-mood=sleep] .mascot-zzz text { animation: mascot-float-z 2.4s ease-in-out infinite; }
+  .mascot[data-mood=sleep] .mascot-zzz text:last-child { animation-delay: 0.8s; }
+  .mascot-eyes { animation: mascot-blink 5s steps(1) infinite; transform-origin: 60px 75px; transform-box: view-box; }
+}
+
+@keyframes mascot-bob { 0%, 100% { transform: translateY(0) scale(1, 1); } 50% { transform: translateY(-5px) scale(0.98, 1.03); } }
+@keyframes mascot-shadow { 0%, 100% { transform: scaleX(1); opacity: 1; } 50% { transform: scaleX(0.82); opacity: 0.6; } }
+@keyframes mascot-jump { 0%, 100% { transform: translateY(0) scale(1.08, 0.92); } 35% { transform: translateY(-16px) scale(0.95, 1.06); } 70% { transform: translateY(0) scale(1.04, 0.96); } }
+@keyframes mascot-wave-left { from { transform: rotate(-8deg); } to { transform: rotate(14deg); } }
+@keyframes mascot-wave-right { from { transform: rotate(8deg); } to { transform: rotate(-14deg); } }
+@keyframes mascot-twinkle { 0%, 100% { transform: scale(0.6); opacity: 0.4; } 50% { transform: scale(1.15); opacity: 1; } }
+@keyframes mascot-droop { from { transform: translateY(-6px) scale(1.02, 1.02); } to { transform: translateY(2px) scale(1.03, 0.95); } }
+@keyframes mascot-sway { 0%, 100% { transform: translateY(2px) scale(1.03, 0.95) rotate(0); } 50% { transform: translateY(2px) scale(1.03, 0.95) rotate(-3deg); } }
+@keyframes mascot-tilt { 0%, 100% { transform: rotate(0); } 50% { transform: rotate(5deg); } }
+@keyframes mascot-breathe { 0%, 100% { transform: scale(1, 1); } 50% { transform: scale(1.03, 0.97); } }
+@keyframes mascot-float-z { 0% { opacity: 0; transform: translate(0, 4px); } 40% { opacity: 1; } 100% { opacity: 0; transform: translate(6px, -10px); } }
+@keyframes mascot-blink { 0%, 94%, 100% { transform: scaleY(1); } 96% { transform: scaleY(0.1); } }

@@ -1,38 +1,77 @@
-/* Warm paper, graphite and teal. Shared by the desktop UI and Monaco theme. */
+/* Playful learning palette: white paper, chunky borders, saturated fills. Shared by the desktop UI and Monaco theme.
+ * Fills used behind white text (accent, blue, error, warning) stay at or above 4.5:1; *-bright colors are decorative only. */
 :root {
-  --color-paper: oklch(97.8% 0.005 100);
-  --color-surface: oklch(99.8% 0.002 100);
-  --color-paper-2: oklch(96.5% 0.005 165);
-  --color-paper-3: oklch(93.2% 0.008 165);
-  --color-ink: oklch(24% 0.022 245);
-  --color-ink-2: oklch(37% 0.019 245);
-  --color-muted: oklch(49% 0.017 245);
-  --color-rule: oklch(90% 0.01 175);
-  --color-control-rule: oklch(65% 0.017 175);
-  --color-accent: oklch(47% 0.085 180);
-  --color-accent-soft: oklch(94.5% 0.024 175);
-  --color-accent-ink: oklch(100% 0 0);
-  --color-focus: oklch(41% 0.08 180);
-  --color-error: oklch(46% 0.16 25);
-  --color-success: oklch(44% 0.09 172);
-  --color-warning: oklch(45% 0.095 70);
-  --color-backdrop: oklch(24% 0.02 258 / 0.25);
-  --color-transparent: oklch(98.5% 0.004 250 / 0);
-  --color-code-keyword: oklch(46% 0.15 256);
-  --color-code-string: oklch(40% 0.08 160);
-  --color-code-number: oklch(43% 0.12 55);
-  --shadow-panel: 0 2px 8px oklch(24% 0.02 175 / 0.025);
-  --shadow-dialog: 0 20px 70px oklch(24% 0.02 175 / 0.16);
-  --font-display: 'Inter', 'PingFang SC', 'Microsoft YaHei', sans-serif;
-  --font-body: 'Inter', 'PingFang SC', 'Microsoft YaHei', sans-serif;
+  color-scheme: light;
+  --color-paper: #ffffff;
+  --color-surface: #ffffff;
+  --color-paper-2: #f7f7f7;
+  --color-paper-3: #ededed;
+  --color-ink: #3c3c3c;
+  --color-ink-2: #4b4b4b;
+  --color-muted: #6b6b6b;
+  --color-rule: #e5e5e5;
+  --color-control-rule: #8a8a8a;
+  --color-accent: #2c8200;
+  --color-accent-strong: #236600;
+  --color-accent-soft: #f0fae8;
+  --color-accent-ink: #ffffff;
+  --color-accent-bright: #58cc02;
+  --color-accent-bright-deep: #46a302;
+  --color-focus: #1170c4;
+  --color-blue: #1170c4;
+  --color-blue-deep: #0b5596;
+  --color-blue-soft: #e6f6ff;
+  --color-blue-bright: #1cb0f6;
+  --color-blue-line: #84d8ff;
+  --color-error: #c62828;
+  --color-error-deep: #9c1c1c;
+  --color-error-soft: #ffeded;
+  --color-error-bright: #ff4b4b;
+  --color-success: #2c8200;
+  --color-success-soft: #f0fae8;
+  --color-warning: #a84f00;
+  --color-warning-soft: #fff4e3;
+  --color-purple: #7b3fc9;
+  --color-purple-soft: #f5e9ff;
+  --color-purple-bright: #ce82ff;
+  --color-backdrop: rgb(0 0 0 / 0.38);
+  --color-transparent: rgb(255 255 255 / 0);
+  --color-code-keyword: #7b3fc9;
+  --color-code-string: #2c8200;
+  --color-code-number: #a84f00;
+
+  /* Reward palette: decorative fills only; text on them uses the matching -ink token. */
+  --color-gold: #ffc800;
+  --color-gold-deep: #e5a400;
+  --color-gold-ink: #7a4d00;
+  --color-flame: #ff9600;
+  --color-flame-deep: #e07800;
+  --color-xp: #ce82ff;
+  --color-mint: #58cc02;
+  --gradient-brand: linear-gradient(180deg, #6bd615, #58cc02);
+  --gradient-gold: linear-gradient(180deg, #ffd84d, #ffc800);
+  --gradient-flame: linear-gradient(180deg, #ffb238, #ff9600);
+  --gradient-success: linear-gradient(180deg, #6bd615, #58cc02);
+  --gradient-xp: linear-gradient(90deg, #ffc800, #ff9600);
+
+  /* Chunky "pressable" depth: solid offsets instead of soft blur. */
+  --shadow-panel: 0 2px 0 var(--color-rule);
+  --shadow-raised: 0 4px 0 var(--color-rule);
+  --shadow-dialog: 0 24px 60px -12px rgb(0 0 0 / 0.28);
+  --shadow-accent: 0 4px 0 var(--color-accent-strong);
+  --depth: 4px;
+
+  --font-display: 'Nunito', 'PingFang SC', 'Microsoft YaHei', sans-serif;
+  --font-body: 'Nunito', 'PingFang SC', 'Microsoft YaHei', sans-serif;
   --font-mono: 'JetBrains Mono', 'PingFang SC', 'Microsoft YaHei', monospace;
   --space-2xs: 4px; --space-xs: 8px; --space-sm: 12px; --space-md: 16px;
   --space-lg: 24px; --space-xl: 32px; --space-2xl: 48px; --space-3xl: 64px;
-  --text-xs: 12px; --text-sm: 14px; --text-base: 16px; --text-md: 20px; --text-lg: 28px;
-  --radius-sm: 8px; --radius-md: 12px;
-  --rule-thin: 1px;
+  --text-xs: 13px; --text-sm: 15px; --text-base: 17px; --text-md: 20px; --text-lg: 28px;
+  --radius-xs: 8px; --radius-sm: 12px; --radius-md: 16px; --radius-lg: 20px; --radius-pill: 999px;
+  --rule-thin: 2px;
   --ease-out: cubic-bezier(0.16, 1, 0.3, 1);
   --ease-in: cubic-bezier(0.7, 0, 0.84, 0);
   --ease-in-out: cubic-bezier(0.65, 0, 0.35, 1);
-  --dur-micro: 120ms; --dur-short: 220ms; --dur-long: 420ms;
+  --ease-spring: cubic-bezier(0.34, 1.56, 0.64, 1);
+  --dur-micro: 120ms; --dur-short: 220ms; --dur-long: 420ms; --dur-reward: 900ms;
 }

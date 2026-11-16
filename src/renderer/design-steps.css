@@ -1,0 +1,9 @@
+/* Design-case steps inside a case detail: numbered monospace calls; only the differing values are colored. */
+.design-steps { display: grid; gap: 6px; }
+.design-steps ol { margin: 0; padding-left: 2.6em; list-style: decimal; display: grid; gap: 2px; max-height: 320px; overflow: auto; font-size: var(--text-xs); }
+.design-steps li { display: list-item; overflow-wrap: anywhere; }
+.design-steps li::marker { color: var(--color-ink-2); }
+.design-steps li > * + * { margin-left: 8px; }
+.design-step-value, .design-step-reference { color: var(--color-ink-2); }
+.design-steps li[data-differs] .design-step-value { color: var(--color-error); font-weight: 700; }
+.design-steps-first { margin: 0; padding: 4px 8px; border-radius: var(--radius-sm); font-size: var(--text-xs); color: var(--color-error); background: var(--color-error-soft); overflow-wrap: anywhere; }

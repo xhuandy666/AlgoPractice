@@ -2,20 +2,33 @@ import { useEffect, useRef, useState } from 'react';
 import type { DesktopBridge } from '../shared/bridge';
 import { aiCompletionEndpoint } from '../shared/ai-endpoint';
 import { AI_PROVIDER_PRESETS, createAiProviderPreset } from '../shared/ai';
-import type { AiConnectionResult, AiProviderConfig, AiProviderState } from '../shared/ai';
+import type { AiConnectionResult, AiProviderConfig, AiProviderState, AiUsageSummary, AiUsageTotals } from '../shared/ai';
 import { errorText, dateTime } from './ui';
 import { useEditsFrozen } from './pending-saves';
 import { HelpHint } from './HelpHint';
 
 const initial: AiProviderConfig = { id: '', ...AI_PROVIDER_PRESETS[0].config };
+const tokens = (value: number) => value.toLocaleString('zh-CN');
+const usageLine = (totals: AiUsageTotals) => totals.requests ? `${totals.requests} 次提问 · 调用 ${totals.calls} 次 · ${tokens(totals.tokens)} Token` : '暂无记录';
+/** Provider-reported totals only: tokens are never estimated and money is not computed, since prices differ by provider and model. */
+export function AiUsagePanel({ usage }: { usage: AiUsageSummary }) {
+  return <div className="ai-usage" aria-label="AI 用量"><h4>用量（以服务商返回为准）</h4>
+    <dl>{([['今天', usage.today], ['本月', usage.month], ['累计', usage.all]] as const).map(([label, totals]) => <div key={label}><dt>{label}</dt><dd>{usageLine(totals)}</dd></div>)}</dl>
+    {usage.monthByModel.length > 1 && <p className="field-help">本月按模型：{usage.monthByModel.map(row => `${row.model} ${tokens(row.tokens)} Token`).join(' · ')}</p>}
+    <p className="field-help">调用次数包括对话摘要、格式修复等额外调用。费用按服务商规则计算。{usage.all.unreported > 0 && `另有 ${usage.all.unreported} 次提问服务商未返回用量，未计入 Token；可在“模型参数与兼容选项”里勾选“请求流式用量信息”。`}</p>
+  </div>;
+}
 export function AiSettings({ api, onError }: { api: DesktopBridge | undefined; onError: (message: string) => void }) {
   const [provider, setProvider] = useState<AiProviderState | null>(null);
   const [form, setForm] = useState(initial); const [key, setKey] = useState('');
   const [busy, setBusy] = useState(''); const [message, setMessage] = useState('');
   const [connection, setConnection] = useState<AiConnectionResult | null>(null);
+  const [usage, setUsage] = useState<AiUsageSummary | null>(null);
   const working = useRef(false); const frozen = useEditsFrozen();
   const locked = !provider || Boolean(busy) || frozen;
   useEffect(() => { let alive = true; if (api) void api.aiProvider().then(value => { if (alive) { setProvider(value); setForm(value.config ?? initial); } }).catch(error => onError(errorText(error))); return () => { alive = false; }; }, [api]);
+  // Usage is informational: a failure to read it never blocks provider settings.
+  useEffect(() => { let alive = true; if (api) void api.aiUsage().then(value => { if (alive) setUsage(value); }).catch(() => {}); return () => { alive = false; }; }, [api]);
   const selectedPreset = AI_PROVIDER_PRESETS.find(preset => preset.config.baseUrl === form.baseUrl && preset.config.model === form.model && preset.config.compatibility === form.compatibility);
   const dirty = JSON.stringify(form) !== JSON.stringify(provider?.config ?? initial) || Boolean(key);
   function update<K extends keyof AiProviderConfig>(field: K, value: AiProviderConfig[K]) { setForm(previous => ({ ...previous, [field]: value })); setMessage(''); setConnection(null); }
@@ -42,7 +55,7 @@ export function AiSettings({ api, onError }: { api: DesktopBridge | undefined; o
     try { const value = await api.clearAiKey(); setProvider(value); setKey(''); setConnection(null); setMessage('当前接口保存的 API Key 已清除。'); }
     catch (error) { onError(errorText(error)); } finally { working.current = false; setBusy(''); }
   }
-  return <section className="settings-section" aria-labelledby="ai-settings-title"><div><div className="heading-with-help"><h3 id="ai-settings-title">AI 接口</h3><HelpHint label="AI 密钥存储说明">Key 由系统加密存储，不写入普通设置、日志或备份；界面只显示是否已配置。</HelpHint></div><p>提问或自动分析时，会向所选提供商发送题面、代码、运行结果、相关对话及选中的笔记。</p></div>
+  return <section className="settings-section" aria-labelledby="ai-settings-title"><div><div className="heading-with-help"><h3 id="ai-settings-title">AI 接口</h3><HelpHint label="AI 密钥存储说明">Key 由系统加密存储，不写入普通设置、日志或备份；界面只显示是否已配置。</HelpHint></div><p>提问或自动分析时，会向所选提供商发送题面、代码、运行结果与近期对话。</p></div>
     <form className="p3-form" onSubmit={event => { event.preventDefault(); void save(); }}>
       <label>模型提供商<select aria-label="模型提供商" value={selectedPreset?.id ?? 'custom'} disabled={locked} onChange={event => { setForm(event.target.value === 'custom' ? { ...form, compatibility: 'openai-compatible' } : createAiProviderPreset(event.target.value, crypto.randomUUID())); setConnection(null); setMessage(''); }}>
         {AI_PROVIDER_PRESETS.map(preset => <option key={preset.id} value={preset.id}>{preset.label}</option>)}<option value="custom">自定义兼容接口</option>
@@ -63,6 +76,7 @@ export function AiSettings({ api, onError }: { api: DesktopBridge | undefined; o
       <p className="local-status">{!provider ? '正在读取配置…' : provider.hasKey ? 'Key 已配置' : '尚未配置 Key'}{dirty ? ' · 有待保存的设置' : ''}</p>
       {message && <p role="status" className="success-text">{message}</p>}
       {connection && <div role={connection.status === 'passed' ? 'status' : 'alert'}><strong className={connection.status === 'passed' ? 'success-text' : 'error-text'}>{connection.status === 'passed' ? '连接正常' : connection.error?.message || '连接尚未通过'}</strong><p className="field-help">{dateTime(connection.testedAt)} · {connection.model} · 流式传输：{connection.streaming === null ? '未知' : connection.streaming ? '可用' : '未验证'} · 用量：{connection.usage?.totalTokens ?? '未知'}</p></div>}
+      {usage && <AiUsagePanel usage={usage} />}
     </form>
   </section>;
 }

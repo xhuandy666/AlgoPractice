@@ -23,7 +23,7 @@ export function buildRequestSnapshot(rawInput: AiRequestInput, rawContext: AiTru
     identifier(context.specVersion); identifier(context.testConfigDigest);
   }
   const testConfig = context.testConfig ? validateAcmTestConfig(context.testConfig) : null;
-  if (!context.problem || typeof context.problem.title !== 'string' || typeof context.problem.description !== 'string' || !Array.isArray(context.problem.constraints) || !context.problem.constraints.every(value => typeof value === 'string') || !Array.isArray(context.notes) || !Array.isArray(context.conversation)) throw new AiServiceError('INVALID_REQUEST');
+  if (!context.problem || typeof context.problem.title !== 'string' || typeof context.problem.description !== 'string' || !Array.isArray(context.problem.constraints) || !context.problem.constraints.every(value => typeof value === 'string')) throw new AiServiceError('INVALID_REQUEST');
   const clippedFields: string[] = [];
   const clip = (value: string, maximum: number, name: string) => { if (typeof value !== 'string') throw new AiServiceError('INVALID_REQUEST'); if (value.length <= maximum) return value; clippedFields.push(name); return value.slice(0, maximum) + '\n[内容已裁剪]'; };
   const codeHash = sha256(context.code);
@@ -43,9 +43,9 @@ export function buildRequestSnapshot(rawInput: AiRequestInput, rawContext: AiTru
     const changedConfiguration = old.answerFormat !== context.answerFormat || old.specVersion !== context.specVersion || old.testConfigDigest !== context.testConfigDigest;
     if (old.attemptId !== context.attemptId || old.problemVersion !== context.problemVersion || old.codeHash !== sha256(previousRun.code)
       || (old.codeHash === codeHash && !changedConfiguration) || input.runId !== old.id) throw new AiServiceError('INVALID_REQUEST');
-    const clipped = buildRequestSnapshot({ ...input, runId: old.id, noteIds: [], conversationIds: [] }, { ...context,
+    const clipped = buildRequestSnapshot({ ...input, runId: old.id }, { ...context,
       answerFormat: old.answerFormat, specVersion: old.specVersion, testConfigDigest: old.testConfigDigest, testConfig: null,
-      code: previousRun.code, run: old, previousRun: null, official: null, notes: [], conversation: [] }, provider);
+      code: previousRun.code, run: old, previousRun: null, official: null }, provider);
     previousRun = { code: clip(previousRun.code, 6000, 'previousRun.code'), run: clipped.run! };
     clippedFields.push(...clipped.clippedFields.filter(field => field.startsWith('run.')).map(field => `previousRun.${field}`));
   }
@@ -61,8 +61,6 @@ export function buildRequestSnapshot(rawInput: AiRequestInput, rawContext: AiTru
   }
   if (input.kind === 'official-review' && (!official || official.id !== input.officialSubmissionId
     || context.officialSubmissionId !== input.officialSubmissionId)) throw new AiServiceError('INVALID_REQUEST');
-  const notes = (input.noteIds ?? []).map(id => { const note = context.notes.find(note => note.id === id); if (!note) throw new AiServiceError('INVALID_REQUEST'); return { id, version: identifier(note.version), title: clip(note.title, 150, `notes.${id}.title`), markdown: clip(note.markdown, 2500, `notes.${id}.markdown`) }; });
-  const conversation = (input.conversationIds ?? []).map(id => { const message = context.conversation.find(message => message.id === id); if (!message || !['user', 'assistant'].includes(message.role)) throw new AiServiceError('INVALID_REQUEST'); return { id, role: message.role, content: clip(message.content, 1500, `conversation.${id}`) }; });
   // A derived view gives the model stable line references without changing the
   // source/hash used for patch application. Keep whole lines and count blanks.
   const sourceLines = context.code.split(/\r?\n/); const numberedLines: string[] = []; let numberedLength = 0;
@@ -86,10 +84,7 @@ export function buildRequestSnapshot(rawInput: AiRequestInput, rawContext: AiTru
         ...(Object.hasOwn(test, 'expected') ? { expected: clip(test.expected!, 2000, `testConfig.${index}.expected`), expectedSource: context.expectedOutputSource ?? 'unspecified-not-official-judge' } : {}) })) } } : {}),
       problem: { title: clip(context.problem.title, 250, 'problem.title'), description: clip(context.problem.description, 8000, 'problem.description'), constraints: context.problem.constraints.slice(0, 20).map((constraint, index) => clip(constraint, 250, `problem.constraints.${index}`)) },
       codeHash, code: clip(context.code, 16000, 'code'), codeWithLineNumbers, ...(context.reasoning !== undefined ? { reasoning: clip(context.reasoning, 4000, 'reasoning') } : {}), run, official, evidenceCatalog,
-      ...(input.officialSubmissionId ? { officialSubmissionId: input.officialSubmissionId } : {}), previousRun: previousRun ? { ...previousRun, relationToCurrentCode: 'historical-only' } : null, notes,
-      // Explicit legacy selections remain identity-bound, but automatic memory is the
-      // only conversation copy on the wire when supplied by the service.
-      conversation: memory ? [] : conversation,
+      ...(input.officialSubmissionId ? { officialSubmissionId: input.officialSubmissionId } : {}), previousRun: previousRun ? { ...previousRun, relationToCurrentCode: 'historical-only' } : null,
       ...(memory ? { conversationMemory: conversationMemoryPayload(memory) } : {}) }, clippedFields };
   if (context.problem.constraints.length > 20) clippedFields.push('problem.constraints');
   let sentMemory = memory ? structuredClone(memory) : undefined;
@@ -110,6 +105,6 @@ export function buildRequestSnapshot(rawInput: AiRequestInput, rawContext: AiTru
     ...(context.answerFormat !== undefined ? { answerFormat: context.answerFormat, specVersion: context.specVersion, testConfigDigest: context.testConfigDigest } : {}),
     kind: input.kind, question: input.question, ...(input.officialSubmissionId ? { officialSubmissionId: input.officialSubmissionId } : {}),
     ...(sentMemory ? { conversationMemory: sentMemory } : {}), runId: input.runId ?? run?.id ?? null, run, official, previousRun, provider, messages,
-    selectedNoteIds: notes.map(note => note.id), selectedConversationIds: conversation.map(message => message.id), clippedFields: [...clippedFields], evidenceCatalog };
+    clippedFields: [...clippedFields], evidenceCatalog };
 }
 export const requestHash = (snapshot: AiRequestSnapshot): string => sha256(canonicalJson(snapshot));

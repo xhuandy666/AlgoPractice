@@ -1,7 +1,7 @@
 {
   "name": "algopractice",
   "productName": "题炼",
-  "version": "0.91.0",
+  "version": "0.96.0",
   "private": true,
   "description": "题炼：算法练习、力扣官方提交、AI 教练与间隔复习",
   "author": "xhuandy666",
@@ -25,18 +25,20 @@
     "test:onboarding": "node tests/onboarding-acm-smoke.mjs",
     "test:acm": "node tests/acm-execution-smoke.mjs",
     "test:hot100": "node tests/hot100-desktop-smoke.mjs",
-    "dist:mac": "npm run build && electron-builder --mac --arm64 --publish never",
-    "dist:mac:intel": "npm run build && electron-builder --mac --x64 --publish never",
-    "dist:win": "npm run build && electron-builder --win --x64 --publish never",
+    "dist:mac": "npm run build && node scripts/package-desktop.mjs --platform darwin --arch arm64",
+    "dist:mac:intel": "npm run build && node scripts/package-desktop.mjs --platform darwin --arch x64",
+    "dist:win": "npm run build && node scripts/package-desktop.mjs --platform win32 --arch x64",
     "preruntime:install": "node scripts/prepare-windows-helper.mjs",
     "test:learning-center": "node tests/learning-center-smoke.mjs",
     "test:reviews": "node tests/review-plan-desktop-smoke.mjs",
-    "test:editor-performance": "node tests/editor-performance-smoke.mjs"
+    "test:editor-performance": "node tests/editor-performance-smoke.mjs",
+    "test:ui": "node tests/ai-chat-smoke.mjs && node tests/runtime-ui-smoke.mjs && node tests/hot100-ui-smoke.mjs && node tests/runtime-gate-smoke.mjs && node tests/app-update-ui-smoke.mjs",
+    "test:updates": "node tests/app-update-desktop-smoke.mjs"
   },
   "devDependencies": {
-    "@fontsource/inter": "5.3.0",
     "@fontsource/jetbrains-mono": "5.3.0",
-    "@fontsource/space-grotesk": "5.3.0",
+    "@fontsource/nunito": "5.3.0",
+    "@noble/hashes": "2.4.0",
     "@types/node": "24.3.0",
     "@types/react": "19.2.18",
     "@types/react-dom": "19.2.7",
@@ -44,6 +46,7 @@
     "electron": "44.2.0",
     "electron-builder": "26.15.3",
     "esbuild": "0.28.2",
+    "js-yaml": "4.3.2",
     "marked": "18.0.12",
     "monaco-editor": "0.56.0",
     "playwright": "1.63.0",
@@ -63,7 +66,8 @@
     "files": [
       "dist/**/*",
       "package.json",
-      "LICENSE"
+      "LICENSE",
+      "!node_modules/**/*"
     ],
     "asar": true,
     "mac": {
@@ -73,7 +77,6 @@
         "zip"
       ],
       "category": "public.app-category.education",
-      "identity": "-",
       "minimumSystemVersion": "14.0",
       "hardenedRuntime": true
     },
@@ -94,7 +97,17 @@
       "oneClick": false,
       "allowToChangeInstallationDirectory": true,
       "perMachine": false
-    }
+    },
+    "publish": [
+      {
+        "provider": "github",
+        "owner": "xhuandy666",
+        "repo": "AlgoPractice",
+        "channel": "latest"
+      }
+    ],
+    "electronUpdaterCompatibility": ">=2.16",
+    "generateUpdatesFilesForAllChannels": false
   },
   "overrides": {
     "monaco-editor": {
@@ -111,5 +124,8 @@
   "homepage": "https://github.com/xhuandy666/AlgoPractice",
   "bugs": {
     "url": "https://github.com/xhuandy666/AlgoPractice/issues"
+  },
+  "dependencies": {
+    "electron-updater": "6.8.12"
   }
 }

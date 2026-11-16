@@ -7,7 +7,7 @@ import type { Adapter, RunRequest } from '../../src/runner/types.ts';
 for(const language of ['python','java'] as const){
  test(`${language}: explicit void JSON adapter compares changed array and empty array`,async()=>{
   const file={id:'void-array',title:'Original in-place sort',description:'Sort the supplied array in place.',mode:'function',adapter:{method:'solve',params:[{array:'int'}],returns:'void',inPlaceArg:0},cases:[{args:[[3,1,2]],expected:[1,2,3]},{args:[[]],expected:[]}],starter:{python:'class Solution:\n    def solve(self,x):\n        x.sort()',java:'class Solution {public void solve(int[] x){Arrays.sort(x);}}'}};
-  const preview=await previewImport({kind:'json',text:JSON.stringify([file])});assert.equal(preview.complete,true,JSON.stringify(preview.errors));const content=preview.items[0].content!;assert.equal(content.adapter!.returns,'void');
+  const preview=await previewImport({kind:'json',text:JSON.stringify([file])});assert.equal(preview.complete,true,JSON.stringify(preview.errors));const content=preview.items[0].content!;assert.equal((content.adapter as Adapter).returns,'void');
   const request:RunRequest={language,mode:'function',code:content.starter[language]!,adapter:content.adapter,cases:content.cases};
   const result=await runCode(request);assert.equal(result.status,'passed',JSON.stringify(result));assert.deepEqual(result.caseResults.map(c=>c.actual),[[1,2,3],[]]);
   request.cases=[{args:[[3,1,2]],expected:[3,1,2]}];assert.equal((await runCode(request)).status,'wrong_answer','Must compare the mutated parameter rather than a void return');
@@ -16,6 +16,13 @@ for(const language of ['python','java'] as const){
   const adapter:Adapter={method:'solve',params:[{list:'string'}],returns:'void',inPlaceArg:0,inPlaceRange:{start:1,end:3}};
   const result=await runCode({language,mode:'function',adapter,code:language==='python'?'class Solution:\n    def solve(self,x):\n        x.reverse()':'class Solution {public void solve(List<String> x){Collections.reverse(x);}}',cases:[{args:[['a','b','c','d']],expected:['c','b']},{args:[['a','b','c','d']]}]});
   assert.equal(result.status,'completed',JSON.stringify(result));assert.deepEqual(result.caseResults.map(c=>c.status),['passed','completed']);assert.deepEqual(result.caseResults.map(c=>c.actual),[['c','b'],['c','b']]);
+ });
+ test(`${language}: void matrix adapter observes a rotated integer matrix (LeetCode rotate-image shape)`,async()=>{
+  const adapter:Adapter={method:'solve',params:[{array:{array:'int'}}],returns:'void',inPlaceArg:0};
+  const code=language==='python'?'class Solution:\n    def solve(self,m):\n        m.reverse()\n        for i in range(len(m)):\n            for j in range(i+1,len(m)):\n                m[i][j],m[j][i]=m[j][i],m[i][j]'
+    :'class Solution {public void solve(int[][] m){int n=m.length;for(int i=0;i<n/2;i++){int[] t=m[i];m[i]=m[n-1-i];m[n-1-i]=t;}for(int i=0;i<n;i++)for(int j=i+1;j<n;j++){int t=m[i][j];m[i][j]=m[j][i];m[j][i]=t;}}}';
+  const result=await runCode({language,mode:'function',adapter,code,cases:[{args:[[[1,2],[3,4]]],expected:[[3,1],[4,2]]},{args:[[]],expected:[]}]});
+  assert.equal(result.status,'passed',JSON.stringify(result));
  });
 }
 const invalidAdapters=[

@@ -1,3 +1,6 @@
+/** Channels that save what the user typed. They stay open while the app quits and while a restore flushes drafts;
+ * keep this one list, so a new save channel cannot be refused in one of those paths and lose input. */
+export const SAVE_CHANNELS: readonly string[] = ['draft:save', 'note:save', 'interview:save', 'submission:save-remark', 'problem-review:save-draft', 'problem-review:draft', 'problem-review:request', 'problem-review:time'];
 /** Coordinates live IPC with database replacement; accepted operations settle before handles close. */
 export class MaintenanceGate {
   #phase: 'idle' | 'flush' | 'locked' = 'idle';
@@ -5,7 +8,7 @@ export class MaintenanceGate {
   get phase() { return this.#phase; }
 
   run<T>(channel: string, operation: () => T | Promise<T>): Promise<T> {
-    const flushSave = this.#phase === 'flush' && ['draft:save', 'note:save', 'interview:save', 'submission:save-remark', 'problem-review:save-draft', 'problem-review:draft', 'problem-review:request', 'problem-review:time'].includes(channel);
+    const flushSave = this.#phase === 'flush' && SAVE_CHANNELS.includes(channel);
     const maintenanceRead = ['backup:state', 'app:maintenance-state'].includes(channel);
     if (this.#phase !== 'idle' && !flushSave && !maintenanceRead) return Promise.reject(new Error('正在恢复数据，请等待完成。'));
     const id = Symbol(channel);

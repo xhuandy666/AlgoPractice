@@ -5,6 +5,7 @@ import { PracticeStore } from '../src/storage/practice-store.ts';
 import { archiveDateBoundary } from '../src/shared/archive-date.ts';
 import { localDate } from '../src/learning/fsrs.ts';
 import type { ProblemContent } from '../src/shared/library.ts';
+import type { RunResult } from '../src/runner/types.ts';
 
 // This fixture is authored test data in an explicitly supplied temporary directory. No user records.
 const [directory, metadataPath] = process.argv.slice(2);
@@ -40,7 +41,16 @@ try {
       const at = start + pulse * 30000; clock(at);
       store.recordActivity({ requestId: `fixture-pulse-${++sequence}`, attemptId: attempt.id, durationMs: 30000, occurredAt: new Date().toISOString() });
     }
+    // A practice counts as completed only if its final code ran before it ended.
+    clock(start + 12 * 60000 + 30000); ranFinalCode(attempt.id);
     clock(start + 13 * 60000); store.finishAttempt(attempt.id, { code }); return attempt;
+  }
+  function ranFinalCode(attemptId: string) {
+    const result = { status: 'completed', diagnostics: [], stdout: '', stderr: '', caseResults: [],
+      runtimeVersion: 'fixture-runtime', durationMs: 0, executionScope: 'local-user-code-not-sandboxed',
+      hostPlatform: `${process.platform}-${process.arch}` } satisfies RunResult;
+    store.saveRun({ attemptId, code, testSuiteVersion: 'fixture-suite', expectedOutputSource: 'none', adapterVersion: 'fixture-adapter',
+      runtimeVersion: 'fixture-runtime', status: 'completed', result });
   }
   // Rich but explicitly synthetic daily history, with gaps and varying daily completion counts.
   for (let daysAgo = 180; daysAgo >= 1; daysAgo--) {
@@ -54,25 +64,26 @@ try {
   const crossing = store.startAttempt({ problemId: ids[7], problemVersion: versions[7], language: 'python' });
   clock(crossStart + 20000);
   store.recordActivity({ requestId: 'cross-midnight', attemptId: crossing.id, durationMs: 20000, occurredAt: new Date().toISOString() });
+  clock(crossStart + 25000); ranFinalCode(crossing.id);
   clock(crossStart + 30000); store.finishAttempt(crossing.id, { code });
   clock(actualNow);
   // New plans remain unassessed until an explicit observation. No fake due date from adding a card.
-  const pendingSeed = store.addReviewItem({ problemId: ids[0], target: 'rewrite', language: 'python' });
+  store.addProblemReview(ids[0]);
   store.recordProblemReview({ requestId: 'pending-initial', problemId: ids[0], rating: 1 }, new Date(instant(add(today, -7))).toISOString());
-  const pending = store.getReviewItem(pendingSeed.id)!;
-  const paused = store.addReviewItem({ problemId: ids[2], target: 'understanding', language: 'none', now: new Date(instant(add(today, -4))).toISOString() });
-  store.setReviewPlan(paused.id, { suspended: true });
-  const completed = store.addReviewItem({ problemId: ids[4], target: 'rewrite', language: 'python', now: new Date(instant(add(today, -7))).toISOString() });
+  const pending = store.getProblemReview(ids[0])!;
+  store.addProblemReview(ids[2], new Date(instant(add(today, -4))).toISOString());
+  const [paused] = store.updateProblemReviews({ problemIds: [ids[2]], suspended: true });
+  store.addProblemReview(ids[4], new Date(instant(add(today, -7))).toISOString());
   store.recordProblemReview({ requestId: 'completed-initial', problemId: ids[4], rating: 1 }, new Date(instant(add(today, -8))).toISOString());
-  store.recordReview({ requestId: 'completed-today', itemId: completed.id, rating: 4, reviewedAt: new Date(Math.max(instant(today, 0), actualNow - 3600000)).toISOString() });
+  const completed = store.recordProblemReview({ requestId: 'completed-today', problemId: ids[4], rating: 4 }, new Date(Math.max(instant(today, 0), actualNow - 3600000)).toISOString()).plan;
   const previousMonth = add(today.slice(0, 8) + '01', -1);
-  const previous = store.addReviewItem({ problemId: ids[5], target: 'understanding', language: 'none', now: new Date(instant(add(previousMonth, -7))).toISOString() });
-  store.recordReview({ requestId: 'completed-last-month', itemId: previous.id, rating: 4, reviewedAt: new Date(instant(previousMonth)).toISOString() });
-  store.setReviewPlan(previous.id, { scheduledAt: new Date(instant(add(today, 8))).toISOString() });
+  store.addProblemReview(ids[5], new Date(instant(add(previousMonth, -7))).toISOString());
+  store.recordProblemReview({ requestId: 'completed-last-month', problemId: ids[5], rating: 4 }, new Date(instant(previousMonth)).toISOString());
+  store.updateProblemReviews({ problemIds: [ids[5]], scheduledAt: new Date(instant(add(today, 8))).toISOString() });
   for (const [problemIndex, offset] of [[1, 2], [3, 4], [6, 6], [7, 11]]) {
-    const item = store.addReviewItem({ problemId: ids[problemIndex], target: 'rewrite', language: problemIndex === 3 ? 'java' : 'python', now: new Date(instant(add(today, -1))).toISOString() });
+    store.addProblemReview(ids[problemIndex], new Date(instant(add(today, -1))).toISOString());
     store.recordProblemReview({ requestId: `future-initial-${problemIndex}`, problemId: ids[problemIndex], rating: 1 }, new Date(instant(add(today, -4))).toISOString());
-    store.setReviewPlan(item.id, { scheduledAt: new Date(instant(add(today, offset))).toISOString() });
+    store.updateProblemReviews({ problemIds: [ids[problemIndex]], scheduledAt: new Date(instant(add(today, offset))).toISOString() });
   }
   const settings = store.getLearningSettings(), dashboard = store.getLearningDashboard();
   mkdirSync(dirname(metadataPath), { recursive: true });

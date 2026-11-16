@@ -54,9 +54,9 @@ export class OfficialService {
   async resume(id: string): Promise<OfficialSubmission> {
     if (this.#paused) throw new Error('正在维护本地数据，请稍后继续查询。');
     const record = this.get(id);
-    if (!record) throw new Error('未找到这次官方提交。');
+    if (!record) throw new Error('未找到该次官方提交。');
     if (this.#jobs.has(id) || record.status === 'completed') return record;
-    if (!record.submissionId || record.status !== 'paused') throw new Error('这次提交没有可恢复的判题编号，请先在力扣提交记录中核对。');
+    if (!record.submissionId || record.status !== 'paused') throw new Error('此次提交无可恢复的判题编号，请先在力扣提交记录中核对。');
     if (this.hasActive(record.attemptId)) throw new Error('当前练习还有其他官方判题进行中。');
     const resumed = this.#update(id, { status: 'judging' });
     this.#launch(resumed, false);
@@ -85,21 +85,21 @@ export class OfficialService {
       while (!signal.aborted && Date.now() - started < (this.options.pollTimeoutMs ?? 120_000)) {
         const response = await this.judge.check(record.submissionId!, signal);
         if (!response.pending) {
-          if (!response.result) throw new OfficialJudgeError({ code: 'protocol', message: '力扣没有返回可用的判题结果，请稍后继续查询。' });
+          if (!response.result) throw new OfficialJudgeError({ code: 'protocol', message: '力扣未返回可用的判题结果，请稍后继续查询。' });
           this.#update(record.id, { status: 'completed', result: response.result });
           return;
         }
         await delay(this.options.pollIntervalMs ?? 1500, undefined, { signal });
       }
       const error: OfficialError = signal.aborted
-        ? { code: 'interrupted', message: '结果查询已暂停，可以继续查询。' }
-        : { code: 'timeout', message: '力扣仍在判题，可以稍后继续查询结果。' };
+        ? { code: 'interrupted', message: '结果查询已暂停，可继续查询。' }
+        : { code: 'timeout', message: '力扣仍在判题，可稍后继续查询结果。' };
       this.#update(record.id, { status: 'paused', error });
     } catch (error) {
       const current = this.get(record.id);
       if (!current || !['submitting', 'judging'].includes(current.status)) return;
       const detail: OfficialError = signal.aborted
-        ? { code: 'interrupted', message: current.submissionId ? '结果查询已暂停，可以继续查询。'
+        ? { code: 'interrupted', message: current.submissionId ? '结果查询已暂停，可继续查询。'
           : postStarted ? '提交被中断，无法确认是否已送达，请先在力扣提交记录中核对。' : '提交已取消，代码尚未发送。' }
         : error instanceof OfficialJudgeError ? error.detail
           : { code: 'network', message: postStarted && !current.submissionId

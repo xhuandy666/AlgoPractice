@@ -30,7 +30,7 @@
 
 ![题炼学习中心：每日目标、学习热力图与复习日历](.github/assets/screenshots/learning-center.png)
 
-*界面截图使用示例学习数据、判题结果和辅导内容，保留旧版界面作功能示意，并非 v0.91.0 截图；当前操作以本文说明为准。*
+*界面截图使用示例学习数据、判题结果和辅导内容，保留旧版界面作功能示意，不代表当前开发版界面；当前操作以本文说明为准。*
 
 ## 少一些准备，直接开始练习
 
@@ -44,15 +44,25 @@
 
 每日目标、已完成题数、有效学习时长和连续学习天数集中展示。半年 / 一年热力图记录每天完成的题目，点击日期即可进入当天的练习档案，回看代码、运行结果和学习过程。
 
-完成题数按当天已结束的练习去重统计，同一道题重复练习只计一题。学习时长仅在练习工作台处于前台且近期有操作时累计，长时间闲置和系统睡眠不计入。
+学习中心同时展示经验、等级、段位和成就；复习自评每天最多 10 次计入经验。
+
+学习中心还会列出最该补的**薄弱专题**：根据每道练过的题当前的状态（最近自评为「忘记 / 困难」，或尚未解出且官方提交、本地运行多次失败、多次求助 AI）按标签汇总，给出可以重练的题和同专题里还没练过的新题。只是没解出、也没有吃力迹象的题不计入。重练在单独的草稿里从模板重写，不覆盖原来的练习草稿；没写完的重练下次接着继续，写完可以直接记录自评、更新复习安排。
+
+完成题数按题去重：当天解出的题（题目自带的用例全部通过，或力扣官方 AC）自动计入；本地判断不了对错的题，最终代码运行过（或提交到力扣）再点“结束练习”才计入；结束时最后一次运行或官方提交没有通过、或最终代码没有运行或提交过的，不计入。只能看题面、不能本地运行的题，提交到力扣后才计入。同一道题重复练习只计一题。学习时长仅在练习工作台处于前台且近期有操作时累计，长时间闲置和系统睡眠不计入。
 
 **复习以题目为单位**，思路回忆、Python / Java / Go / C++ 重做共用一份计划。在“复习计划”添加题目，完成首次自评后生成后续安排；可以按今日推荐开始，也可以主动回忆或重做后记录自评。计划支持每日推荐量、延期、暂停、评分历史与更正，日历可查看各日安排。
 
-普通练习中，同一道题在当前学习日首次力扣官方 AC、且当天尚未自评时，会在前台工作台提示自评。选择“稍后再评”后，可从复习计划的“待补自评”补填；本地运行通过不会触发该提示。
+普通练习中解出一道题（力扣官方 AC，或题目自带的用例在本地全部通过）后，题目会加入复习计划。当天尚未自评时：官方 AC 会在前台工作台直接提示自评，选择“稍后再评”后可从复习计划的“待补自评”补填；本地通过常常只是提交前的一步，所以只在测试结果旁显示“记录自评”，不打断练习，不评也会留在复习计划里等待自评。ACM 模式下用自己填写的期望输出跑通，不算解出。
+
+官方 AC 后立即计入今日完成，判题结果下方会提示“结束本题练习”，点一下即可归档这次作答。AI 正在分析这道题时，按钮会等分析完成后再启用，以免中断分析。
 
 ## 写代码、运行、回看，留在同一个工作台
 
 题面、代码编辑器、测试结果与练习记录并排展示。每次运行保留当时的代码和结果，结束练习后可回看完整档案，也能从历史代码恢复一份新草稿。
+
+编辑器默认不自动弹出补全，更接近面试时手写代码；需要时按 Ctrl+Space（macOS 为 Control+空格）唤出基于当前代码词汇的补全，也可以在“学习设置”里改为输入时自动弹出。严格面试中补全完全关闭。
+
+代码区上方显示本次练习的有效用时，和学习统计用同一套规则：窗口在前台、最近 5 分钟内有操作时才计时，离开或闲置会自动暂停。
 
 在工作台直接打开题目笔记，边练习边记录思路，草稿自动保存。提交历史同时收录本地运行和官方提交，可只读回看代码、比较差异，并给记录添加备注；历史代码不会因回看而被覆盖。
 
@@ -62,6 +72,12 @@
 
 普通练习可自由选择 **函数式 / ACM**。四种语言的两种格式分别保存代码；ACM 支持多组标准输入、可选期望输出和比较规则。切换格式不会覆盖另一份草稿；没有填写期望输出时，结果只表示“运行完成”，不会冒充“通过”。
 
+力扣函数题大多没有可信的期望输出，本地运行会把每个用例的输出与题面示例比对，标出“示例一致 / 顺序不同 / 示例不同”。这只是参考：答案不唯一或允许任意顺序的题，与示例不同也可能是对的；是否通过以力扣官方提交为准。
+
+“移动零”“轮转数组”“颜色分类”这类原地修改数组、没有返回值的题，会在运行后读取被修改的参数作为输出，也能本地运行和示例比对。更新前已导入的这类题，可在题库选中题单后点“刷新只读题”批量更新：逐题重新读取题面，只保存刷新后能本地运行的题，进行中和历史的练习不受影响。
+
+“LRU 缓存”“最小栈”“实现 Trie”“数据流的中位数”这类**设计题**也能本地运行：按题目给出的操作序列创建对象、依次调用方法，逐步显示每次调用当时的返回值（构造和无返回值的方法记为 `null`），后续操作不会改写前一步的数组或链表输出。Hot100 中这四道题按题面示例判定是否通过；其他设计题只展示输出并与题面示例比对，含随机结果的方法（如 `getRandom`）与示例不同也可能是对的。更新前已导入的设计题同样可以用“刷新只读题”更新。
+
 ![题炼 v0.85.0：ACM 工作台、测试输入与期望输出](.github/assets/screenshots/acm-workbench.png)
 
 登录力扣国服后，在工作台点击 **“提交到力扣”**，即可提交当前 Python / Java / Go / C++ 函数题代码，在题炼查看官方判题结果、返回的通过用例数及错误信息。每次提交保存代码快照，也能在练习档案中回看。
@@ -70,7 +86,9 @@
 
 ## AI 教练，围绕你的作答提供帮助
 
-点击 **“给点提示”** 获取下一步线索，或点击 **“检查代码”** 分析当前作答。AI 会结合题面、代码和对应的编译、运行或官方判题结果，解释问题并建议修改；代码通过后，也可以复盘思路和复杂度。
+点击 **“获取提示”** 获取下一步线索，或点击 **“检查代码”** 分析当前作答。AI 会结合题面、代码和对应的编译、运行或官方判题结果，解释问题并建议修改；代码通过后，也可以复盘思路和复杂度。
+
+普通练习连续 3 次代码运行未通过时，会提示打开 AI 教练，是否发起请求仍由你决定。
 
 输入框是可选的。想只要提示、解释某段代码，或查看完整解法，写下需求即可。代码建议仍需你预览差异后应用；练习结束前，还可以让 AI 整理笔记草稿，由你确认保存。
 
@@ -78,11 +96,13 @@
 
 回答中的运行和提交引用必须来自该次可核对的记录，官方反馈对应提交时的代码快照。格式或引用校验失败时，系统会自动尝试修复一次；仍无法核对的回答会显示具体原因，可重试或反馈。
 
-支持 **DeepSeek、GLM、Qwen 和自定义 OpenAI 兼容接口**，使用自己的 API Key。AI 是可选项，不配置也能使用本地练习、笔记和复习。服务商按其规则收费，题炼不保证比会员方案更便宜，也不承诺 AI 永久免费。
+支持 **DeepSeek、GLM、Qwen 和自定义 OpenAI 兼容接口**，使用自己的 API Key。AI 是可选项，不配置也能使用本地练习、笔记和复习。服务商按其规则收费，题炼不保证比会员方案更便宜，也不承诺 AI 永久免费。每条回答旁会显示服务商报告的 Token 数；“学习设置”的 AI 接口里可以查看今天、本月和累计的提问次数、调用次数与 Token 用量，其中包括对话摘要、格式修复等额外调用。题炼只汇总服务商返回的数字，不估算，也不换算成费用。
 
 ## 整理自己的题库，离线继续练
 
 导入力扣国服题单、收藏、题目链接，或用 CSV / JSON 添加自己的练习。题面、图片和运行环境准备好后，断网也能写代码、运行、记笔记和复习。
+
+题库可以按练习进度筛选（未练过 / 练过 / 已解出 / 今日待复习），每道题旁标出“已解出”“练过”“待复习”；Hot100 卡片和题单选择里会显示“已解出 x / 总数”。已解出指题目自带的用例在本地全部通过，或力扣官方 AC；ACM 模式下自己填写的期望输出只用于自测，不算解出。
 
 题库、练习档案、笔记、复习记录和附件可一起备份，迁移电脑时恢复即可。四种语言环境支持应用内安装和离线包安装。
 
@@ -92,7 +112,7 @@
 
 ## 按面试节奏，做一场限时训练
 
-用自己已导入的题目或企业题单，选择题数、难度与时长，按需抽题并计时作答。**严格模式**限制 AI、旧答案和笔记等帮助入口，适合检验独立解题；**辅导模式**适合边练边学。结束后回看当时的作答记录，再将需要巩固的题添加到题目级复习计划。
+用自己已导入的题目或企业题单，选择题数、难度与时长，按需抽题并计时作答。**严格模式**限制 AI、旧答案和笔记等帮助入口，适合检验独立解题；**辅导模式**适合边练边学。结束后回看当时的作答记录，再将需要巩固的题添加到题目级复习计划；也可以一键把冻结代码没有本地通过的题全部加入。
 
 自建模拟训练不需要额外题炼订阅，但不附赠或解锁力扣会员题库、企业模拟面试等站点权益；题源访问仍遵循你的账号权限。
 
@@ -110,21 +130,25 @@ C++ 使用独立 Zig 0.16 后端与 C++17，不要求另装 Xcode / MSVC；也�
 
 旧题库不会自动联网或替换历史快照。在题库点击 **“补全语言模板”**，预览后保存为新版本；内置演示的补全不联网。个人草稿与进行中的旧练习仍使用原版本，新语言练习从新版本开始。缺模板、输入用例或可支持签名时只能读题与记录代码，不能冒充完整本地适配。
 
-数据库通过独立 schema 10 迁移扩充语言约束；首次升级自动保存包含已提交 WAL 的 `before-v10-*.sqlite` 数据库快照，迁移失败事务回滚，旧复习迁移不重复执行。该快照只包含数据库，不是设置页可直接导入的完整 `.algobak`；升级前仍建议在旧版“学习设置”导出完整备份。
+**从已公开的 v0.91.0 或更早版本升级到 v0.96.0 时，需要重新设置。** v0.96.0 开始使用独立的 `TiLian` 数据文件夹，首次打开从空白开始，不迁移旧版数据库或 `.algobak` 备份。旧版数据库、备份、备份副本和语言环境保留在原来的 `AlgoPractice` 文件夹，可继续用旧版查看；新版本需重新准备语言环境、AI Key 和力扣登录。从 v0.96.0 开始的同谱系更新沿用 `TiLian` 数据目录。
 
 验收使用隔离数据库、自建代码和本地服务夹具，不自动向你的力扣账号提交，也不调用真实 AI Key。这些检查不等于真实账号的官方判题或真实 AI 服务验收。
 
 ## 下载
 
-**v0.91.0** · 新增 Go / C++17，支持四语言函数题、ACM、独立草稿归档与模拟面试，保留题目级复习和 AI 教练。直接下载安装包，无需安装 Node.js 或下载源码。
+**v0.96.0（开发中，尚未发布）** · 当前源码整合设计题、薄弱专题、学习进度与奖励、备份恢复保护，以及后台检查和下载更新。公开安装包以 [最新正式发行版](https://github.com/xhuandy666/AlgoPractice/releases/latest) 为准；本页的开发版说明不代表 v0.96.0 附件已经可下载。
+
+直接下载安装包，无需安装 Node.js 或下载源码。按下表进入发行页，选择对应系统和架构的附件：
 
 | 你的电脑 | 安装包 | 便携归档 |
 | --- | --- | --- |
-| Mac · Apple Silicon（M 系列） | [下载 DMG](https://github.com/xhuandy666/AlgoPractice/releases/download/v0.91.0/AlgoPractice-0.91.0-mac-arm64.dmg) | [下载 ZIP](https://github.com/xhuandy666/AlgoPractice/releases/download/v0.91.0/AlgoPractice-0.91.0-mac-arm64.zip) |
-| Mac · Intel | [下载 DMG](https://github.com/xhuandy666/AlgoPractice/releases/download/v0.91.0/AlgoPractice-0.91.0-mac-x64.dmg) | [下载 ZIP](https://github.com/xhuandy666/AlgoPractice/releases/download/v0.91.0/AlgoPractice-0.91.0-mac-x64.zip) |
-| Windows · x64 | [下载安装程序](https://github.com/xhuandy666/AlgoPractice/releases/download/v0.91.0/AlgoPractice-0.91.0-win-x64.exe) | [下载 ZIP](https://github.com/xhuandy666/AlgoPractice/releases/download/v0.91.0/AlgoPractice-0.91.0-win-x64.zip) |
+| Mac · Apple Silicon（M 系列） | [DMG · mac-arm64](https://github.com/xhuandy666/AlgoPractice/releases/latest) | [ZIP · mac-arm64](https://github.com/xhuandy666/AlgoPractice/releases/latest) |
+| Mac · Intel | [DMG · mac-x64](https://github.com/xhuandy666/AlgoPractice/releases/latest) | [ZIP · mac-x64](https://github.com/xhuandy666/AlgoPractice/releases/latest) |
+| Windows · x64 | [EXE 安装程序 · win-x64](https://github.com/xhuandy666/AlgoPractice/releases/latest) | [ZIP · win-x64](https://github.com/xhuandy666/AlgoPractice/releases/latest) |
 
-Mac 需要 **macOS 14 或更新版本**；Windows 需要 **Windows 10 / 11 x64**。Linux 与 Windows ARM 暂不提供安装包。版本说明见 [Release 页面](https://github.com/xhuandy666/AlgoPractice/releases/tag/v0.91.0)；[v0.90.0](https://github.com/xhuandy666/AlgoPractice/releases/tag/v0.90.0) 保留供升级前回退。
+Mac 需要 **macOS 14 或更新版本**；Windows 需要 **Windows 10 / 11 x64**。Linux 与 Windows ARM 暂不提供安装包。版本说明见 [最新发行页](https://github.com/xhuandy666/AlgoPractice/releases/latest)，旧版本保留在 [发行历史](https://github.com/xhuandy666/AlgoPractice/releases)。
+
+**已安装 v0.91.0 或更早版本的用户，首次使用自动更新功能仍需手动安装 v0.96.0。** 旧版不会自行获得新版本的更新能力；升级前请阅读上方的数据兼容说明。
 
 应用目前没有正式开发者签名，也未完成 Apple 公证。Mac 首次打开可能显示“Apple could not verify 题炼 is free of malware”。请从本仓库 Release 下载，并按需核对其中的 SHA-256 校验文件。
 
@@ -144,30 +168,32 @@ Windows 首次打开可能出现 SmartScreen 提示。
 
 想使用 AI，在“学习设置”选择服务、填写自己的 Key 并测试连接即可。
 
-### v0.91.0 使用说明
+### v0.96.0 使用说明（待发布）
 
+- 正式发行版默认自动检查并后台下载更新；下载完成后由你选择安装时机，不会自行重启。Mac 打开下载好的 DMG 后仍需手动完成安装；Windows EXE 安装版可选择“重启并更新”。详见下方更新说明。
 - 复习按题目维护一份计划。主动自评和当前学习日首次官方 AC 后的自评共用该计划；错过提示可从“待补自评”继续，已记录评分可在历史中更正。
 - 进入练习自动收起导航；工作台三个分隔条可拖拽或用键盘调整，也可重置布局。相邻题按钮及 `Alt + ← / →` 使用进入时固定的来源顺序；切题浏览不等于完成本轮复习，输入区域内不触发快捷键。
-- AI 教练提供“给点提示”“检查代码”和对话提问。官方自动分析仅由已完成的官方提交触发；回答引用经过核对，校验失败最多自动修复一次，代码修改仍需预览确认。
+- AI 教练提供“获取提示”“检查代码”和对话提问。官方自动分析仅由已完成的官方提交触发；回答引用经过核对，校验失败最多自动修复一次，代码修改仍需预览确认。
 - 题库和导入页内置 **“一键导入 Hot100”**，无需寻找或粘贴链接。点击后从[力扣官方热题 100](https://leetcode.cn/studyplan/top-100-liked/)读取题单并逐题缓存；可暂停、继续和重试。已有同源题单直接复用，更新成员仍需显式预览确认。
 - 点击运行前检测本机兼容环境；缺少环境时原位选择“安装并运行”、已有环境或离线包。只准备需要的语言，四种工具链均不随应用打包；按需自动安装默认关闭。环境准备失败与代码编译失败分开显示。
 - 安装期间可以继续编辑。修改代码或输入、切换题目/语言/格式、结束练习或关闭窗口后，旧请求不会自动执行，环境就绪后请重新运行。
 - 普通工作台可选择函数式或 ACM，分别保存每种语言的代码与输入。ACM 支持多组 stdin、可选期望输出与精确/归一化比较；没有期望输出时只表示运行完成，不代表通过。自由 ACM 的输入约定和自定义期望不属于力扣官方判题。
 - 历史记录保留原格式与测试快照；ACM 不能直接提交到力扣。模拟面试暂保留题目原生格式，不在计时中切换格式。
 - 语言环境始终在本机执行，不是文件或网络沙箱。请只运行理解且信任的代码。新设备首次断网且没有环境时只能阅读与编辑，不能执行。
+- 在 macOS 上，程序运行时整组进程占用内存超过 1 GiB 会被终止并显示为运行错误，防止失控的代码拖垮整台电脑；这是本机保护，不是力扣的内存限制。Windows 暂未启用此限制。
 
-升级后的 schema 10 数据库及 `.algobak` 不能用 v0.90.0 直接打开或恢复。降级不能只替换安装包：先另存升级后的完整备份并保留原数据，完全退出应用，再通过 `ALGOPRACTICE_DATA_DIR` 将旧版启动到一个独立的空数据目录，在旧版“学习设置”恢复升级前 `.algobak`。不要让旧版直接打开已升级的数据目录，否则会在启动时拒绝新数据库、无法进入恢复界面。恢复后会回到升级前数据，新增记录不会反向合并；自动数据库快照仅供单独的数据库恢复，不应改后缀冒充完整备份。Hot100 是官方题单导入快捷入口，不是随安装包分发完整题面；首次导入需要联网，未缓存内容不能离线阅读。
+v0.96.0 与已公开的 v0.91.0 及更早版本使用不同的数据文件夹，旧记录可继续用对应旧版查看；旧备份不能导入新数据目录。Hot100 是官方题单导入快捷入口，不是随安装包分发完整题面；首次导入需要联网，未缓存内容不能离线阅读。
 
 <details>
 <summary><strong>运行时下载不方便？使用离线安装包</strong></summary>
 
-在 [Release 附件](https://github.com/xhuandy666/AlgoPractice/releases/tag/v0.91.0) 下载你需要的语言所对应的文件（系统和架构必须匹配）：
+在 [最新正式发行版的附件](https://github.com/xhuandy666/AlgoPractice/releases/latest) 下载你需要的语言所对应的文件（系统和架构必须匹配）：
 
 | 系统 | Python | Java | Go | C++17（Zig） |
 | --- | --- | --- | --- | --- |
-| Apple Silicon Mac | [Python](https://github.com/xhuandy666/AlgoPractice/releases/download/v0.91.0/AlgoPractice-runtime-python-darwin-arm64.tar.gz) | [Java](https://github.com/xhuandy666/AlgoPractice/releases/download/v0.91.0/AlgoPractice-runtime-java-darwin-arm64.tar.gz) | [Go](https://github.com/xhuandy666/AlgoPractice/releases/download/v0.91.0/AlgoPractice-runtime-go-darwin-arm64.tar.gz) | [C++17](https://github.com/xhuandy666/AlgoPractice/releases/download/v0.91.0/AlgoPractice-runtime-cpp-darwin-arm64.tar.xz) |
-| Intel Mac | [Python](https://github.com/xhuandy666/AlgoPractice/releases/download/v0.91.0/AlgoPractice-runtime-python-darwin-x64.tar.gz) | [Java](https://github.com/xhuandy666/AlgoPractice/releases/download/v0.91.0/AlgoPractice-runtime-java-darwin-x64.tar.gz) | [Go](https://github.com/xhuandy666/AlgoPractice/releases/download/v0.91.0/AlgoPractice-runtime-go-darwin-x64.tar.gz) | [C++17](https://github.com/xhuandy666/AlgoPractice/releases/download/v0.91.0/AlgoPractice-runtime-cpp-darwin-x64.tar.xz) |
-| Windows x64 | [Python](https://github.com/xhuandy666/AlgoPractice/releases/download/v0.91.0/AlgoPractice-runtime-python-win32-x64.tar.gz) | [Java](https://github.com/xhuandy666/AlgoPractice/releases/download/v0.91.0/AlgoPractice-runtime-java-win32-x64.zip) | [Go](https://github.com/xhuandy666/AlgoPractice/releases/download/v0.91.0/AlgoPractice-runtime-go-win32-x64.zip) | [C++17](https://github.com/xhuandy666/AlgoPractice/releases/download/v0.91.0/AlgoPractice-runtime-cpp-win32-x64.zip) |
+| Apple Silicon Mac | [Python](https://github.com/xhuandy666/AlgoPractice/releases/latest/download/AlgoPractice-runtime-python-darwin-arm64.tar.gz) | [Java](https://github.com/xhuandy666/AlgoPractice/releases/latest/download/AlgoPractice-runtime-java-darwin-arm64.tar.gz) | [Go](https://github.com/xhuandy666/AlgoPractice/releases/latest/download/AlgoPractice-runtime-go-darwin-arm64.tar.gz) | [C++17](https://github.com/xhuandy666/AlgoPractice/releases/latest/download/AlgoPractice-runtime-cpp-darwin-arm64.tar.xz) |
+| Intel Mac | [Python](https://github.com/xhuandy666/AlgoPractice/releases/latest/download/AlgoPractice-runtime-python-darwin-x64.tar.gz) | [Java](https://github.com/xhuandy666/AlgoPractice/releases/latest/download/AlgoPractice-runtime-java-darwin-x64.tar.gz) | [Go](https://github.com/xhuandy666/AlgoPractice/releases/latest/download/AlgoPractice-runtime-go-darwin-x64.tar.gz) | [C++17](https://github.com/xhuandy666/AlgoPractice/releases/latest/download/AlgoPractice-runtime-cpp-darwin-x64.tar.xz) |
+| Windows x64 | [Python](https://github.com/xhuandy666/AlgoPractice/releases/latest/download/AlgoPractice-runtime-python-win32-x64.tar.gz) | [Java](https://github.com/xhuandy666/AlgoPractice/releases/latest/download/AlgoPractice-runtime-java-win32-x64.zip) | [Go](https://github.com/xhuandy666/AlgoPractice/releases/latest/download/AlgoPractice-runtime-go-win32-x64.zip) | [C++17](https://github.com/xhuandy666/AlgoPractice/releases/latest/download/AlgoPractice-runtime-cpp-win32-x64.zip) |
 
 无需解压。在“运行环境”分别选择对应语言的“安装离线包”，应用会校验并安装。请保留下载包原样，重新压缩的归档无法通过校验。
 
@@ -181,11 +207,21 @@ Windows 首次打开可能出现 SmartScreen 提示。
 
 **我的数据会上传到哪里？**
 
-学习数据默认保存在本机。使用 AI 时，当前请求所需的上下文会发给你配置的服务；来源导入会访问对应站点；点击“提交到力扣”会将当时的代码和语言发送到力扣国服，并在你的力扣账号中留下提交记录。API Key 通过系统加密能力保存，不写入学习备份。
+学习数据默认保存在本机。使用 AI 时，当前请求所需的上下文会发给你配置的服务；来源导入会访问对应站点；应用更新会向 GitHub 查询公开正式版本，并从对应发行附件下载更新包，不发送代码、题目、笔记、学习记录或 Key。点击“提交到力扣”会将当时的代码和语言发送到力扣国服，并在你的力扣账号中留下提交记录。API Key 通过系统加密能力保存，不写入学习备份。
+
+**如何更新应用？**
+
+从 v0.96.0 起，正式发行版默认在启动约 30 秒后检查更新，之后每 6 小时检查一次，只获取 GitHub 上公开的正式发行版。发现更新后在后台下载并校验匹配当前系统和架构的安装包；完成后显示提示，你可以继续练习或选择“稍后”。在“运行环境 → 版本与更新”可以关闭“自动检查并下载新版本”，也可手动检查、下载和重试。已下载的更新仍须手动确认安装。
+
+- **Mac**：当前没有 Apple Developer ID 证书，更新包为对应架构的 DMG。点击“打开安装包”后，题炼保存草稿并退出；按安装窗口提示手动完成替换，再重新打开题炼。不会在后台自行替换应用。
+- **Windows EXE 安装版**：点击“重启并更新”后，题炼保存草稿、退出并交给安装程序更新，然后重新启动。
+- **Windows ZIP 便携版**：后台下载对应安装包，点击“打开安装包”后保存并退出，再由你完成安装；使用 ZIP 继续保持便携方式时，也可从发行页手动获取新版 ZIP。
+
+应用始终由你决定何时安装或重启。代码正在运行、运行环境正在安装、备份尚未完成或存在活动面试时，请先结束这些操作再安装更新。源码运行不会在后台检查或下载；可以手动查看正式版本，但安装包下载与安装功能仅面向正式发行版。
 
 **能同步到另一台电脑吗？**
 
-当前支持完整备份和恢复，暂不提供自动云同步。在“学习设置”创建 `.algobak`，然后在另一台电脑恢复。新电脑需要准备所用语言的运行环境，并重新配置 Key 和站点登录；数据目录可在“运行环境”查看。
+当前支持完整备份和恢复，暂不提供自动云同步。在“学习设置”创建 `.algobak`，然后在另一台电脑恢复。也可以在“学习设置 → 备份与恢复”选择一个**备份副本文件夹**（例如云盘同步目录）：每次自动备份后，最新一份会复制过去；已有副本损坏时会重新复制，只保留这台电脑最近 7 份副本，不会删除文件夹里的其他文件；副本包含代码、笔记和附件，放进云盘时会随云盘上传。新电脑需要准备所用语言的运行环境，并重新配置 Key 和站点登录；数据目录可在“运行环境”查看。
 
 **支持哪些题目和用例？**
 
@@ -194,6 +230,14 @@ Windows 首次打开可能出现 SmartScreen 提示。
 **输入或切换页面仍有卡顿怎么办？**
 
 在“运行环境 → 性能诊断”开始记录，再重复卡顿时的操作。记录最多持续 90 秒，回到该页可复制报告用于反馈；报告只包含页面类型和耗时，不含代码、题目内容或 Key。
+
+**工作台卡住或意外退出怎么办？**
+
+工作台页面意外退出时会自动重新打开，并提示刚才发生了什么；短时间内反复退出时会暂停自动重新打开，由你选择再试一次或退出。页面长时间没有响应时，可以继续等待、重新打开工作台或停止并退出。代码、笔记和面试作答在输入停顿后很快保存（最长约 2 秒），通常只会丢失退出前几秒的输入；当时正在进行的运行会停止，可以重新运行。如果题炼本身遇到内部错误，会先保存草稿、停止运行和导入任务再退出，并提示可以重新打开；日志只记录错误类型，不含代码、题目或 Key。
+
+**数据文件损坏了怎么办？**
+
+学习数据保存在本机的 SQLite 数据库中。运行中如果 SQLite 报告数据库文件损坏，会提示重新启动；下次启动时会完整检查数据文件。确认损坏时，题炼会找出数据目录 `backups` 文件夹中最近一份通过校验的自动或手动备份，显示备份时间，由你决定是否恢复。恢复前会先把损坏的数据库复制到数据目录下的 `damaged-…` 文件夹保留；本机的提醒设置、AI 设置、附件和登录状态保持不变，这份备份之后的记录会丢失。选择退出则不会恢复或删除任何文件。没有可用备份时，可以继续打开（部分记录可能无法读取），或先复制整个数据目录再处理。
 
 **为什么关掉窗口后还有提醒？**
 
@@ -232,9 +276,10 @@ npm run test:workbench-navigation
 npm run test:onboarding
 npm run test:acm
 npm run test:hot100
+npm run test:ui
 ```
 
-测试使用隔离数据目录。`npm run runtime:install` 安装全部四种环境。Go / C++ 真实 Runner 测试需将 `ALGOPRACTICE_NATIVE_TEST_ROOT` 指向该目录；三平台 CI 已设置此变量，缺少任何环境会失败，不会静默跳过。未设置时只运行这些测试的纯逻辑部分。
+测试使用隔离数据目录。`npm run test:ui` 在无界面浏览器中检查 AI 面板、运行环境和 Hot100 等页面，不需要启动 Electron，Linux 上也能运行。`npm run runtime:install` 安装全部四种环境。Go / C++ 真实 Runner 测试需将 `ALGOPRACTICE_NATIVE_TEST_ROOT` 指向该目录；三平台 CI 已设置此变量，缺少任何环境会失败，不会静默跳过。未设置时只运行这些测试的纯逻辑部分。
 
 构建安装包：
 
@@ -245,6 +290,8 @@ npm run dist:win
 ```
 
 Mac 安装包请在 macOS 上构建；Windows 安装包建议在 Windows 上构建。产物位于 `release/`。
+
+发布维护：三平台 CI 会校验安装包、平台更新元数据（YAML）和差分校验文件（blockmap）是否与实际产物一致。通过验证后，发行工作流创建草稿；自动更新只读取人工公开后的正式发行版，安装包与对应元数据应一起发布。当前 Mac 没有 Developer ID 签名与公证，使用下载 DMG 后手动安装的方式；配置有效签名与公证后，发行配置可启用 Mac 原生重启更新。
 
 </details>
 

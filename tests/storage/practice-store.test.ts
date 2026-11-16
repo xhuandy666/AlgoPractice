@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { fork } from 'node:child_process';
 import { once } from 'node:events';
-import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { setImmediate as nextTurn } from 'node:timers/promises';
@@ -10,6 +10,7 @@ import { fileURLToPath } from 'node:url';
 import { test } from 'node:test';
 import { PracticeStore, hashCode } from '../../src/storage/practice-store.ts';
 import type { SaveRunInput } from '../../src/storage/practice-store.ts';
+import { restoreBackup } from '../restore-backup.ts';
 
 function fixture(t: { after: (fn: () => void) => void }) {
   const directory = mkdtempSync(join(tmpdir(), 'algopractice-storage 中文 '));
@@ -21,7 +22,7 @@ function fixture(t: { after: (fn: () => void) => void }) {
 
 function runInput(attemptId: string, code = 'print(1)'): SaveRunInput {
   return { attemptId, code, testSuiteVersion: 'tests-v1',
-    testSnapshot: { source: 'self-authored', cases: [{ stdin: '', expected: '1' }] },
+    testSnapshot: { source: 'self-authored', cases: [{ stdin: '', expected: '1' }] }, expectedOutputSource: 'user',
     adapterVersion: 'acm-v1', runtimeVersion: 'CPython-probe-v1' };
 }
 
@@ -89,6 +90,20 @@ test('run terminal results are idempotent and reject conflicting or late complet
   assert.equal(store.listRuns(attempt.id).length, 1);
 });
 
+test('every run records where its expected outputs came from, and a retry cannot change it', (t) => {
+  const { store } = fixture(t);
+  const attempt = store.startAttempt({ problemId: 'p1', language: 'python', problemVersion: 'v1' });
+  const run = store.saveRun(runInput(attempt.id));
+  assert.equal(run.expectedOutputSource, 'user');
+  assert.equal(store.getRun(run.id)?.expectedOutputSource, 'user');
+  assert.equal(store.listRuns(attempt.id)[0].expectedOutputSource, 'user');
+  assert.throws(() => store.saveRun({ ...runInput(attempt.id), id: run.id, expectedOutputSource: 'native-samples' }), /immutable snapshot/);
+  for (const expectedOutputSource of [undefined, 'statement', ''] as never[]) {
+    assert.throws(() => store.saveRun({ ...runInput(attempt.id), expectedOutputSource }), /expected outputs came from/);
+  }
+  assert.equal(store.listRuns(attempt.id).length, 1);
+});
+
 test('runtime inspection is finalized atomically with completion and terminal retries cannot overwrite it', (t) => {
   const { store, dbPath } = fixture(t);
   const attempt = store.startAttempt({ problemId: 'p1', language: 'python', problemVersion: 'v1' });
@@ -116,36 +131,6 @@ test('runtime inspection is finalized atomically with completion and terminal re
     assert.deepEqual(store.getRun(run.id), finished);
   } finally { raw.close(); }
   store.integrityCheck();
-});
-
-test('legacy runtime trigger update in an existing current-schema database preserves all tables and stored snapshots', (t) => {
-  const { store, dbPath } = fixture(t);
-  const attempt = store.startAttempt({ problemId: 'p1', language: 'python', problemVersion: 'v1' });
-  const pending = store.beginRun({ ...runInput(attempt.id), runtimeVersion: 'pending-inspection' });
-  const terminal = store.saveRun({ ...runInput(attempt.id, 'print(2)'), status: 'passed', result: { stdout: '2' } });
-  store.close();
-  const raw = new DatabaseSync(dbPath);
-  raw.exec(`DROP TRIGGER immutable_run_runtime;
-    DROP TRIGGER immutable_run_snapshot;
-    CREATE TRIGGER immutable_run_snapshot BEFORE UPDATE OF
-      id, attempt_id, code, code_hash, test_suite_version, test_snapshot_json,
-      adapter_version, runtime_version, created_at ON runs
-    BEGIN SELECT RAISE(ABORT, 'run snapshot is immutable'); END;`);
-  const tables = raw.prepare("SELECT name, sql FROM sqlite_schema WHERE type = 'table' ORDER BY name").all();
-  const rows = raw.prepare('SELECT * FROM runs ORDER BY rowid').all();
-  const reopened = new PracticeStore(dbPath);
-  try {
-    assert.equal(raw.prepare('PRAGMA user_version').get()?.user_version, 10);
-    assert.equal(reopened.migrationBackupPath, null);
-    assert.deepEqual(raw.prepare("SELECT name, sql FROM sqlite_schema WHERE type = 'table' ORDER BY name").all(), tables);
-    assert.deepEqual(raw.prepare('SELECT * FROM runs ORDER BY rowid').all(), rows);
-    assert.deepEqual(reopened.getRun(terminal.id), terminal);
-    assert.equal(reopened.finishRun(pending.id, { status: 'passed', result: {}, runtimeVersion: 'Python 3.14.7' }).runtimeVersion, 'Python 3.14.7');
-    assert.throws(() => raw.prepare('UPDATE runs SET runtime_version = ? WHERE id = ?').run('overwrite', terminal.id), /immutable|terminal result/);
-    reopened.integrityCheck();
-  } finally { reopened.close(); raw.close(); }
-  const again = new PracticeStore(dbPath);
-  try { assert.equal(again.getRun(pending.id)?.runtimeVersion, 'Python 3.14.7'); } finally { again.close(); }
 });
 
 test('foreign keys and unsupported schema versions fail instead of creating orphan data', (t) => {
@@ -226,7 +211,7 @@ test('online backup while editing restores an internally consistent self-contain
   assert.equal(await pending, destination);
   assert.ok(editsWhilePending > 0, 'exercise writes while online backup is pending');
   const restoredPath = join(directory, '恢复 副本.sqlite');
-  PracticeStore.restoreBackup(destination, restoredPath);
+  restoreBackup(destination, restoredPath);
   const restored = new PracticeStore(restoredPath);
   try {
     restored.integrityCheck();
@@ -245,15 +230,3 @@ test('online backup while editing restores an internally consistent self-contain
   assert.equal(existsSync(closedDestination), false);
 });
 
-test('corrupt backups and existing restore targets do not overwrite healthy data', (t) => {
-  const { store, dbPath, directory } = fixture(t);
-  store.saveDraft({ problemId: 'healthy', language: 'python', code: 'KEEP' });
-  const corrupt = join(directory, 'corrupt.sqlite');
-  writeFileSync(corrupt, 'this is not a sqlite database');
-  const target = join(directory, 'rejected.sqlite');
-  assert.throws(() => PracticeStore.restoreBackup(corrupt, target));
-  assert.equal(existsSync(target), false);
-  assert.throws(() => PracticeStore.restoreBackup(corrupt, dbPath), /must not exist/);
-  assert.equal(store.getDraft('healthy', 'python')?.code, 'KEEP');
-  store.integrityCheck();
-});

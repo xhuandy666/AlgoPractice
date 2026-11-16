@@ -7,7 +7,7 @@ import { join } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import { test, type TestContext } from 'node:test';
 import { fileURLToPath } from 'node:url';
-import { PracticeStore, hashCode } from '../../src/storage/practice-store.ts';
+import { PracticeStore } from '../../src/storage/practice-store.ts';
 
 function directory(t: TestContext): string {
   const path = mkdtempSync(join(tmpdir(), 'AlgoPractice P5 存储故障 '));
@@ -18,29 +18,6 @@ function directory(t: TestContext): string {
 function fingerprint(path: string) {
   return Object.fromEntries(readdirSync(path).sort().map(name => [name,
     createHash('sha256').update(readFileSync(join(path, name))).digest('hex')]));
-}
-
-function createLegacy(path: string) {
-  const db = new DatabaseSync(path);
-  try {
-    db.exec(readFileSync(new URL('./fixtures/p3-v4-schema.sql', import.meta.url), 'utf8'));
-    db.prepare('INSERT INTO problems VALUES (?)').run('confirmed');
-    db.prepare('INSERT INTO drafts VALUES (?, ?, ?, ?, ?, ?, ?)').run(
-      'confirmed', 'python', 'practice', 'CONFIRMED', hashCode('CONFIRMED'), 1, '2026-09-01T00:00:00.000Z');
-  } finally { db.close(); }
-}
-
-function inspectLegacy(path: string) {
-  const db = new DatabaseSync(path, { readOnly: true });
-  try {
-    return {
-      version: db.prepare('PRAGMA user_version').get()?.user_version,
-      integrity: db.prepare('PRAGMA integrity_check').get()?.integrity_check,
-      foreignKeys: db.prepare('PRAGMA foreign_key_check').all(),
-      schema: db.prepare('SELECT type, name, tbl_name, sql FROM sqlite_schema ORDER BY type, name').all(),
-      drafts: db.prepare('SELECT * FROM drafts ORDER BY problem_id, language, scope_id').all(),
-    };
-  } finally { db.close(); }
 }
 
 // Each probe runs in its own process. Capture the actual Store connection only
@@ -66,7 +43,7 @@ try {
   const attempt = store.startAttempt({ problemId: 'confirmed', language: 'python', problemVersion: 'v1' });
   const note = store.saveNote({ requestId: 'confirmed-note', kind: 'topic', subjectId: 'P5', title: 'Confirmed', markdown: 'CONFIRMED', state: 'confirmed' });
   const runInput = { attemptId: attempt.id, code: 'INCOMPLETE', expectedDraftRevision: 1,
-    testSuiteVersion: 'p5-v1', adapterVersion: 'p5-v1', runtimeVersion: 'not-started' };
+    testSuiteVersion: 'p5-v1', expectedOutputSource: 'native-samples', adapterVersion: 'p5-v1', runtimeVersion: 'not-started' };
   const pageCount = connection.prepare('PRAGMA page_count').get().page_count;
   const previousLimit = connection.prepare('PRAGMA max_page_count').get().max_page_count;
   // Give small nested draft changes room; the larger payload cannot fit.
@@ -156,35 +133,6 @@ test('P5-04: a future schema is rejected without changing bytes, journal mode, o
   assert.deepEqual(fingerprint(path), before);
 });
 
-test('P5-04: conflicting migration preserves all original schema/data and its backup can be repaired and reopened', t => {
-  const path = directory(t), dbPath = join(path, 'practice.sqlite');
-  createLegacy(dbPath);
-  const raw = new DatabaseSync(dbPath);
-  try { raw.exec('CREATE TABLE interview_sessions(conflicting_fixture TEXT) STRICT;'); } finally { raw.close(); }
-  const before = inspectLegacy(dbPath);
-  assert.throws(() => new PracticeStore(dbPath), /Schema v10 migration failed/);
-  assert.deepEqual(inspectLegacy(dbPath), before);
-  const backups = readdirSync(path).filter(name => name.includes('.before-v10-') && name.endsWith('.sqlite'));
-  assert.equal(backups.length, 1);
-  assert.equal(readdirSync(path).some(name => name.endsWith('.partial')), false);
-  const backupPath = join(path, backups[0]);
-  assert.deepEqual(inspectLegacy(backupPath), before);
-  const backupHash = createHash('sha256').update(readFileSync(backupPath)).digest('hex');
-  const restoredPath = join(path, 'restored.sqlite');
-  PracticeStore.restoreBackup(backupPath, restoredPath);
-  assert.deepEqual(inspectLegacy(restoredPath), before);
-  const repair = new DatabaseSync(restoredPath);
-  try { repair.exec('DROP TABLE interview_sessions;'); } finally { repair.close(); }
-  const restored = new PracticeStore(restoredPath);
-  try {
-    assert.equal(restored.getDraft('confirmed', 'python')?.code, 'CONFIRMED');
-    assert.equal(restored.saveDraft({ problemId: 'confirmed', language: 'python', code: 'RECOVERED', expectedRevision: 1 }).revision, 2);
-    restored.integrityCheck();
-  } finally { restored.close(); }
-  assert.deepEqual(inspectLegacy(dbPath), before, 'repairing a restored copy leaves the failed source untouched');
-  assert.equal(createHash('sha256').update(readFileSync(backupPath)).digest('hex'), backupHash);
-});
-
 for (const fault of ['directory-readonly', 'database-readonly', 'database-unreadable'] as const) {
   test(`E18: actual POSIX ${fault} rejects access and acknowledged saves recover after permissions are restored`, {
     skip: process.platform === 'win32' ? 'POSIX chmod does not establish Windows ACL denial; Windows native permissions remain a separate E18 check' : false,
@@ -204,7 +152,11 @@ for (const fault of ['directory-readonly', 'database-readonly', 'database-unread
         assert.throws(() => readFileSync(dbPath), { code: 'EACCES' });
       }
       let opened: PracticeStore | undefined;
-      try { assert.throws(() => { opened = new PracticeStore(dbPath); }, /readonly|read-only|unable to open|permission denied|EACCES/i); }
+      try { assert.throws(() => { opened = new PracticeStore(dbPath); }, (error: unknown) => {
+        assert.match((error as Error).message, /readonly|read-only|unable to open|permission denied|EACCES/i);
+        if (fault === 'database-readonly') assert.equal((error as { errcode?: number }).errcode! & 0xff, 8, 'startup propagates SQLITE_READONLY');
+        return true;
+      }); }
       finally { opened?.close(); }
     } finally {
       chmodSync(path, 0o700);

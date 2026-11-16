@@ -6,6 +6,7 @@ import type { Note } from '../shared/learning';
 import { CodeComparison } from './CodeComparison';
 import { Markdown } from './Markdown';
 import { HelpHint } from './HelpHint';
+import { Mascot } from './Mascot';
 import { dateTime, errorText } from './ui';
 import { useEditsFrozen } from './pending-saves';
 import './ai-chat.css';
@@ -25,7 +26,7 @@ function rememberInput(attemptId: string | undefined, text: string) {
   while (inputDrafts.size > 20) inputDrafts.delete(inputDrafts.keys().next().value!);
 }
 function questionLabel(kind: AiKind, question: string) {
-  return question || ({ chat: '聊聊这道题', hint: '给点提示', diagnosis: '检查代码', 'official-review': '分析这次官方提交', 'note-draft': '总结为笔记草稿' } satisfies Record<AiKind, string>)[kind];
+  return question || ({ chat: '讨论本题', hint: '获取提示', diagnosis: '检查代码', 'official-review': '分析本次官方提交', 'note-draft': '总结为笔记草稿' } satisfies Record<AiKind, string>)[kind];
 }
 
 export function AiPanel({ api, attempt, code, onApply, onNoteSaved, onSettings, onError, flush, reviewMode = false, active = true }: {
@@ -203,10 +204,10 @@ export function AiPanel({ api, attempt, code, onApply, onNoteSaved, onSettings, 
       const element = change.currentTarget, nearBottom = element.scrollHeight - element.scrollTop - element.clientHeight < 64;
       pinnedToLatest.current = nearBottom; setAwayFromLatest(!nearBottom);
     }}>
-      {loadError ? <div className="ai-chat-notice" role="alert"><p className="error-text">{loadError}</p><button className="text-button" onClick={() => { void reload(); }}>重新加载对话</button></div> : !provider ? <p className="ai-status" role="status">正在加载 AI 设置与对话…</p> : !configured && <div className="ai-chat-notice"><p>先配置你自己的模型接口与 Key。</p><button className="button" onClick={onSettings}>配置 AI</button></div>}
-      {strict ? <p className="ai-chat-notice">严格面试进行中，AI 教练暂不可用。</p> : !hasContext && <p className="ai-chat-notice">开始一次练习后，可以向 AI 教练提问。</p>}
+      {loadError ? <div className="ai-chat-notice" role="alert"><p className="error-text">{loadError}</p><button className="text-button" onClick={() => { void reload(); }}>重新加载对话</button></div> : !provider ? <p className="ai-status" role="status">正在加载 AI 设置与对话…</p> : !configured && <div className="ai-chat-notice"><p>请先配置模型接口与 API Key。</p><button className="button" onClick={onSettings}>配置 AI</button></div>}
+      {strict ? <p className="ai-chat-notice">严格面试进行中，AI 教练暂不可用。</p> : !hasContext && <p className="ai-chat-notice">开始练习后可向 AI 教练提问。</p>}
       {message && <p role="status" className="success-text ai-chat-notice">{message}</p>}
-      {provider && configured && hasContext && !strict && turns.length === 0 && <div className="ai-chat-empty"><p>输入问题，或选择下方操作。</p></div>}
+      {provider && configured && hasContext && !strict && turns.length === 0 && <div className="ai-chat-empty"><Mascot mood="happy" size={72} /><p>输入问题，或选择下方操作。</p></div>}
       <div className="ai-request-list" role="log" aria-label="AI 对话记录" aria-live="polite" aria-relevant="additions">
         {turns.map(({ id, record, local }) => {
           const kind = record?.snapshot.kind ?? local!.kind, text = record?.snapshot.question ?? local!.question;
@@ -216,7 +217,7 @@ export function AiPanel({ api, attempt, code, onApply, onNoteSaved, onSettings, 
           const response = record?.response;
           return <article className="ai-request ai-chat-turn" key={id} data-request-id={id} data-status={status}>
             <div className="ai-chat-message ai-chat-user"><span className="ai-chat-speaker">你</span><p className="ai-question">{questionLabel(kind, text)}</p></div>
-            <div className="ai-chat-message ai-chat-assistant"><span className="ai-chat-speaker">AI 教练</span>
+            <div className="ai-chat-message ai-chat-assistant"><Mascot className="ai-avatar" size={34} mood={response ? 'happy' : failure ? 'sad' : 'think'} /><span className="ai-chat-speaker">AI 教练</span>
               {response && record ? <>
                 <h4>{response.title}</h4>
                 <Markdown text={response.explanation} onOpenLink={url => { void api?.openWebLink(url).catch(error => onError(errorText(error))); }} />
@@ -233,7 +234,7 @@ export function AiPanel({ api, attempt, code, onApply, onNoteSaved, onSettings, 
                     {response.evidence.length > 0 && <details><summary>使用的运行证据</summary>{response.evidence.map((evidence, index) => <pre className="diagnostic" key={index}>{evidence.quote}</pre>)}</details>}
                     {response.inferences.length > 0 && <details><summary>需要验证的判断</summary>{response.inferences.map((inference, index) => <div key={index}><Markdown text={inference.text} /><p className="field-help">依据：{inference.reason}</p></div>)}</details>}
                     {record.cachedFromRequestId && <p className="ai-status">已复用相同请求的回答</p>}
-                    <p className="ai-status">{record.usage?.totalTokens === null || !record.usage ? '用量未知' : `供应商报告 ${record.usage.totalTokens} Token`} · {record.snapshot.provider.model}</p>
+                    <p className="ai-status">{record.usage?.totalTokens === null || !record.usage ? '用量未知' : `供应商报告 ${record.usage.totalTokens} Token`}{record.usage && record.usage.calls > 1 ? ` · 共调用 ${record.usage.calls} 次` : ''} · {record.snapshot.provider.model}</p>
                   </details>
                 </div>
                 {patch?.requestId === record.id && !reviewMode && <div className="ai-patch-preview">
@@ -241,7 +242,7 @@ export function AiPanel({ api, attempt, code, onApply, onNoteSaved, onSettings, 
                   <CodeComparison before={record.snapshot.code} after={patch.code} language={patch.language} label="AI 修改差异" />
                   <div className="compact-actions"><button className="button primary" disabled={Boolean(busy) || frozen || strict} onClick={() => { void apply(); }}>应用到当前草稿</button><button className="text-button" disabled={Boolean(busy)} onClick={() => setPatch(null)}>收起差异</button></div>
                 </div>}
-              </> : failure ? <div className="ai-chat-failure"><p role="alert" className="error-text">{failure}</p><button className="text-button" disabled={!canAsk} onClick={() => { void ask(kind, text, record?.snapshot.officialSubmissionId); }}>重试这次提问</button></div> : <p className="ai-status" role={pendingStatuses.has(status) ? 'status' : undefined}>{progress}{event?.requestId === id && event.receivedBytes !== undefined && pendingStatuses.has(status) ? ` · 已接收 ${Math.ceil(event.receivedBytes / 1024)} KiB` : ''}</p>}
+              </> : failure ? <div className="ai-chat-failure"><p role="alert" className="error-text">{failure}</p><button className="text-button" disabled={!canAsk} onClick={() => { void ask(kind, text, record?.snapshot.officialSubmissionId); }}>重试本次提问</button></div> : <p className="ai-status" role={pendingStatuses.has(status) ? 'status' : undefined}>{progress}{event?.requestId === id && event.receivedBytes !== undefined && pendingStatuses.has(status) ? ` · 已接收 ${Math.ceil(event.receivedBytes / 1024)} KiB` : ''}</p>}
             </div>
           </article>;
         })}
@@ -249,8 +250,8 @@ export function AiPanel({ api, attempt, code, onApply, onNoteSaved, onSettings, 
     </div>
     {awayFromLatest && <button className="ai-jump-latest text-button" onClick={() => { pinnedToLatest.current = true; setAwayFromLatest(false); const element = conversation.current; if (element) element.scrollTop = element.scrollHeight; }}>查看最新消息</button>}
     <form className="ai-composer" onSubmit={submit => { submit.preventDefault(); void ask('chat', question); }}>
-      <div className="ai-quick-actions"><button type="button" className="button" disabled={!canAsk} onClick={() => { void ask('hint'); }}>给点提示</button><button type="button" className="button" disabled={!canAsk} onClick={() => { void ask('diagnosis'); }}>检查代码</button></div>
-      <label className="p3-field ai-chat-input"><span>向 AI 教练提问</span><textarea aria-label="AI 提问" aria-describedby="ai-chat-keyboard-help" value={question} maxLength={4000} disabled={composerDisabled} placeholder="聊聊你的思路，或问一个具体问题…" onChange={change => { setQuestion(change.target.value); rememberInput(attempt?.id, change.target.value); }} onCompositionStart={() => { composing.current = true; }} onCompositionEnd={() => { composing.current = false; }} onKeyDown={key => {
+      <div className="ai-quick-actions"><button type="button" className="button" disabled={!canAsk} onClick={() => { void ask('hint'); }}>获取提示</button><button type="button" className="button" disabled={!canAsk} onClick={() => { void ask('diagnosis'); }}>检查代码</button></div>
+      <label className="p3-field ai-chat-input"><span>向 AI 教练提问</span><textarea aria-label="AI 提问" aria-describedby="ai-chat-keyboard-help" value={question} maxLength={4000} disabled={composerDisabled} placeholder="描述你的思路，或提出具体问题…" onChange={change => { setQuestion(change.target.value); rememberInput(attempt?.id, change.target.value); }} onCompositionStart={() => { composing.current = true; }} onCompositionEnd={() => { composing.current = false; }} onKeyDown={key => {
         if (key.key !== 'Enter' || key.shiftKey || key.altKey || key.ctrlKey || key.metaKey || key.nativeEvent.isComposing || composing.current || key.keyCode === 229) return;
         key.preventDefault(); void ask('chat', question);
       }} /></label>

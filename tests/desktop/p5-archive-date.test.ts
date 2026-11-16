@@ -20,3 +20,31 @@ for (const [name, date, timeZone, nextDay, expected] of boundaries) test(name, (
 for (const date of ['2026-02-30', '2026-1-1', 'bad']) test(`Invalid archive date is rejected: ${date}`, () => {
   assert.throws(() => archiveDateBoundary(date, 'UTC'));
 });
+test('memoized boundaries stay exact per zone and date, and an end boundary equals the next day start', () => {
+  for (let round = 0; round < 2; round++) {
+    assert.equal(archiveDateBoundary('2026-09-09', 'Asia/Shanghai'), '2026-09-08T16:00:00.000Z');
+    assert.equal(archiveDateBoundary('2026-09-09', 'UTC'), '2026-09-09T00:00:00.000Z', 'zones never share a cached day');
+    assert.equal(archiveDateBoundary('2026-03-08', 'America/Los_Angeles', true), archiveDateBoundary('2026-03-09', 'America/Los_Angeles'));
+  }
+  for (let round = 0; round < 2; round++) assert.throws(() => archiveDateBoundary('2026-09-09', 'Not/AZone'), RangeError, 'an invalid zone is rejected every time');
+});
+test('each zone builds one formatter and each day boundary is searched once', () => {
+  const Original = Intl.DateTimeFormat, originalParts = Original.prototype.formatToParts;
+  let built = 0, searched = 0;
+  class Counting extends Original { constructor(...args: ConstructorParameters<typeof Intl.DateTimeFormat>) { super(...args); built++; } }
+  Object.defineProperty(Intl, 'DateTimeFormat', { value: Counting, configurable: true, writable: true });
+  Original.prototype.formatToParts = function (this: Intl.DateTimeFormat, ...args: Parameters<Intl.DateTimeFormat['formatToParts']>) { searched++; return originalParts.apply(this, args); };
+  try {
+    const days = Array.from({ length: 30 }, (_, index) => new Date(Date.UTC(2026, 0, 1) + index * 86400000).toISOString().slice(0, 10));
+    for (const day of days) { archiveDateBoundary(day, 'Asia/Kolkata'); archiveDateBoundary(day, 'Asia/Kolkata', true); }
+    assert.equal(built, 1, 'one formatter for the zone, not one per call');
+    const firstPass = searched;
+    assert.ok(firstPass > 0);
+    for (let round = 0; round < 5; round++) for (const day of days) { archiveDateBoundary(day, 'Asia/Kolkata'); archiveDateBoundary(day, 'Asia/Kolkata', true); }
+    assert.equal(searched, firstPass, 'repeated refreshes reuse every boundary instead of searching again');
+    assert.equal(archiveDateBoundary('2026-01-02', 'Asia/Kolkata'), '2026-01-01T18:30:00.000Z');
+  } finally {
+    Object.defineProperty(Intl, 'DateTimeFormat', { value: Original, configurable: true, writable: true });
+    Original.prototype.formatToParts = originalParts;
+  }
+});

@@ -4,7 +4,7 @@ import { runCode } from '../../src/runner/index.ts';
 import { runProcess } from '../../src/runner/process.ts';
 import { quoteWindowsArgument } from '../../src/runner/windows-job.ts';
 import { inspectRuntime } from '../../src/runner/runtime-inspect.ts';
-import type { RunEvent, RunRequest } from '../../src/runner/types.ts';
+import type { Adapter, RunEvent, RunRequest } from '../../src/runner/types.ts';
 import os from 'node:os';
 import path from 'node:path';
 import { mkdtemp,readFile,rm,stat } from 'node:fs/promises';
@@ -36,7 +36,7 @@ for(const language of ['python','java'] as const){
   if(language==='python'){assert.equal(d.column,q.code.split('\n')[2].indexOf('1/0')+1);assert.equal(d.endColumn,d.column!+3);}else assert.equal(d.column,undefined);
  });
  test(`${language}: wrapper signature failure has no editor position`,async()=>{
-  const q=identity(language);q.adapter!.method='missing';const r=await runCode(q);
+  const q=identity(language);(q.adapter as Adapter).method='missing';const r=await runCode(q);
   assert.equal(r.status,'internal_error',JSON.stringify(r));assert.ok(r.diagnostics.every(d=>d.source==='runner'&&d.line===undefined&&d.column===undefined));
  });
  test(`${language}: structured output is included in output limit`,async()=>{

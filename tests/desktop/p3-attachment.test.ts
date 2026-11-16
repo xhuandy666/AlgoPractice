@@ -43,9 +43,8 @@ test('oversized attachments and arbitrary hash/path requests cannot access files
   await assert.rejects(f.service.addFile(file), /不超过/);
   await assert.rejects(f.service.read('../private.txt'), /标识无效/); await assert.rejects(f.service.read('a'.repeat(64)), /不存在/);
 });
-test('tampering prevents read/export; code attachments open only under a text association', async t => {
+test('tampering prevents read/export', async t => {
   const f = await fixture(t), file = join(f.root, 'solution.py'); await writeFile(file, 'print(1)\n'); const attachment = await f.service.addFile(file);
-  const preview = await f.service.openablePath(attachment.hash); assert.ok(preview.endsWith('.txt')); assert.equal((await readFile(preview)).toString(), 'print(1)\n');
   const destination = join(f.root, 'export.py'); await f.service.exportFile(attachment.hash, destination); assert.equal((await readFile(destination)).toString(), 'print(1)\n');
   await assert.rejects(f.service.exportFile(attachment.hash, destination), /EEXIST/);
   await writeFile(join(f.service.directory, attachment.hash), 'print(2)\n');

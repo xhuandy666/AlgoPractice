@@ -24,7 +24,7 @@ if (!packaged) {
   await cp(join(appSource, 'dist'), join(launchDirectory, 'dist'), { recursive: true });
   await cp(join(appSource, 'package.json'), join(launchDirectory, 'package.json'));
 }
-const env = { ...process.env, ALGOPRACTICE_DATA_DIR: dataDirectory, ALGOPRACTICE_RUNTIME_DIR: runtimeDirectory }; delete env.ELECTRON_RUN_AS_NODE;
+const env = { ...process.env, ALGOPRACTICE_DATA_DIR: dataDirectory, ALGOPRACTICE_RUNTIME_DIR: runtimeDirectory, ALGOPRACTICE_DISABLE_AUTO_UPDATE: '1' }; delete env.ELECTRON_RUN_AS_NODE;
 const report = { startedAt: new Date().toISOString(), platform: process.platform, arch: process.arch, synthetic: true, dataDirectory,
   appSource, executable: packaged || require('electron'), assertions: [], rendererErrors: [], blockedHttp: [], transport: [], screenshots: [],
   scope: 'Real Electron renderer, preload, main official-judge service, SQLite and AI context. Source-session fetch/cookies and provider fetch/OS encryption are replaced inside this isolated test process only.',
@@ -178,7 +178,7 @@ try {
   await panel.getByText('通过', { exact: true }).first().waitFor();
   pass('Pending to Accepted passes real IPC/SQLite; duplicate request ID sends one POST; numeric-string counts are retained independently of local results');
 
-  const ratingDialog = page.getByRole('dialog', { name: '这次通过时表现如何', exact: true });
+  const ratingDialog = page.getByRole('dialog', { name: '本次解答表现如何', exact: true });
   await ratingDialog.waitFor({ timeout: 20000 });
   assert.equal(await ratingDialog.locator('input[type="radio"]:checked').count(), 0, 'official Accepted is not an automatic mastery rating');
   await shot('official-first-accepted-rating.png');

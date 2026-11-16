@@ -64,6 +64,8 @@ jobs:
         run: npm run test:reviews
       - name: Check official judge and adaptive coach integration with isolated fixtures
         run: npm run test:official
+      - name: Check application updates, verified downloads and draft persistence with isolated fixtures
+        run: npm run test:updates
       - name: Check AI evidence references and repair through local protocol fixtures
         run: npm run test:ai
       - name: Check workbench notes and historical code comparison
@@ -78,10 +80,15 @@ jobs:
         run: npm run test:hot100
       - name: Package macOS installer and portable archive
         if: runner.os == 'macOS'
-        # CI uses the configured ad-hoc identity ("-"), without signing credentials.
+        # No credentials means ad-hoc signing and verified installer fallback. PRs never receive signing credentials.
         env:
           CSC_FOR_PULL_REQUEST: 'true'
-        run: npx electron-builder --mac --${{ matrix.architecture }} --publish never
+          CSC_LINK: ${{ github.event_name != 'pull_request' && secrets.CSC_LINK || '' }}
+          CSC_KEY_PASSWORD: ${{ github.event_name != 'pull_request' && secrets.CSC_KEY_PASSWORD || '' }}
+          APPLE_ID: ${{ github.event_name != 'pull_request' && secrets.APPLE_ID || '' }}
+          APPLE_APP_SPECIFIC_PASSWORD: ${{ github.event_name != 'pull_request' && secrets.APPLE_APP_SPECIFIC_PASSWORD || '' }}
+          APPLE_TEAM_ID: ${{ github.event_name != 'pull_request' && secrets.APPLE_TEAM_ID || '' }}
+        run: node scripts/package-desktop.mjs --platform darwin --arch ${{ matrix.architecture }}
       - name: Verify macOS application and archives
         if: runner.os == 'macOS'
         run: |
@@ -93,6 +100,11 @@ jobs:
         env:
           ALGOPRACTICE_PACKAGED_APP: ${{ github.workspace }}/release/${{ matrix.bundle-directory }}/题炼.app/Contents/MacOS/题炼
         run: npm run test:desktop
+      - name: Check packaged macOS update discovery and installer handoff
+        if: runner.os == 'macOS'
+        env:
+          ALGOPRACTICE_PACKAGED_APP: ${{ github.workspace }}/release/${{ matrix.bundle-directory }}/题炼.app/Contents/MacOS/题炼
+        run: npm run test:updates
       - name: Upload verified macOS packages
         if: runner.os == 'macOS'
         uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5
@@ -101,18 +113,29 @@ jobs:
           path: |
             release/AlgoPractice-*-mac-${{ matrix.architecture }}.dmg
             release/AlgoPractice-*-mac-${{ matrix.architecture }}.zip
+            release/AlgoPractice-*-mac-${{ matrix.architecture }}.dmg.blockmap
+            release/AlgoPractice-*-mac-${{ matrix.architecture }}.zip.blockmap
+            release/latest-${{ matrix.architecture }}-mac.yml
             dist/build-info.json
           if-no-files-found: error
           compression-level: 0
           retention-days: 7
       - name: Package Windows installer and portable archive
         if: runner.os == 'Windows'
-        run: npx electron-builder --win --x64 --publish never
+        env:
+          CSC_LINK: ${{ github.event_name != 'pull_request' && secrets.WIN_CSC_LINK || '' }}
+          CSC_KEY_PASSWORD: ${{ github.event_name != 'pull_request' && secrets.WIN_CSC_KEY_PASSWORD || '' }}
+        run: node scripts/package-desktop.mjs --platform win32 --arch x64
       - name: Launch packaged Windows desktop
         if: runner.os == 'Windows'
         env:
           ALGOPRACTICE_PACKAGED_APP: ${{ github.workspace }}/release/win-unpacked/题炼.exe
         run: npm run test:desktop
+      - name: Check packaged Windows update discovery and installer handoff
+        if: runner.os == 'Windows'
+        env:
+          ALGOPRACTICE_PACKAGED_APP: ${{ github.workspace }}/release/win-unpacked/题炼.exe
+        run: npm run test:updates
       - name: Upload verified Windows packages
         if: runner.os == 'Windows'
         uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5
@@ -121,6 +144,8 @@ jobs:
           path: |
             release/AlgoPractice-*-win-x64.exe
             release/AlgoPractice-*-win-x64.zip
+            release/AlgoPractice-*-win-x64.exe.blockmap
+            release/latest.yml
             dist/build-info.json
           if-no-files-found: error
           compression-level: 0

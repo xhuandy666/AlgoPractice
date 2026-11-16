@@ -27,7 +27,7 @@ if (!packaged) {
   await cp(join(root, 'dist'), join(launchDirectory, 'dist'), { recursive: true });
   await cp(join(root, 'package.json'), join(launchDirectory, 'package.json'));
 }
-const env = { ...process.env, ALGOPRACTICE_DATA_DIR: dataDirectory, ALGOPRACTICE_RUNTIME_DIR: runtimeDirectory };
+const env = { ...process.env, ALGOPRACTICE_DATA_DIR: dataDirectory, ALGOPRACTICE_RUNTIME_DIR: runtimeDirectory, ALGOPRACTICE_DISABLE_AUTO_UPDATE: '1' };
 delete env.ELECTRON_RUN_AS_NODE;
 const report = {
   startedAt: new Date().toISOString(), platform: process.platform, arch: process.arch,
@@ -244,6 +244,8 @@ try {
   await nav('模拟面试');
   await page.getByRole('heading', { name: '模拟面试', exact: true, level: 1 }).waitFor();
   assert.equal(await page.getByRole('combobox', { name: '面试模式', exact: true }).inputValue(), 'strict');
+  assert.equal(await page.getByLabel('抽样种子', { exact: true }).isVisible(), false, 'sampling details stay folded by default');
+  await page.locator('.interview-advanced > summary').click();
   await page.getByLabel('抽样种子', { exact: true }).fill('每天进步一点');
   await shot('interview.png');
   pass('Interview setup opens with strict mode; bundled basic demos are not relabelled for sampling');

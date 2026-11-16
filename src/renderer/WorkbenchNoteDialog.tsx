@@ -83,8 +83,8 @@ export function WorkbenchNoteDialog({ api, problem, initialNoteId, onClose, onEr
         if (initialNoteId || candidate || !page.hasMore) break; offset += page.items.length;
       } while (alive);
       const detail = initialNoteId || candidate ? await api.note(initialNoteId || candidate!.id) : null;
-      if (initialNoteId && !detail) throw new Error('这篇笔记已不存在。');
-      if (detail && (detail.kind !== 'problem' || detail.subjectId !== problem.id)) throw new Error('这篇笔记不属于当前题目。');
+      if (initialNoteId && !detail) throw new Error('该笔记已不存在。');
+      if (detail && (detail.kind !== 'problem' || detail.subjectId !== problem.id)) throw new Error('该笔记不属于当前题目。');
       if (!alive) return;
       setNotes(rows);
       if (detail) { const value = fromNote(detail); current.current = value; setDraft(value); setStatus(detail.current.state === 'confirmed' ? '已保存的笔记' : '已恢复草稿'); }
@@ -110,8 +110,8 @@ export function WorkbenchNoteDialog({ api, problem, initialNoteId, onClose, onEr
   async function select(noteId?: string) {
     await persist();
     const detail = noteId ? await api?.note(noteId) : null;
-    if (noteId && !detail) throw new Error('这篇笔记已不存在，请重新打开笔记窗口。');
-    if (detail && (detail.kind !== 'problem' || detail.subjectId !== problem.id)) throw new Error('这篇笔记不属于当前题目。');
+    if (noteId && !detail) throw new Error('该笔记已不存在，请重新打开笔记窗口。');
+    if (detail && (detail.kind !== 'problem' || detail.subjectId !== problem.id)) throw new Error('该笔记不属于当前题目。');
     const value = detail ? fromNote(detail) : emptyDraft();
     current.current = value; setDraft(value); dirty.current = saved.current = 0; pending.current = null;
     setFailure(''); setStatus(detail ? detail.current.state === 'confirmed' ? '已保存的笔记' : '已恢复草稿' : '');

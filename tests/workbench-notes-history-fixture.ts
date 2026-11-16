@@ -2,6 +2,7 @@ import { mkdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { mock } from 'node:test';
 import { PracticeStore } from '../src/storage/practice-store.ts';
+import { nativeExpectedOutputSource } from '../src/shared/answer-format.ts';
 import type { ProblemContent } from '../src/shared/library.ts';
 
 // Entirely authored fixture in a temporary profile. No user content or network.
@@ -32,7 +33,7 @@ try {
       const id = `workbench-history-${group}-${String(index).padStart(2, '0')}`;
       if (index % 2 === 0) {
         const row = store.saveRun({ id, attemptId: attempt.id, code: historical, testSuiteVersion: 'synthetic-v1',
-          testSnapshot: JSON.parse(JSON.stringify({ cases: problem.cases })), adapterVersion: 'synthetic-adapter-v1', runtimeVersion: 'synthetic-python',
+          testSnapshot: JSON.parse(JSON.stringify({ cases: problem.cases })), expectedOutputSource: nativeExpectedOutputSource(problem.cases), adapterVersion: 'synthetic-adapter-v1', runtimeVersion: 'synthetic-python',
           status: 'passed', result: { status: 'passed', durationMs: 10, trustworthyExpected: true, diagnostics: [], stdout: '', stderr: '',
             caseResults: problem.cases.map((test, caseIndex) => ({ index: caseIndex, status: 'passed', expected: test.expected ?? null, actual: test.expected ?? null })) } });
         rows.push({ source: 'local', id: row.id, code: historical, attemptId: attempt.id });

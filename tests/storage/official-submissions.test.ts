@@ -1,12 +1,13 @@
 import assert from 'node:assert/strict';
-import { mkdtempSync, rmSync, existsSync } from 'node:fs';
+import { mkdtempSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { DatabaseSync } from 'node:sqlite';
 import { test } from 'node:test';
 import { PracticeStore, hashCode } from '../../src/storage/practice-store.ts';
-import { stripAnswerFormatSchema } from './fixtures/pre-v8.ts';
 import type { BeginOfficialSubmissionInput } from '../../src/shared/official.ts';
+import { restoreBackup } from '../restore-backup.ts';
+import { SCHEMA_VERSION } from '../../src/storage/schema.ts';
 
 export function officialFixture(t: { after(fn: () => void): void }) {
   const directory = mkdtempSync(join(tmpdir(), 'tilian-official-store-'));
@@ -78,27 +79,17 @@ test('official state revisions stay strictly ordered when the wall clock does no
   assert.deepEqual(store.updateOfficialSubmission(initial.id, completion), completed, 'idempotent acknowledgements do not create a newer state');
 });
 
-test('schema 5 is backed up before migration; backup restores official results and archive deletion removes their relationship', async t => {
-  const { store, dbPath, input, directory, attempt } = officialFixture(t);
-  store.close();
-  const legacy = new DatabaseSync(dbPath);
-  stripAnswerFormatSchema(legacy);
-  legacy.exec(`DROP TABLE submission_remarks; DROP INDEX attempts_by_problem_language; DROP TABLE official_submissions; PRAGMA user_version=5;`); legacy.close();
-  const upgraded = new PracticeStore(dbPath);
-  try {
-    assert.ok(upgraded.migrationBackupPath?.includes('.before-v10-')); assert.ok(existsSync(upgraded.migrationBackupPath!));
-    assert.equal(PracticeStore.inspectBackupSnapshot(upgraded.migrationBackupPath!).schemaVersion, 5);
-    assert.equal(upgraded.getDraft(attempt.problemId, 'python')?.code, input.code);
-    const record = upgraded.beginOfficialSubmission(input);
-    upgraded.updateOfficialSubmission(record.id, { status: 'judging', submissionId: '42' });
-    const completed = upgraded.updateOfficialSubmission(record.id, { status: 'completed', result: { status: 'wrong_answer', statusMessage: 'Wrong Answer', passedCases: 3, totalCases: 9 } });
-    const backup = join(directory, 'backup.sqlite'); await upgraded.backupTo(backup);
-    assert.equal(PracticeStore.inspectBackupSnapshot(backup).schemaVersion, 10);
-    const restoredPath = join(directory, 'restored.sqlite'); PracticeStore.restoreBackup(backup, restoredPath);
-    const restored = new PracticeStore(restoredPath);
-    try { assert.deepEqual(restored.getOfficialSubmission(record.id), completed); restored.integrityCheck(); } finally { restored.close(); }
-    upgraded.finishAttempt(attempt.id);
-    assert.equal(upgraded.deleteEndedAttempt(attempt.id), true);
-    assert.equal(upgraded.getOfficialSubmission(record.id), undefined); upgraded.integrityCheck();
-  } finally { upgraded.close(); }
+test('backup restores official results and archive deletion removes their relationship', async t => {
+  const { store, input, directory, attempt } = officialFixture(t);
+  const record = store.beginOfficialSubmission(input);
+  store.updateOfficialSubmission(record.id, { status: 'judging', submissionId: '42' });
+  const completed = store.updateOfficialSubmission(record.id, { status: 'completed', result: { status: 'wrong_answer', statusMessage: 'Wrong Answer', passedCases: 3, totalCases: 9 } });
+  const backup = join(directory, 'backup.sqlite'); await store.backupTo(backup);
+  assert.equal(PracticeStore.inspectBackupSnapshot(backup).schemaVersion, SCHEMA_VERSION);
+  const restoredPath = join(directory, 'restored.sqlite'); restoreBackup(backup, restoredPath);
+  const restored = new PracticeStore(restoredPath);
+  try { assert.deepEqual(restored.getOfficialSubmission(record.id), completed); restored.integrityCheck(); } finally { restored.close(); }
+  store.finishAttempt(attempt.id);
+  assert.equal(store.deleteEndedAttempt(attempt.id), true);
+  assert.equal(store.getOfficialSubmission(record.id), undefined); store.integrityCheck();
 });

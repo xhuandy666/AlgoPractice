@@ -1,11 +1,8 @@
-import type { AnswerFormat, AcmTestConfig } from './answer-format';
+import type { AnswerFormat, AcmTestConfig, ExpectedOutputSource } from './answer-format';
 import type { Language } from './languages';
 /** Renderer-visible AI data. Credentials never appear in these structures. */
 export const AI_POLICY_VERSION = 'tilian-ai-policy-v2';
-export const AI_PROMPT_VERSION = 'tilian-chat-coach-v2.5';
-/** Historical record compatibility only. New coach requests have no help levels. */
-export const AI_LEVELS = ['L0', 'L1', 'L2', 'L3', 'L4'] as const;
-export type AiLevel = typeof AI_LEVELS[number];
+export const AI_PROMPT_VERSION = 'tilian-chat-coach-v2.6';
 export type AiKind = 'chat' | 'hint' | 'diagnosis' | 'official-review' | 'note-draft';
 export type AiMode = 'practice' | 'strict' | 'coached';
 export type AiJson = null | boolean | number | string | AiJson[] | { [key: string]: AiJson };
@@ -62,8 +59,6 @@ export interface AiRequestInput {
   /** Optional user request. Empty means assess the supplied problem and current work. */
   question: string;
   runId?: string;
-  noteIds?: string[];
-  conversationIds?: string[];
   /** Only official-review may select a persisted completed official code/result snapshot. */
   officialSubmissionId?: string;
 }
@@ -88,7 +83,7 @@ export interface AiTrustedContext {
   code: string;
   answerFormat?: AnswerFormat; specVersion?: string; testConfigDigest?: string;
   testConfig?: AcmTestConfig | null;
-  expectedOutputSource?: 'native-samples' | 'user' | 'none';
+  expectedOutputSource?: ExpectedOutputSource;
   inputDescription?: string; outputDescription?: string;
   reasoning?: string;
   problem: { title: string; description: string; constraints: string[] };
@@ -98,8 +93,6 @@ export interface AiTrustedContext {
   officialSubmissionId?: string;
   /** Explicitly selected historical evidence; never evidence for the current code. */
   previousRun?: { code: string; run: AiRunEvidence } | null;
-  conversation: Array<{ id: string; role: 'user' | 'assistant'; content: string }>;
-  notes: Array<{ id: string; version: string; title: string; markdown: string }>;
 }
 export interface AiMessage { role: 'system' | 'user' | 'assistant'; content: string; }
 /** A complete persisted user/assistant round, with no nested snapshots or memory. */
@@ -123,17 +116,14 @@ export interface AiRequestSnapshot {
   officialSubmissionId?: string;
   conversationMemory?: AiConversationMemory;
   answerFormat?: AnswerFormat; specVersion?: string; testConfigDigest?: string;
-  /** Read-only fields on snapshots saved by the old coach. Never emitted for new requests. */
-  level?: AiLevel; unlockCompleteSolution?: boolean;
   runId: string | null; run: AiRunEvidence | null;
   official?: AiOfficialEvidence | null;
   previousRun?: { code: string; run: AiRunEvidence } | null;
   provider: AiProviderConfig;
   /** Exactly what the provider receives, after deterministic context clipping. */
   messages: AiMessage[];
-  selectedNoteIds: string[]; selectedConversationIds: string[];
   clippedFields: string[];
-  /** Program-bound references actually sent to the model; absent on historical records. */
+  /** Program-bound references actually sent to the model. */
   evidenceCatalog?: Array<AiEvidenceReference & { referenceId: string }>;
 }
 export interface AiEvidenceReference {
@@ -147,10 +137,8 @@ export interface AiInference { text: string; reason: string; }
 export interface AiPatchEdit { startLine: number; endLine: number; replacement: string; }
 export interface AiPatch { baseCodeHash: string; edits: AiPatchEdit[]; }
 export interface AiResponse {
-  schemaVersion: 1 | 2;
+  schemaVersion: 2;
   kind: AiKind;
-  /** Present only on historical schemaVersion 1 answers. */
-  level?: AiLevel;
   title: string;
   explanation: string;
   nextSteps: string[];
@@ -162,7 +150,7 @@ export interface AiResponse {
   noteDraft: { title: string; markdown: string; tags: string[] } | null;
 }
 export type AiErrorCode = 'NOT_CONFIGURED' | 'CREDENTIAL_UNAVAILABLE' | 'INVALID_CONFIG' | 'INVALID_REQUEST'
-  | 'STRICT_MODE' | 'L4_LOCKED' | 'AUTH' | 'RATE_LIMITED' | 'TIMEOUT' | 'NETWORK' | 'PROVIDER'
+  | 'STRICT_MODE' | 'AUTH' | 'RATE_LIMITED' | 'TIMEOUT' | 'NETWORK' | 'PROVIDER'
   | 'UNSUPPORTED_RESPONSE' | 'RESPONSE_TOO_LARGE' | 'FORMAT_INVALID' | 'POLICY_VIOLATION'
   | 'CANCELLED' | 'INTERRUPTED' | 'STALE_PATCH' | 'REQUEST_CONFLICT' | 'STORAGE';
 /** Fixed diagnostic categories only; never include provider text or credentials. */
@@ -174,6 +162,13 @@ export interface AiUsage {
   /** Includes a possible single format-repair call. Missing provider usage is not estimated. */
   calls: number;
 }
+/** Usage the providers reported, summed over finished requests. calls counts every provider call, including conversation
+ * summaries and format repairs; unreported counts requests without a token total (the provider returned none, or no call
+ * was made). Tokens are never estimated. */
+export interface AiUsageTotals { requests: number; calls: number; tokens: number; unreported: number; }
+export interface AiUsageSummary { timeZone: string; today: AiUsageTotals; month: AiUsageTotals; all: AiUsageTotals;
+  /** This month's totals per model, most tokens first: prices differ between models. */
+  monthByModel: Array<AiUsageTotals & { model: string }>; }
 export type AiRequestStatus = 'pending' | 'streaming' | 'repairing' | 'completed' | 'failed' | 'cancelled' | 'interrupted';
 export interface AiRequestSeed { id: string; attemptId: string; requestHash: string; snapshot: AiRequestSnapshot; }
 export interface AiRequestCompletion {
@@ -196,7 +191,6 @@ export interface AiRepository {
   getAIHelpState(attemptId: string): AiHelpState;
   markAIHelpShown(attemptId: string): boolean;
   dismissAIHelp(attemptId: string): void;
-  markAIHelpUsed(attemptId: string, requestId: string, legacyLevel?: AiLevel): void;
 }
 export interface AiEvent {
   requestId: string; attemptId: string; problemId: string; codeHash: string;
@@ -217,9 +211,8 @@ export interface AiConnectionResult {
   usage: AiUsage | null; error: AiError | null;
 }
 export interface AiHelpRun {
-  id: string; attemptId: string; status: string; language: Language;
+  id: string; attemptId: string; status: string;
   /** Count only actual user-code execution with trustworthy expected results. */
   executed: boolean; attributableToUser: boolean; trustworthyExpected: boolean;
-  diagnostics: AiDiagnostic[];
 }
-export interface AiHelpDecision { show: boolean; reason: 'compile-error' | 'three-failures' | null; consecutiveFailures: number; }
+export interface AiHelpDecision { show: boolean; reason: 'three-failures' | null; consecutiveFailures: number; }

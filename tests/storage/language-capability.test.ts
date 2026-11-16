@@ -64,21 +64,3 @@ test('four-language metadata filtering stays body-free and mirrors source capabi
   const pages = [0, 2, 4].flatMap(offset => store.listProblemPage({ language: 'cpp', support: 'runnable', offset, limit: 2 }).items);
   assert.deepEqual(pages.map(row => row.id), cppRunnable); store.integrityCheck();
 });
-
-test('the fresh learning queue includes Go/C++ only runnable content and excludes recursive C++ bigint without inventing per-language review plans', t => {
-  const store = fixture(t), denied = problem('00-cpp-bigint', 'cpp', { adapter: { ...adapter, params: [{ list: { array: 'bigint' } }] } }),
-    readable = problem('01-cpp-reading', 'cpp', { adapter: undefined }), noCases = problem('02-go-no-cases', 'go', { cases: [] }),
-    admitted = [problem('10-go', 'go'), problem('11-cpp-method-bigint', 'cpp', { adapter: { ...adapter, method: 'bigint' } }),
-      problem('12-cpp-acm', 'cpp', { mode: 'acm', adapter: undefined, cases: [{ stdin: '' }] }),
-      problem('13-go-bigint', 'go', { adapter: { ...adapter, returns: 'bigint' } })];
-  [denied, readable, noCases, ...admitted].forEach(input => store.upsertProblem(input));
-  assert.deepEqual(store.getTodayQueue().newProblemIds, admitted.slice(0, 3).map(input => input.id));
-  const first = store.getProblem(admitted[0].id)!;
-  store.startAttempt({ problemId: first.id, problemVersion: first.version, language: 'go' });
-  assert.deepEqual(store.getTodayQueue().newProblemIds, admitted.slice(1).map(input => input.id));
-  const plan = store.addReviewItem({ problemId: admitted[1].id, target: 'rewrite', language: 'cpp' });
-  assert.equal(plan.language, 'none'); assert.equal(plan.target, 'understanding');
-  assert.equal(store.addReviewItem({ problemId: admitted[1].id, target: 'rewrite', language: 'java' }).id, plan.id);
-  assert.deepEqual(store.getTodayQueue().newProblemIds, admitted.slice(2).map(input => input.id));
-  store.integrityCheck();
-});

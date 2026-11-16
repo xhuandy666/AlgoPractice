@@ -7,7 +7,6 @@ export const LANGUAGE_DETAILS = {
   go: { label: 'Go', monacoLanguage: 'go', fileExtension: '.go', officialSlug: 'golang', environmentLabel: 'Go 1.27.x · 标准库' },
   cpp: { label: 'C++', monacoLanguage: 'cpp', fileExtension: '.cpp', officialSlug: 'cpp', environmentLabel: 'C++17 · Zig 0.16' },
 } as const satisfies Record<Language, { label: string; monacoLanguage: string; fileExtension: string; officialSlug: string; environmentLabel: string }>;
-export type OfficialLanguageSlug = (typeof LANGUAGE_DETAILS)[Language]['officialSlug'];
 export function isLanguage(value: unknown): value is Language {
   return typeof value === 'string' && (LANGUAGES as readonly string[]).includes(value);
 }

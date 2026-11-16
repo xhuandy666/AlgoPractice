@@ -1,10 +1,21 @@
 import type { ProblemContent } from './library';
 import type { Language, TestCase } from '../runner/types';
 
+/** Where a run's expected outputs came from. Only the problem's own cases ('native-samples') can make a pass count as solving it;
+ * ACM cases the user wrote ('user') are a self-check, and without expected outputs ('none') a run is not judged at all. */
+export type ExpectedOutputSource = 'native-samples' | 'user' | 'none';
+export const EXPECTED_OUTPUT_SOURCES: readonly ExpectedOutputSource[] = ['native-samples', 'user', 'none'];
+/** The source for a problem's own cases, used unchanged. */
+export const nativeExpectedOutputSource = (cases: readonly object[]): ExpectedOutputSource =>
+  cases.some(test => Object.hasOwn(test, 'expected')) ? 'native-samples' : 'none';
+
 /** Answer syntax is independent from practice / strict / coached training modes. */
 export type AnswerFormat = 'function' | 'acm';
 export type AcmCompare = 'normalized' | 'exact';
 export interface AcmTestCase { stdin: string; expected?: string; }
+export const ACM_CASE_LIMIT = 50, ACM_TEST_BYTES_LIMIT = 1024 * 1024;
+export const acmCaseBytes = (test: { stdin?: string; expected?: unknown }) =>
+  new TextEncoder().encode(test.stdin ?? '').length + (typeof test.expected === 'string' ? new TextEncoder().encode(test.expected).length : 0);
 export interface AcmTestConfig {
   version: 1;
   cases: AcmTestCase[];
@@ -16,7 +27,7 @@ export interface PracticeSpec {
   answerFormat: AnswerFormat;
   specVersion: string;
   source: 'native' | 'custom';
-  expectedOutputSource: 'native-samples' | 'user' | 'none';
+  expectedOutputSource: ExpectedOutputSource;
   inputDescription: string;
   outputDescription: string;
   /** A disposable execution view; never persist over the original problem snapshot. */
@@ -38,13 +49,13 @@ export function validateAcmTestConfig(value: unknown): AcmTestConfig {
   if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error('ACM 测试配置无效。');
   const input = value as AcmTestConfig;
   if (input.version !== 1 || !['normalized', 'exact'].includes(input.compare)
-    || !Array.isArray(input.cases) || input.cases.length < 1 || input.cases.length > 50) throw new Error('请提供 1–50 组有效的 ACM 用例。');
+    || !Array.isArray(input.cases) || input.cases.length < 1 || input.cases.length > ACM_CASE_LIMIT) throw new Error(`请提供 1–${ACM_CASE_LIMIT} 组有效的 ACM 用例。`);
   let total = 0;
   const cases = input.cases.map(test => {
     if (!test || typeof test !== 'object' || typeof test.stdin !== 'string'
       || (Object.hasOwn(test, 'expected') && typeof test.expected !== 'string')) throw new Error('标准输入与期望输出必须是文本。');
-    total += new TextEncoder().encode(test.stdin).length + new TextEncoder().encode(test.expected ?? '').length;
-    if (total > 1024 * 1024) throw new Error('ACM 输入输出总大小不能超过 1 MiB。');
+    total += acmCaseBytes(test);
+    if (total > ACM_TEST_BYTES_LIMIT) throw new Error('ACM 输入输出总大小不能超过 1 MiB。');
     return { stdin: test.stdin, ...(Object.hasOwn(test, 'expected') ? { expected: test.expected! } : {}) };
   });
   return { version: 1, compare: input.compare, cases };
@@ -56,8 +67,16 @@ export function serializeAcmTestConfig(value: AcmTestConfig): string {
     ...(Object.hasOwn(test, 'expected') ? { expected: test.expected } : {}), stdin: test.stdin,
   })), compare: normalized.compare, version: normalized.version });
 }
+/** Problems stored before import enforced the editor limits still open, using the leading cases that fit. */
 export function defaultAcmTestConfig(content: ProblemContent): AcmTestConfig {
-  const native = content.mode === 'acm' ? content.cases.filter(test => typeof test.stdin === 'string') : [];
+  const native: TestCase[] = [];
+  let total = 0;
+  for (const test of content.mode === 'acm' ? content.cases : []) {
+    if (typeof test.stdin !== 'string') continue;
+    total += acmCaseBytes(test);
+    if (native.length >= ACM_CASE_LIMIT || total > ACM_TEST_BYTES_LIMIT) break;
+    native.push(test);
+  }
   return { version: 1, compare: content.acmCompare ?? 'normalized', cases: native.length ? native.map(test => ({
     stdin: test.stdin!, ...(typeof test.expected === 'string' ? { expected: test.expected } : {}),
   })) : [{ stdin: '' }] };
@@ -72,7 +91,7 @@ export function resolvePracticeSpec(content: ProblemContent, problemVersion: str
     source: native ? 'native' : 'custom',
     expectedOutputSource: tests ? !tests.cases.some(test => Object.hasOwn(test, 'expected')) ? 'none'
       : native && serializeAcmTestConfig(tests) === serializeAcmTestConfig(defaultAcmTestConfig(content)) ? 'native-samples' : 'user'
-      : content.cases.some(test => Object.hasOwn(test, 'expected')) ? 'native-samples' : 'none',
+      : nativeExpectedOutputSource(content.cases),
     inputDescription: answerFormat === 'function' ? '按题目签名传入结构化参数。' : native ? '每组用例一次性传入 stdin，随后关闭输入流（EOF）。' : '自定义输入输出，尚无已验证样例；自行约定输入编码。每组输入后关闭 stdin（EOF）。',
     outputDescription: answerFormat === 'function' ? '返回题目约定的值。' : '将答案写到 stdout。未设置期望输出时仅查看输出，不判为通过。',
     content: answerFormat === 'function' ? content : { ...content, mode: 'acm', adapter: undefined,

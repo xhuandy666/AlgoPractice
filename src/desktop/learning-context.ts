@@ -27,7 +27,7 @@ export function buildPracticeAiContext(store: PracticeStore, input: AiRequestInp
     if (!submitted || attempt.answerFormat !== 'function' || submitted.attemptId !== attempt.id || submitted.problemId !== attempt.problemId
       || submitted.problemVersion !== attempt.problemVersion || submitted.language !== attempt.language || submitted.status !== 'completed'
       || !submitted.submissionId || !submitted.result || ['internal_error', 'unknown'].includes(submitted.result.status)
-      || hashCode(submitted.code) !== submitted.codeHash) throw new Error('请等待这次官方提交返回有效的判题结果。');
+      || hashCode(submitted.code) !== submitted.codeHash) throw new Error('请等待本次官方提交返回有效的判题结果。');
   } else if (input.officialSubmissionId) throw new Error('只有官方分析可以选择提交快照。');
   const interview = store.getInterviewForAttempt(attempt.id), item = interview?.items.find(item => item.attemptId === attempt.id);
   // Finished archives must not borrow a later practice's mutable code or stdin, even when it reuses the same scope.
@@ -50,16 +50,6 @@ export function buildPracticeAiContext(store: PracticeStore, input: AiRequestInp
     status: submission.result.status, statusMessage: submission.result.statusMessage,
     ...Object.fromEntries(['passedCases','totalCases','runtime','memory','compileError','runtimeError','input','expectedOutput','actualOutput']
       .filter(key => submission.result![key as keyof typeof submission.result] !== undefined).map(key => [key, submission.result![key as keyof typeof submission.result]])) } : null;
-  const notes = (input.noteIds ?? []).map(noteId => {
-    const note = store.getNote(noteId);
-    if (!note?.confirmed || (note.kind === 'problem' && note.subjectId !== attempt.problemId)) throw new Error('所选笔记未确认或不属于当前题目。');
-    return { id: note.id, version: String(note.confirmed.version), title: note.confirmed.title, markdown: note.confirmed.markdown };
-  });
-  const conversation = (input.conversationIds ?? []).flatMap(requestId => {
-    const record = store.getAIRequest(requestId);
-    if (!record || record.attemptId !== attempt.id || record.status !== 'completed' || !record.response) throw new Error('对话不属于当前练习或尚未完成。');
-    return [{ id: requestId, role: 'assistant' as const, content: JSON.stringify({ question: record.snapshot.question, response: record.response }) }];
-  });
   return { attemptId: attempt.id, problemId: attempt.problemId, problemVersion: attempt.problemVersion, language: attempt.language,
     mode: attempt.mode, isActive: attempt.isActive, draftScopeId: attempt.draftScopeId,
     draftRevision: submitted?.draftRevision ?? (item ? (interview!.endedAt ? item.final! : item.accepted).revision : attempt.endedAt ? attempt.finalDraftRevision ?? 0 : draft?.revision ?? 0),
@@ -68,7 +58,7 @@ export function buildPracticeAiContext(store: PracticeStore, input: AiRequestInp
     expectedOutputSource: spec.expectedOutputSource, inputDescription: spec.inputDescription, outputDescription: spec.outputDescription,
     code, ...(item ? { reasoning: (interview!.endedAt ? item.final! : item.accepted).reasoning } : {}),
     problem: { title: content.title, description: content.description, constraints: content.constraints ?? [] },
-    run: runAiEvidence(run), official, previousRun: historical ? { code: selected!.code, run: historical } : null, notes, conversation };
+    run: runAiEvidence(run), official, previousRun: historical ? { code: selected!.code, run: historical } : null };
 }
 
 /** Revalidate synchronously after the async preview; save only this exact workspace and preserve its tests. */

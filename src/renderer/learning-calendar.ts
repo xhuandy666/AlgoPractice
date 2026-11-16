@@ -1,4 +1,4 @@
-import type { LearningDay, ReviewItem } from '../shared/learning.ts';
+import type { LearningDay } from '../shared/learning.ts';
 
 const formatters = new Map<string, Intl.DateTimeFormat>();
 
@@ -37,22 +37,10 @@ export function monthGrid(month: string): Array<{ date: string; inMonth: boolean
   });
 }
 
-export function reviewPlan(items: ReviewItem[], today: string, timeZone: string): Map<string, ReviewItem[]> {
-  const result = new Map<string, ReviewItem[]>();
-  for (const item of items) {
-    if (item.suspended || !item.dueAt) continue;
-    const effective = Math.max(Date.parse(item.dueAt), Date.parse(item.scheduledAt ?? item.dueAt));
-    if (!Number.isFinite(effective)) continue;
-    const due = dateKey(new Date(effective).toISOString(), timeZone);
-    const date = due < today ? today : due;
-    const day = result.get(date);
-    if (day) day.push(item); else result.set(date, [item]);
-  }
-  return result;
-}
-
+/** One definition of a studied day for the streak, week dots, heatmap and rewards: focus time, an ended practice or a review. */
+export const isStudyDay = (day: { activeMs: number; completedProblems: number; reviewCount: number }) => day.activeMs > 0 || day.completedProblems > 0 || day.reviewCount > 0;
 export function learningStreak(days: LearningDay[], today: string): number {
-  const active = new Set(days.filter(day => day.activeMs > 0 || day.completedAttempts > 0 || day.reviewCount > 0).map(day => day.date));
+  const active = new Set(days.filter(isStudyDay).map(day => day.date));
   let date = active.has(today) ? today : addDays(today, -1);
   let streak = 0;
   while (active.has(date)) { streak++; date = addDays(date, -1); }

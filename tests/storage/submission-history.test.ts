@@ -1,11 +1,12 @@
 import assert from 'node:assert/strict';
-import { existsSync, mkdtempSync, readdirSync, rmSync } from 'node:fs';
+import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import { test, type TestContext } from 'node:test';
 import { PracticeStore, type Attempt } from '../../src/storage/practice-store.ts';
-import { stripAnswerFormatSchema } from './fixtures/pre-v8.ts';
+import { restoreBackup } from '../restore-backup.ts';
+import { SCHEMA_VERSION } from '../../src/storage/schema.ts';
 
 function fixture(t: TestContext) {
   const directory = mkdtempSync(join(tmpdir(), 'tilian-submission-history-')), dbPath = join(directory, 'practice.sqlite');
@@ -19,7 +20,7 @@ function fixture(t: TestContext) {
   return { directory, dbPath, store, problem, attempt, draft };
 }
 function local(store: PracticeStore, attempt: Attempt, id: string, code = `# ${id}`) {
-  return store.saveRun({ id, attemptId: attempt.id, code, testSuiteVersion: 'suite', adapterVersion: 'adapter', runtimeVersion: 'python', status: 'passed',
+  return store.saveRun({ id, attemptId: attempt.id, code, testSuiteVersion: 'suite', expectedOutputSource: 'native-samples', adapterVersion: 'adapter', runtimeVersion: 'python', status: 'passed',
     result: { status: 'passed', caseResults: [{ actual: 'payload'.repeat(10_000) }] } });
 }
 function official(store: PracticeStore, attempt: Attempt, id: string) {
@@ -39,7 +40,7 @@ test('history combines attempts and sources in stable pages, filtered by problem
   for (let i = 0; i < 35; i++) local(store, current, `new-${String(i).padStart(3, '0')}`);
   const accepted = official(store, current, 'official-new');
   const pending = store.beginOfficialSubmission({ requestId: 'official-pending', attemptId: current.id, code: draft.code, expectedDraftRevision: draft.revision, slug: 'two-sum', sourceId: '1' });
-  const queued = store.saveRun({ id: 'queued', attemptId: current.id, code: 'unexecuted', testSuiteVersion: 'suite', adapterVersion: 'adapter', runtimeVersion: 'python' });
+  const queued = store.saveRun({ id: 'queued', attemptId: current.id, code: 'unexecuted', testSuiteVersion: 'suite', expectedOutputSource: 'native-samples', adapterVersion: 'adapter', runtimeVersion: 'python' });
   const java = store.startAttempt({ problemId: problem.id, language: 'java', problemVersion: problem.version }); local(store, java, 'java');
   const other = store.startAttempt({ problemId: 'other', language: 'python', problemVersion: 'v1' }); local(store, other, 'other');
   const filter = { problemId: problem.id, language: 'python' as const };
@@ -92,30 +93,6 @@ test('remarks are independent by source, versioned, clearable, bounded, and neve
   } finally { raw.close(); }
 });
 
-test('schema 6 receives a verified original snapshot before upgrading; restoring that snapshot preserves all old data', async t => {
-  const { store, dbPath, directory, attempt, problem, draft } = fixture(t);
-  const run = local(store, attempt, 'legacy-run'), submission = official(store, attempt, 'legacy-official'); store.close();
-  const old = new DatabaseSync(dbPath);
-  stripAnswerFormatSchema(old);
-  old.exec('DROP TABLE submission_remarks; DROP INDEX attempts_by_problem_language; PRAGMA user_version=6;'); old.close();
-  const upgraded = new PracticeStore(dbPath);
-  try {
-    assert.ok(upgraded.migrationBackupPath?.includes('.before-v10-')); assert.ok(existsSync(upgraded.migrationBackupPath!));
-    assert.equal(PracticeStore.inspectBackupSnapshot(upgraded.migrationBackupPath!).schemaVersion, 6);
-    const original = new DatabaseSync(upgraded.migrationBackupPath!, { readOnly: true });
-    try { assert.equal(original.prepare("SELECT name FROM sqlite_schema WHERE name='submission_remarks'").get(), undefined); } finally { original.close(); }
-    assert.deepEqual(upgraded.getRun(run.id), run); assert.deepEqual(upgraded.getOfficialSubmission(submission.id), submission);
-    assert.deepEqual(upgraded.getDraft(problem.id, 'python'), draft);
-    assert.equal(upgraded.getSubmissionHistoryDetail('local', run.id).remarkRevision, 0);
-    upgraded.saveSubmissionRemark({ source: 'official', id: submission.id, remark: '旧记录也能加备注', expectedRevision: 0 });
-    const restoredPath = join(directory, 'restored-schema6.sqlite'); PracticeStore.restoreBackup(upgraded.migrationBackupPath!, restoredPath);
-    const restored = new PracticeStore(restoredPath);
-    try { assert.deepEqual(restored.getOfficialSubmission(submission.id), submission); assert.equal(restored.getSubmissionHistoryDetail('official', submission.id).remark, ''); restored.integrityCheck(); }
-    finally { restored.close(); }
-    upgraded.integrityCheck();
-  } finally { upgraded.close(); }
-});
-
 test('remark backup round trip is exact and deleting an archive cascades only its remarks', async t => {
   const { store, directory, dbPath, attempt, problem } = fixture(t), run = local(store, attempt, 'to-delete'), submission = official(store, attempt, 'official-delete');
   const localRemark = store.saveSubmissionRemark({ source: 'local', id: run.id, remark: '已保存', expectedRevision: 0 });
@@ -125,8 +102,8 @@ test('remark backup round trip is exact and deleting an archive cascades only it
   store.saveSubmissionRemark({ source: 'local', id: retained.id, remark: '保留', expectedRevision: 0 });
   const note = store.saveNote({ requestId: 'keep-note', kind: 'problem', subjectId: problem.id, title: '笔记', markdown: '独立内容' });
   const target = join(directory, 'annotated.sqlite'); await store.backupTo(target);
-  assert.equal(PracticeStore.inspectBackupSnapshot(target).schemaVersion, 10);
-  const copyPath = join(directory, 'restored.sqlite'); PracticeStore.restoreBackup(target, copyPath); const copy = new PracticeStore(copyPath);
+  assert.equal(PracticeStore.inspectBackupSnapshot(target).schemaVersion, SCHEMA_VERSION);
+  const copyPath = join(directory, 'restored.sqlite'); restoreBackup(target, copyPath); const copy = new PracticeStore(copyPath);
   try {
     for (const remark of [localRemark, officialRemark]) { const detail = copy.getSubmissionHistoryDetail(remark.source, remark.id); assert.equal(detail.remark, remark.remark); assert.equal(detail.remarkRevision, remark.remarkRevision); }
     assert.equal(copy.deleteEndedAttempt(attempt.id), true); copy.integrityCheck();
@@ -137,21 +114,4 @@ test('remark backup round trip is exact and deleting an archive cascades only it
   } finally { copy.close(); }
   const raw = new DatabaseSync(dbPath, { readOnly: true });
   try { assert.equal(raw.prepare('SELECT COUNT(*) AS count FROM submission_remarks').get()?.count, 3); } finally { raw.close(); }
-});
-
-test('failed schema 7 migration rolls back every change and leaves a usable original backup', t => {
-  const { store, dbPath, directory, draft, problem } = fixture(t); store.close();
-  const old = new DatabaseSync(dbPath);
-  stripAnswerFormatSchema(old);
-  try {
-    old.exec('DROP TABLE submission_remarks; DROP INDEX attempts_by_problem_language; CREATE TABLE submission_remarks(conflicting_column TEXT); PRAGMA user_version=6;');
-    const before = old.prepare('SELECT name, sql FROM sqlite_schema ORDER BY name').all();
-    assert.throws(() => new PracticeStore(dbPath), /Schema v10 migration failed/);
-    assert.equal(old.prepare('PRAGMA user_version').get()?.user_version, 6);
-    assert.deepEqual(old.prepare('SELECT name, sql FROM sqlite_schema ORDER BY name').all(), before);
-    assert.equal(old.prepare('SELECT code FROM drafts WHERE problem_id=?').get(problem.id)?.code, draft.code);
-    const backups = readdirSync(directory).filter(name => name.includes('.before-v10-') && name.endsWith('.sqlite'));
-    assert.equal(backups.length, 1); assert.equal(PracticeStore.inspectBackupSnapshot(join(directory, backups[0])).schemaVersion, 6);
-    assert.equal(readdirSync(directory).some(name => name.endsWith('.partial')), false);
-  } finally { old.close(); }
 });

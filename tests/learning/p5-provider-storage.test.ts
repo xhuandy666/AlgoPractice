@@ -157,6 +157,6 @@ test('Ended strict interview coaching persists adaptive help while an active str
     fetchImpl: async () => { calls++; return jsonCompletion(JSON.stringify(answer(request, source))); } });
   await assert.rejects(service.request(request), /严格/); assert.equal(calls, 0);
   store.finishAttempt(attempt.id, { code: source.code }); source.isActive = false;
-  const record = await service.request(request); assert.equal(record.status, 'completed'); assert.equal(record.snapshot.level, undefined); assert.equal(calls, 1);
+  const record = await service.request(request); assert.equal(record.status, 'completed'); assert.ok(!('level' in record.snapshot)); assert.equal(calls, 1);
   assert.equal(store.listAIRequests(attempt.id)[0].status, 'completed'); store.integrityCheck();
 });

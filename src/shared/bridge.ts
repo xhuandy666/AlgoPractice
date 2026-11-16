@@ -1,16 +1,17 @@
 import type { OfficialSubmitInput, OfficialSubmission } from './official';
 import type { RuntimeState } from './runtime';
-import type { AnswerFormat, AcmTestConfig, PracticeSpec } from './answer-format';
+import type { AnswerFormat, AcmTestConfig, ExpectedOutputSource, PracticeSpec } from './answer-format';
 import type { SaveSubmissionRemarkInput, SubmissionHistoryDetail, SubmissionHistoryFilter, SubmissionHistoryItem, SubmissionHistorySource, SubmissionRemark } from './submission-history';
 import type { CompanyDataset, CompanyPreview, InterviewRules, InterviewPool, InterviewView, InterviewSaveResult } from './interview';
 import type { Language, RunEvent, RunResult, RunStatus } from '../runner/types';
 import type { Attempt, Draft } from '../storage/practice-store';
 import type { ImportJob, LibraryProblem, StudyList, ListRefreshPreview } from './library';
 import type { ImportInput, ImportPreview } from '../source/index';
-import type { AiProviderConfig, AiProviderState, AiConnectionResult, AiRequestInput, AiRequestRecord, AiEvent, AiHelpDecision, AiPatchApplication } from './ai';
-import type { ReminderSettings, ReminderStatus, BackupSummary, BackupManifest, RestoreResult } from './maintenance';
-import type { Note, NoteVersion, SaveNoteInput, ConfirmNoteInput, NoteFilter, Attachment, ReviewItem, ReviewEvent, AddReviewItemInput, ReviewFeedbackInput, ReviewFeedbackResult, CorrectReviewInput, ReviewFilter, LearningSettings, LearningSettingsInput, LearningDashboard, TodayQueue, ArchiveStatistics } from './learning';
-import type { PageResult, ProblemPageFilter, ProblemListItem, NotePageFilter, NoteListItem, AttemptPageFilter, AttemptListItem, RunPageFilter, RunListItem } from './learning';
+import type { AiProviderConfig, AiProviderState, AiConnectionResult, AiRequestInput, AiRequestRecord, AiEvent, AiHelpDecision, AiPatchApplication, AiUsageSummary } from './ai';
+import type { ReminderSettings, ReminderStatus, BackupSummary, BackupManifest, MirrorStatus, RestoreResult, UpdateCheck } from './maintenance';
+import type { AppUpdateState } from './update';
+import type { Note, NoteVersion, SaveNoteInput, ConfirmNoteInput, NoteFilter, Attachment, LearningSettings, LearningSettingsInput, LearningDashboard, ArchiveStatistics, TopicInsights } from './learning';
+import type { PageResult, ProblemPageFilter, ProblemListItem, NotePageFilter, NoteListItem, AttemptPageFilter, AttemptListItem, RunPageFilter, RunListItem, ListProgress, CompletionBlocker } from './learning';
 import type { AdvanceReviewSessionInput, ProblemReviewAssessmentInput, ProblemReviewBatchInput, ProblemReviewCorrectionInput,
   ProblemReviewDetail, ProblemReviewPlan, ProblemReviewPreview, ProblemReviewPreviewInput, ProblemReviewResult,
   ReviewAssessmentDraft, ReviewAssessmentDraftInput, ReviewOpportunity, ReviewOpportunityFilter, ReviewPlanQuery,
@@ -20,6 +21,7 @@ export interface RunArchive {
   id: string; attemptId: string; problemId: string; problemVersion: string; code: string; language: Language; createdAt: string;
   result: Omit<RunResult, 'status'> & { status: RunStatus | 'interrupted' };
   answerFormat?: AnswerFormat; specVersion?: string; testConfigDigest?: string | null; testConfig?: AcmTestConfig;
+  expectedOutputSource?: ExpectedOutputSource;
 }
 export interface RuntimeProgress { language: Language; phase: 'download' | 'copy' | 'verify' | 'extract' | 'validate' | 'commit' | 'ready'; receivedBytes: number; totalBytes: number; }
 export interface EnvironmentInfo {
@@ -33,14 +35,15 @@ export interface EnvironmentInfo {
   notificationSupported: boolean; reminder: { dueAt: string; deliveredAt?: string } | null;
 }
 export interface LibraryData { problems: LibraryProblem[]; lists: StudyList[]; jobs: ImportJob[]; }
-export interface LibraryIndex { problems: ProblemListItem[]; totalProblems: number; lists: StudyList[]; jobs: ImportJob[]; }
+export interface LibraryIndex { problems: ProblemListItem[]; totalProblems: number; lists: StudyList[]; jobs: ImportJob[]; progress?: Record<string, ListProgress>; }
 export interface WorkspaceData { problem: LibraryProblem; latestVersion: string; draft: Draft | null; attempt: Attempt | null; history: RunArchive[]; historyTotal?: number; spec?: PracticeSpec; }
-export interface ArchiveSummary { attempt: Attempt; title: string; runCount: number; lastStatus: RunArchive['result']['status'] | null; activeMs?: number; helpLevel?: string | null; }
+/** completedAt: when this practice counted as completed; otherwise notCountedBecause says why its end does not count. */
+export type FinishedAttempt = Attempt & { completedAt: string | null; notCountedBecause: CompletionBlocker | null };
 export interface ArchiveDetail { attempt: Attempt; runs: RunArchive[]; aiRequests?: AiRequestRecord[]; noteVersions?: NoteVersion[]; activeMs?: number; }
 export interface PreparedImport { id: string; preview: ImportPreview; membership: ListRefreshPreview | null; }
 export interface Hot100ImportResult { listId: string; job: ImportJob | null; }
 export interface PreparedProblemRefresh { id: string; before: LibraryProblem; after: LibraryProblem['content']; changed: boolean; }
-export interface BackupState { busy: boolean; backups: BackupSummary[]; lastError: string | null; }
+export interface BackupState { busy: boolean; backups: BackupSummary[]; lastError: string | null; mirror?: MirrorStatus; }
 export interface PreparedRestore { id: string; manifest: BackupManifest; bytes: number; }
 export interface RunPreparation { token: string; runtime: RuntimeState; autoInstall: boolean; }
 export interface RunOptions { answerFormat?: 'function' | 'acm'; preparationToken?: string; }
@@ -62,7 +65,7 @@ export interface DesktopBridge {
   coachInterview(id: string): Promise<InterviewView>;
   runInterview(id: string, problemId: string, requestId: string, supplement: boolean): Promise<RunArchive>;
   applyInterviewPatch(id: string, requestId: string): Promise<InterviewSaveResult>;
-  reviewInterview(id: string, problemId: string): Promise<ReviewItem>;
+  reviewInterview(id: string, problemId: string): Promise<ProblemReviewPlan>;
   previewCompany(input: { kind: 'csv' | 'json'; text: string; name: string }): Promise<{ id: string; preview: CompanyPreview }>;
   commitCompany(id: string): Promise<CompanyDataset>;
   completeCompanyProblems(id: string, requestId: string): Promise<ImportJob>;
@@ -70,14 +73,7 @@ export interface DesktopBridge {
 
   learningSettings(): Promise<LearningSettings>;
   saveLearningSettings(input: LearningSettingsInput): Promise<LearningSettings>;
-  learningDashboard(month?: string): Promise<LearningDashboard>;
-  todayQueue(): Promise<TodayQueue>;
-  reviewItems(filter?: ReviewFilter): Promise<ReviewItem[]>;
-  addReviewItem(input: AddReviewItemInput): Promise<ReviewItem>;
-  updateReviewItem(id: string, input: { suspended?: boolean; scheduledAt?: string | null }): Promise<ReviewItem>;
-  reviewEvents(itemId: string): Promise<ReviewEvent[]>;
-  reviewFeedback(input: ReviewFeedbackInput): Promise<ReviewFeedbackResult>;
-  correctReview(input: CorrectReviewInput): Promise<ReviewFeedbackResult>;
+  learningDashboard(): Promise<LearningDashboard>;
   reviewPlan(query?: ReviewPlanQuery): Promise<ReviewPlanSnapshot>;
   problemReviewDetail(problemId: string, history?: import('./learning').PageRequest): Promise<ProblemReviewDetail>;
   addProblemReviews(input: { problemIds: string[] }): Promise<ProblemReviewPlan[]>;
@@ -101,6 +97,8 @@ export interface DesktopBridge {
   advanceReviewSession(input: AdvanceReviewSessionInput): Promise<ReviewSession>;
   endReviewSession(id: string): Promise<ReviewSession>;
   learningStatistics(): Promise<ArchiveStatistics>;
+  /** Weakest practiced topics (current-state struggle signals) with redo and next-problem suggestions in `language`. */
+  topicInsights(language: Language): Promise<TopicInsights>;
   notes(filter?: NoteFilter): Promise<Note[]>;
   note(id: string): Promise<Note | null>;
   saveNote(input: SaveNoteInput): Promise<Note>;
@@ -109,12 +107,14 @@ export interface DesktopBridge {
   noteVersions(id: string): Promise<NoteVersion[]>;
   exportNote(id: string, version: number): Promise<boolean>;
   addAttachment(): Promise<Attachment | null>;
-  attachment(hash: string): Promise<Attachment | null>;
   saveAiNoteDraft(requestId: string): Promise<Note>;
   reminderState(): Promise<ReminderStatus>;
   saveReminderSettings(settings: ReminderSettings): Promise<ReminderStatus>;
-  snoozeReviews(): Promise<ReminderStatus>;
   backups(): Promise<BackupState>;
+  /** Opens the folder picker; null when cancelled. */
+  chooseBackupMirror(): Promise<MirrorStatus | null>;
+  clearBackupMirror(): Promise<MirrorStatus>;
+  syncBackupMirror(): Promise<MirrorStatus>;
   createBackup(): Promise<BackupSummary | null>;
   previewRestore(): Promise<PreparedRestore | null>;
   restoreBackup(previewId: string): Promise<RestoreResult>;
@@ -124,6 +124,7 @@ export interface DesktopBridge {
   clearAiKey(): Promise<AiProviderState>;
   testAiProvider(): Promise<AiConnectionResult>;
   aiRequests(attemptId: string): Promise<AiRequestRecord[]>;
+  aiUsage(): Promise<AiUsageSummary>;
   askAi(input: AiRequestInput): Promise<AiRequestRecord>;
   cancelAi(requestId: string): Promise<void>;
   onAiEvent(callback: (event: AiEvent) => void): () => void;
@@ -132,6 +133,14 @@ export interface DesktopBridge {
   previewAiPatch(requestId: string): Promise<AiPatchApplication>;
   applyAiPatch(requestId: string): Promise<Draft>;
   openWebLink(url: string): Promise<void>;
+  /** One anonymous request to the project's public releases; nothing is downloaded or installed. */
+  checkForUpdate(): Promise<UpdateCheck>;
+  updateState(): Promise<AppUpdateState>;
+  checkForAppUpdate(): Promise<AppUpdateState>;
+  downloadAppUpdate(): Promise<AppUpdateState>;
+  installAppUpdate(): Promise<void>;
+  setAutomaticUpdates(enabled: boolean): Promise<AppUpdateState>;
+  onAppUpdate(callback: (state: AppUpdateState) => void): () => void;
   copyCode(code: string): Promise<void>;
   exportAttachment(hash: string): Promise<boolean>;
   onMaintenance(callback: (requestId: string) => void): () => void;
@@ -144,6 +153,8 @@ export interface DesktopBridge {
   problemPage(filter?: ProblemPageFilter): Promise<PageResult<ProblemListItem>>;
   notePage(filter?: NotePageFilter): Promise<PageResult<NoteListItem>>;
   attemptPage(filter?: AttemptPageFilter): Promise<PageResult<AttemptListItem>>;
+  /** Effective practice time of one attempt in milliseconds. */
+  attemptActiveTime(attemptId: string): Promise<number>;
   runPage(filter?: RunPageFilter): Promise<PageResult<RunListItem>>;
   runDetail(id: string): Promise<RunArchive>;
   archiveOverview(id: string): Promise<{ attempt: Attempt; runCount: number; activeMs: number; interviewId: string | null }>;
@@ -151,8 +162,7 @@ export interface DesktopBridge {
   library(): Promise<LibraryData>;
   workspace(problemId: string, language: Language, scopeId?: string, answerFormat?: AnswerFormat): Promise<WorkspaceData>;
   startPractice(problemId: string, language: Language, scopeId?: string, answerFormat?: AnswerFormat): Promise<WorkspaceData>;
-  finishPractice(attemptId: string, code: string): Promise<Attempt>;
-  archives(): Promise<ArchiveSummary[]>;
+  finishPractice(attemptId: string, code: string): Promise<FinishedAttempt>;
   deleteArchive(id: string): Promise<boolean>;
   archive(id: string): Promise<ArchiveDetail>;
   restoreRun(runId: string, requestId: string): Promise<{ draft: Draft; attempt: Attempt }>;
@@ -188,7 +198,6 @@ export interface DesktopBridge {
   onRuntimeProgress(callback: (progress: RuntimeProgress) => void): () => void;
   notifyAfter(seconds: number): Promise<void>;
   clearReminder(): Promise<void>;
-  probeSource(url: string): Promise<unknown>;
   openSource(url: string): Promise<void>;
   onNavigate(callback: (page: Page) => void): () => void;
   onClosing(callback: () => void): () => void;

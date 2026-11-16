@@ -3,7 +3,7 @@ import type { DesktopBridge, PreparedImport } from '../shared/bridge';
 import type { ImportJob, StudyList } from '../shared/library';
 import type { ImportInput } from '../source/index';
 import { capability, difficultyLabel } from '../shared/presentation';
-import { dateTime, errorText } from './ui';
+import { dateTime, errorText, PageIntro } from './ui';
 import { Hot100Card } from './Hot100Card';
 import { HelpHint } from './HelpHint';
 
@@ -24,7 +24,7 @@ export function ImportPage({ api, lists, jobs, initialUrl, onChanged, onOpenLibr
     await operation('preview', async () => { const next = await api.previewImport(input); if (revision === editRevision.current) setPrepared(next); else setNotice('输入已改变，请重新读取预览。'); });
   }
   return <section className="import-page scroll-page">
-    <div className="page-intro"><div><h2>导入题单</h2></div><div className="compact-actions"><button className="button" disabled={!api || !!busy} onClick={() => operation('login', () => api!.loginSource())}>打开力扣登录</button><HelpHint label="力扣登录说明">公开内容无需登录，私有收藏需要登录。请在力扣网页完成登录；登录态仅保存在本应用的独立会话中。</HelpHint></div></div>
+    <PageIntro tone="sky" icon="source" title="导入题单" description="粘贴力扣题单或单题链接，也可以导入本地文件；题面缓存后离线可用。"><div className="compact-actions"><button className="button" disabled={!api || !!busy} onClick={() => operation('login', () => api!.loginSource())}>打开力扣登录</button><HelpHint label="力扣登录说明">公开内容无需登录，私有收藏需要登录。请在力扣网页完成登录；登录态仅保存在本应用的独立会话中。</HelpHint></div></PageIntro>
     <Hot100Card api={api} lists={lists} jobs={jobs} onChanged={onChanged} onView={onOpenLibrary} viewLabel="前往题库" />
     <div className="session-line"><span>{hasSession ? '已登录力扣国服' : '未登录力扣国服'}</span><button className="text-button" disabled={!api || !!busy} onClick={() => operation('session', async () => setHasSession((await api!.sourceSession()).hasSession))}>刷新登录状态</button>{hasSession && <button disabled={!api || !!busy} onClick={() => operation('logout', async () => { await api!.logoutSource(); setHasSession(false); })}>清除本应用登录态</button>}</div>
     <form onSubmit={event => { event.preventDefault(); void readPreview(); }} className="import-form">

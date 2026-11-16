@@ -1,13 +1,12 @@
 import type { FsrsCardSnapshot, PageRequest, PageResult, ReviewRating } from './learning.ts';
 
-export type ProblemReviewSource = 'manual' | 'official' | 'legacy';
+export type ProblemReviewSource = 'manual' | 'official';
 export type ProblemReviewStatus = 'unassessed' | 'due' | 'overdue' | 'scheduled' | 'suspended' | 'pending';
 export interface ProblemReviewPlan {
   id: string; problemId: string; card: FsrsCardSnapshot | null; dueAt: string | null;
   scheduledAt: string | null; suspended: boolean; algorithmVersion: string;
   revision: number; createdAt: string; updatedAt: string; lastReviewedAt: string | null;
   latestRating: ReviewRating | null; observationCount: number; pendingAssessmentCount: number;
-  legacyItemCount: number;
 }
 export interface ProblemReviewEvent {
   id: string; requestId: string; planId: string; problemId: string;
@@ -15,15 +14,15 @@ export interface ProblemReviewEvent {
   effectiveRating: ReviewRating; observedAt: string; createdAt: string;
   learningDate: string; timeZone: string; correctsEventId: string | null;
   algorithmVersion: string; attemptId: string | null; opportunityId: string | null;
-  sourceDeleted: boolean; isInitialAssessment: boolean; legacySourceEventIds: string[];
+  sourceDeleted: boolean; isInitialAssessment: boolean;
 }
 export interface ReviewOpportunity {
   id: string; planId: string | null; problemId: string; learningDate: string; timeZone: string;
   acceptedAt: string; officialSubmissionId: string; submissionRecordId: string | null;
   attemptId: string | null; problemVersion: string; codeHash: string;
-  state: 'pending' | 'claimed' | 'skipped' | 'assessed' | 'historical';
+  state: 'pending' | 'claimed' | 'skipped' | 'assessed';
   claimedAt: string | null; skippedAt: string | null; assessmentEventId: string | null;
-  sourceDeleted: boolean; historicalBaseline: boolean; createdAt: string;
+  sourceDeleted: boolean; createdAt: string;
 }
 export interface ReviewOpportunityFilter extends PageRequest {
   problemId?: string; pendingOnly?: boolean; learningDate?: string; submissionRecordId?: string;
@@ -72,19 +71,6 @@ export interface ReviewPlanSnapshot {
 export interface ProblemReviewDetail {
   plan: ProblemReviewPlan; item: ReviewPlanListItem;
   events: PageResult<ProblemReviewEvent>; opportunities: PageResult<ReviewOpportunity>;
-  legacySources?: PageResult<ProblemReviewLegacySource>;
-  legacyPlans?: ProblemReviewLegacyPlan[];
-  migration: { strategy: string | null; itemIds: string[]; conflict: boolean; historicalObservations: number };
-}
-export interface ProblemReviewLegacySource {
-  itemId: string; eventId: string; target: string; language: string;
-  kind: 'review' | 'correction'; rating: ReviewRating; observedAt: string; createdAt: string;
-  correctsEventId: string | null; algorithmVersion: string; attemptId: string | null;
-}
-export interface ProblemReviewLegacyPlan {
-  id: string; target: string; language: string; initialCard: FsrsCardSnapshot; card: FsrsCardSnapshot;
-  algorithmVersion: string; parameters: unknown; dueAt: string; scheduledAt: string | null;
-  suspended: boolean; createdAt: string; updatedAt: string;
 }
 export interface ReviewAssessmentDraftInput {
   key: string; problemId: string; source: 'manual' | 'official' | 'correction';
@@ -106,8 +92,3 @@ export interface ReviewSession {
 }
 export interface StartReviewSessionInput { requestId: string; problemIds?: string[]; }
 export interface AdvanceReviewSessionInput { sessionId: string; problemId: string; skipped?: boolean; }
-export interface ProblemReviewMigrationReport {
-  strategy: string; migratedPlans: number; legacyItems: number; legacyEvents: number;
-  observations: number; historicalAcDays: number;
-  conflicts: Array<{ problemId: string; itemIds: string[]; suspended: boolean; scheduledAt: string | null }>;
-}

@@ -1,5 +1,6 @@
-import type { Adapter, TestCase, ValueType, WireValue } from './types.ts';
+import type { Adapter, DesignAdapter, ProblemAdapter, TestCase, ValueType, WireValue } from './types.ts';
 import { pythonDiagnosticPrelude } from './diagnostics.ts';
+import { designSteps } from './design.ts';
 
 export const PYTHON_NODES = `
 class ListNode:
@@ -7,7 +8,8 @@ class ListNode:
 class TreeNode:
     def __init__(self, val=0, left=None, right=None): self.val, self.left, self.right = val, left, right
 `;
-export function pythonWrapper(adapter: Adapter, cases: TestCase[]): string {
+/** Everything up to loading the user's code: value codecs, node types and diagnostics. */
+function pythonPrelude(adapter: ProblemAdapter, cases: TestCase[]): string {
   const metadata = Buffer.from(JSON.stringify({ adapter, cases })).toString('base64');
   return `${pythonDiagnosticPrelude('solution.py', 4)}
 import sys, json, base64, pathlib, math, collections, typing, runpy
@@ -58,7 +60,16 @@ def encode(value, kind):
 scope = {'ListNode': ListNode, 'TreeNode': TreeNode, **vars(typing)}
 code = pathlib.Path('solution.py').read_text(encoding='utf-8')
 exec(compile(code, 'solution.py', 'exec'), scope)
-adapter = meta['adapter']; case = meta['cases'][int(sys.argv[1])]
+`;
+}
+/** Encodes the observation (inside the error mapping) and writes it within the output budget. */
+const PYTHON_RESULT = `try: encoded = json.dumps(_ap_observe(), ensure_ascii=False, allow_nan=False, separators=(',', ':'))
+except (TypeError,ValueError,OverflowError) as error: raise _APInvalidReturnError(str(error)) from error
+if len(encoded.encode('utf-8')) > int(sys.argv[3]): raise _APOutputLimitError('Structured result exceeds output limit')
+pathlib.Path(sys.argv[2]).write_text(encoded, encoding='utf-8')
+`;
+export function pythonWrapper(adapter: Adapter, cases: TestCase[]): string {
+  return `${pythonPrelude(adapter, cases)}adapter = meta['adapter']; case = meta['cases'][int(sys.argv[1])]
 args = [decode(v, t) for v, t in zip(case['args'], adapter['params'])]
 result = getattr(scope['Solution'](), adapter['method'])(*args)
 if 'inPlaceArg' in adapter:
@@ -69,13 +80,24 @@ if 'inPlaceArg' in adapter:
         observed = observed[start:end]
     result = observed
 else: kind = adapter['returns']
-try: encoded = json.dumps(encode(result, kind), ensure_ascii=False, allow_nan=False, separators=(',', ':'))
-except (TypeError,ValueError,OverflowError) as error: raise _APInvalidReturnError(str(error)) from error
-if len(encoded.encode('utf-8')) > int(sys.argv[3]): raise _APOutputLimitError('Structured result exceeds output limit')
-pathlib.Path(sys.argv[2]).write_text(encoded, encoding='utf-8')
-`;
+_ap_observe = lambda: encode(result, kind)
+${PYTHON_RESULT}`;
 }
-
+/** Design problems: construct the class with the first operation's arguments, then call each method in order and
+ * encode each return before the next call can mutate it (None for the constructor and void methods). */
+export function pythonDesignWrapper(adapter: DesignAdapter, cases: TestCase[]): string {
+  return `${pythonPrelude(adapter, cases)}adapter = meta['adapter']; operations, arguments = meta['cases'][int(sys.argv[1])]['args']
+methods = {method['name']: method for method in adapter['methods']}
+instance = scope[adapter['className']](*[decode(v, t) for v, t in zip(arguments[0], adapter['constructorParams'])])
+returned = [None]
+for name, values in zip(operations[1:], arguments[1:]):
+    method = methods[name]
+    value = getattr(instance, name)(*[decode(v, t) for v, t in zip(values, method['params'])])
+    try: returned.append(None if method['returns'] == 'void' else encode(value, method['returns']))
+    except (TypeError,ValueError,OverflowError) as error: raise _APInvalidReturnError(str(error)) from error
+_ap_observe = lambda: returned
+${PYTHON_RESULT}`;
+}
 function javaType(type: ValueType, boxed = false): string {
   if (typeof type !== 'string') return 'array' in type ? `${javaType(type.array)}[]` : `java.util.List<${javaType(type.list, true)}>`;
   const types = { int: boxed ? 'Integer' : 'int', int64: boxed ? 'Long' : 'long', bigint: 'java.math.BigInteger', float: boxed ? 'Double' : 'double', boolean: boxed ? 'Boolean' : 'boolean', string: 'String', char: boxed ? 'Character' : 'char', listnode: 'ListNode', treenode: 'TreeNode' };
@@ -109,14 +131,19 @@ export function javaWrapper(adapter: Adapter, cases: TestCase[]): string {
       `${call}; return a${adapter.inPlaceArg};`;
     return `case ${index}: { ${declarations}\n${observe} }`;
   }).join('\n');
+  const observed = adapter.inPlaceArg === undefined ? adapter.returns : adapter.params[adapter.inPlaceArg];
+  return javaMain(`  @SuppressWarnings({"unchecked","rawtypes"}) static Object invoke(int index) throws Exception { switch(index) { ${branches} default: throw new IllegalArgumentException("Invalid test index"); } }\n`,
+    observed === 'listnode' || observed === 'treenode' ? 'result==null ? "[]" : json(result)' : 'json(result)');
+}
+/** The Main class shared by function and design drivers: value helpers, JSON encoding and the result-file protocol. */
+function javaMain(invoke: string, output: string): string {
   return `import java.util.*;
 import java.nio.file.*;
 import java.nio.charset.StandardCharsets;
 public class Main {
   static class InvalidReturnException extends RuntimeException { InvalidReturnException(String message){super(message);} }
   static class RunnerOutputLimitException extends RuntimeException { RunnerOutputLimitException(String message){super(message);} }
-  @SuppressWarnings({"unchecked","rawtypes"}) static Object invoke(int index) throws Exception { switch(index) { ${branches} default: throw new IllegalArgumentException("Invalid test index"); } }
-  static Object slice(Object value,int start,int end){
+${invoke}  static Object slice(Object value,int start,int end){
     boolean array=value.getClass().isArray();int size=array?java.lang.reflect.Array.getLength(value):((List<?>)value).size();
     if(start<0||end<start||end>size)throw new InvalidReturnException("Invalid in-place effective range");
     if(!array)return new ArrayList<>(((List<?>)value).subList(start,end));
@@ -151,13 +178,31 @@ public class Main {
   }
   public static void main(String[] args) throws Exception {
     Object result=invoke(Integer.parseInt(args[0]));
-    String output=${(adapter.inPlaceArg === undefined ? adapter.returns : adapter.params[adapter.inPlaceArg]) === 'listnode' || (adapter.inPlaceArg === undefined ? adapter.returns : adapter.params[adapter.inPlaceArg]) === 'treenode' ? 'result==null ? "[]" : json(result)' : 'json(result)'};
+    String output=${output};
     byte[] data=output.getBytes(StandardCharsets.UTF_8);
     if(data.length>Integer.parseInt(args[2]))throw new RunnerOutputLimitException("Structured result exceeds output limit");
     Files.write(Path.of(args[1]),data);
   }
 }
 `;
+}
+/** Design problems: each case builds the class, then encodes each method's return immediately so later calls cannot
+ * mutate an earlier result. Calls are split into helper methods
+ * so long cases stay far below the JVM's 64 KB limit per method. */
+export function javaDesignWrapper(adapter: DesignAdapter, cases: TestCase[]): string {
+  const chunks: string[] = [];
+  const branches = cases.map((test, index) => {
+    const [constructor, ...calls] = designSteps(adapter, test.args), parts: string[] = [];
+    for (let start = 0; start < calls.length; start += 100) {
+      const name = `case${index}Part${parts.length}`; parts.push(name);
+      chunks.push(`  static void ${name}(${adapter.className} apObject, ArrayList<String> apOut) throws Exception {\n${calls.slice(start, start + 100).map(step => {
+        const call = `apObject.${step.name}(${step.args.map((value, i) => literal(value, step.params[i])).join(',')})`;
+        return step.returns === 'void' ? `    ${call}; apOut.add("null");` : `    apOut.add(json(${call}));`;
+      }).join('\n')}\n  }\n`);
+    }
+    return `case ${index}: { ArrayList<String> apOut = new ArrayList<>(); ${adapter.className} apObject = new ${adapter.className}(${constructor.args.map((value, i) => literal(value, constructor.params[i])).join(',')}); apOut.add("null");\n${parts.map(name => `${name}(apObject, apOut);`).join('\n')}\nreturn "[" + String.join(",", apOut) + "]"; }`;
+  }).join('\n');
+  return javaMain(`${chunks.join('')}  static Object invoke(int index) throws Exception { switch(index) { ${branches} default: throw new IllegalArgumentException("Invalid test index"); } }\n`, '(String)result');
 }
 export const JAVA_NODES = `class ListNode { int val; ListNode next; ListNode(){} ListNode(int v){val=v;} ListNode(int v,ListNode n){val=v;next=n;} }
 class TreeNode { int val; TreeNode left,right; TreeNode(){} TreeNode(int v){val=v;} TreeNode(int v,TreeNode l,TreeNode r){val=v;left=l;right=r;} }

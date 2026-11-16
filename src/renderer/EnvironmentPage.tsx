@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useId, useRef, useState, useSyncExternalStore } from 'react';
 import type { Language } from '../runner/types';
 import type { DesktopBridge, EnvironmentInfo, RuntimeProgress } from '../shared/bridge';
-import { errorText } from './ui';
+import { errorText, PageIntro } from './ui';
+import { AppUpdateSection } from './AppUpdate';
 import { getPerformanceState, performanceReport, startPerformanceRecording, stopPerformanceRecording, subscribePerformance } from './performance-monitor';
 import { RuntimeArtifactDetails, RuntimeInstallProgress } from './RuntimePreparation';
 import { runtimeBytes, runtimeSourceLabels } from './runtime-presentation';
@@ -126,7 +127,7 @@ export function EnvironmentPage({ api, onChanged, onError }: {
   const notices = (environment?.runtimeNotices ?? []).filter(notice => notice.trim());
 
   return <section className="settings-page">
-    <div className="heading-with-help"><h2>运行环境</h2><HelpHint label="运行环境说明">优先使用本机兼容环境。下载的环境安装在题炼独立目录，不修改系统 PATH，也不包含在学习备份中。</HelpHint></div>
+    <PageIntro tone="gray" icon="environment" title="运行环境" help={<HelpHint label="运行环境说明">优先使用本机兼容环境。下载的环境安装在题炼独立目录，不修改系统 PATH，也不包含在学习备份中。</HelpHint>} description="Python、Java、Go、C++ 四种语言的本机运行器，就绪后即可离线判题。" />
     <div className="runtime-preference-card">
       <div className="control-with-help"><label className="runtime-auto-install" htmlFor={preferenceId}>
         <input id={preferenceId} type="checkbox" checked={environment?.autoInstallRuntimes ?? false} disabled={!api || !environment || preferenceBusy} onChange={event => void saveAutoInstall(event.target.checked)} />
@@ -195,6 +196,7 @@ export function EnvironmentPage({ api, onChanged, onError }: {
       </div>
       <p className="field-help" role="status">{performanceState.recording ? '正在记录…' : performanceNotice || (performanceState.hasReport ? '记录已停止' : '尚未记录')}</p>
     </details>
+    <AppUpdateSection api={api} />
     <details><summary>系统信息</summary><dl className="system-details">
       <dt>当前环境</dt><dd>{environment ? `${environment.platform} / ${environment.arch}` : '桌面环境未连接'}</dd>
       <dt>应用组件</dt><dd>{environment ? `Electron ${environment.electron} · Node ${environment.node} · SQLite ${environment.sqlite}` : '—'}</dd>

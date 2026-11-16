@@ -11,15 +11,6 @@ for (const row of policyScenarios) test(`${row.id}: ${row.name} [automated fixtu
   if (row.expected === 'accept') assert.doesNotThrow(evaluate); else assert.throws(evaluate);
 });
 test('At least 30 policy fixtures exist, and none are mislabeled as human reviewed', () => { assert.ok(policyScenarios.length >= 30); assert.ok(policyScenarios.every(row => row.humanReview === 'pending')); });
-
-test('Legacy schema 1 records still validate under their original policy and hash contract', async () => {
-  const { context, input, answer } = await import('./helpers.ts');
-  const snapshot = buildRequestSnapshot(input(), context(), config());
-  snapshot.policyVersion = 'algopractice-ai-policy-v1'; snapshot.promptVersion = 'algopractice-tutor-v1'; snapshot.level = 'L2'; snapshot.unlockCompleteSolution = false;
-  const response = { ...answer(), schemaVersion: 1 as const, level: 'L2' as const };
-  assert.deepEqual(validateResponse(JSON.stringify(response), snapshot), response);
-  assert.throws(() => validateResponse(JSON.stringify({ ...response, completeSolution: { explanation: '旧记录', code: 'return 0' } }), snapshot));
-});
 test('Official acceptance can be reported only with matching supplied acceptance evidence', async () => {
   const { context, input, answer } = await import('./helpers.ts');
   const source = context(); source.official = { id: 'official-a', attemptId: source.attemptId, problemVersion: source.problemVersion, codeHash: source.run!.codeHash, status: 'accepted', statusMessage: 'Accepted' };

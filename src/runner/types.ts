@@ -4,6 +4,8 @@ export type ValueType = 'int' | 'int64' | 'bigint' | 'float' | 'boolean' | 'stri
 // int64/bigint use decimal strings on the JS/IPC boundary. Never Number.
 export type WireValue = null | boolean | number | string | WireValue[];
 export interface Adapter {
+  /** Function adapters carry no kind; see DesignAdapter. */
+  kind?: undefined;
   method: string;
   params: ValueType[];
   /** void is valid only when observing an array/list via inPlaceArg. */
@@ -13,13 +15,27 @@ export interface Adapter {
   inPlaceRange?: { start?: number; end: number | 'return' };
   compare?: { kind: 'exact' | 'float' | 'multiset'; absoluteTolerance?: number; relativeTolerance?: number };
 }
+export interface DesignMethod { name: string; params: ValueType[]; returns: ValueType | 'void'; }
+/** A LeetCode design problem: construct `className`, then call methods in order. A case's args are
+ * [operations: string[], arguments: WireValue[][]] exactly as LeetCode lists them; operations[0] names the class and its
+ * arguments go to the constructor. The observed output lists one value per operation, null for the constructor and for
+ * void methods. */
+export interface DesignAdapter {
+  kind: 'design';
+  className: string;
+  constructorParams: ValueType[];
+  methods: DesignMethod[];
+  /** Tolerance for float-returning methods; every other value compares exactly. */
+  compare?: { kind: 'float'; absoluteTolerance?: number; relativeTolerance?: number };
+}
+export type ProblemAdapter = Adapter | DesignAdapter;
 export interface TestCase { args?: WireValue[]; stdin?: string; expected?: WireValue; }
 export interface RunRequest {
   language: Language;
   code: string;
   mode: 'acm' | 'function';
   stdin?: string;
-  adapter?: Adapter;
+  adapter?: ProblemAdapter;
   cases?: TestCase[];
   timeoutMs?: number;
   compileTimeoutMs?: number;
@@ -67,4 +83,6 @@ export interface RunResult {
   durationMs: number;
   executionScope: 'local-user-code-not-sandboxed';
   hostPlatform: string;
+  /** Memory cap applied to the user program's process group; absent on older archives and on uncapped platforms. */
+  memoryLimitBytes?: number;
 }

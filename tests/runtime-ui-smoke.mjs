@@ -96,7 +96,7 @@ try {
   await page.evaluate(() => window.fixture.setRuntime({progress:{language:'python',phase:'commit',receivedBytes:100,totalBytes:100}}));
   assert.equal(await page.getByRole('button', {name:'安全收尾中',exact:true}).isDisabled(), true);
   await page.evaluate(() => window.fixture.setRuntime({installing:false,intentCurrent:false,state:{status:'ready',message:'ready'}}));
-  await page.getByText('草稿或工作区已经变化，请重新点击运行；不会执行之前等待的代码。').waitFor();
+  await page.getByText('草稿或工作区已变化，请重新点击运行。').waitFor();
   passed.push('Preparation keeps editor focus and content; verification is indeterminate; stale intent cannot auto-run');
   await page.evaluate(() => window.fixture.show('acm'));
   const stdin = page.getByLabel('标准输入 stdin', {exact:false});

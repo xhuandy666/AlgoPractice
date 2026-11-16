@@ -4,7 +4,7 @@ import type { DesktopBridge } from '../shared/bridge';
 import type { Language } from '../runner/types';
 import type { SubmissionHistoryItem } from '../shared/submission-history';
 import type { AnswerFormat } from '../shared/answer-format';
-import { dateTime, errorText, statusText } from './ui';
+import { dateTime, errorText, statusClass, statusText } from './ui';
 import './submission-history.css';
 
 const verdicts = { accepted: '通过', wrong_answer: '答案错误', compile_error: '编译错误', runtime_error: '运行错误', timeout: '超出时间限制', memory_limit: '超出内存限制', output_limit: '超出输出限制', internal_error: '判题异常', unknown: '结果待确认' };
@@ -13,6 +13,7 @@ export function submissionStatus(item: SubmissionHistoryItem) {
   return item.source === 'official' ? (item.verdict ? verdicts[item.verdict] : phases[item.status as keyof typeof phases] ?? '结果待确认') : statusText[item.status as keyof typeof statusText] ?? item.status;
 }
 export function submissionTone(item: SubmissionHistoryItem) {
+  if (item.source !== 'official' && item.status in statusText) return statusClass(item.status as keyof typeof statusText);
   if (item.status === 'passed' || item.verdict === 'accepted') return 'success-text';
   if (item.verdict && item.verdict !== 'unknown' || ['failed', 'compile_error', 'runtime_error', 'timeout', 'error'].includes(item.status)) return 'error-text';
   return 'muted';
@@ -60,7 +61,7 @@ export const SubmissionHistory = memo(function SubmissionHistory({ api, problemI
         <span className={submissionTone(item)}>{submissionStatus(item)}</span><time dateTime={item.createdAt}>{dateTime(item.createdAt)}</time>
         {item.remark && <span className="submission-remark-preview">{item.remark}</span>}
       </button></li>)}
-    </ol> : <div className="history-empty"><p>{loading ? '正在读取…' : '还没有提交记录'}</p></div>}
+    </ol> : <div className="history-empty"><p>{loading ? '正在读取…' : '暂无提交记录'}</p></div>}
     {total > 20 && <div className="submission-pagination"><button className="text-button" disabled={loading || busy || offset === 0} onClick={() => setOffset(value => Math.max(0, value - 20))}>上一页</button><span>{Math.floor(offset / 20) + 1} / {Math.ceil(total / 20)}</span><button className="text-button" disabled={loading || busy || offset + 20 >= total} onClick={() => setOffset(value => value + 20)}>下一页</button></div>}
     <button className="text-button submission-archives" onClick={onArchives}>查看所有练习档案</button>
   </section>;

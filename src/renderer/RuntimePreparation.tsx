@@ -26,7 +26,7 @@ export interface RuntimePreparationProps {
 }
 
 export function RuntimeArtifactDetails({ artifact }: { artifact: RuntimeArtifactInfo | null }) {
-  if (!artifact) return <p className="field-help">当前平台没有可用的托管下载包。仍可选择符合兼容要求的本机环境。</p>;
+  if (!artifact) return <p className="field-help">当前平台暂无可用的托管下载包。仍可选择符合兼容要求的本机环境。</p>;
   return <dl className="runtime-artifact-details">
     <div><dt>托管版本</dt><dd>{artifact.version}</dd></div>
     <div><dt>下载来源</dt><dd>{artifact.source}</dd></div>
@@ -57,7 +57,7 @@ export function RuntimeInstallProgress({ language, progress, cancelling, onCance
     {!ready && <progress className="runtime-progress-bar" aria-label={`${label} ${progress ? runtimePhaseLabels[progress.phase] : '准备进度'}`} max={100} value={percentage} />}
     {percentage !== undefined && progress && <p className="runtime-transfer-count" aria-hidden="true">{runtimeBytes(progress.receivedBytes)} / {runtimeBytes(progress.totalBytes)} · {phase === 'copy' ? '读取' : '下载'} {percentage}%</p>}
     {committing && <p className="field-help">正在完成安装，暂时无法取消。</p>}
-    {phase === 'validate' && (language === 'go' || language === 'cpp') && <p className="field-help">正在验证编译并预热标准库缓存。首次准备可能需要几分钟，可以取消。</p>}
+    {phase === 'validate' && (language === 'go' || language === 'cpp') && <p className="field-help">正在验证编译并预热标准库缓存。首次准备可能需要数分钟，可随时取消。</p>}
   </div>;
 }
 

@@ -7,11 +7,12 @@ import { tmpdir } from 'node:os';
 import { DatabaseSync, backup as sqliteBackup } from 'node:sqlite';
 import { AttachmentService, contentHash } from '../../src/desktop/attachment-service';
 import { BackupService, recoverInterruptedRestore } from '../../src/desktop/backup-service';
+import { isDatabaseCorruption } from '../../src/desktop/startup-errors';
 import { OfficialAiCoach } from '../../src/desktop/official-ai-coach';
 import { DEFAULT_REMINDER_SETTINGS, REMINDER_SETTINGS_FILE, type BackupManifest, type BackupSnapshot, type BackupServiceOptions } from '../../src/shared/maintenance';
 import type { Attachment } from '../../src/shared/learning';
 import { config } from '../ai/helpers';
-const learning = { dailyReviewBudget: 3, timeZone: 'Asia/Shanghai', updatedAt: '2026-09-08T00:00:00.000Z' };
+const learning = { dailyReviewBudget: 3, dailyPracticeGoal: 3, timeZone: 'Asia/Shanghai', updatedAt: '2026-09-08T00:00:00.000Z', aiAutoAnalyzeOfficial: false };
 function inspectSnapshot(path: string): BackupSnapshot {
   const db = new DatabaseSync(path, { readOnly: true });
   try {
@@ -150,6 +151,17 @@ test('automatic backups require changes, run at most once per local day, retain 
   for (let day = 9; day <= 16; day++) { f.setDay(`2026-09-${String(day).padStart(2, '0')}T12:00:00Z`); f.db().prepare('UPDATE items SET value=?').run(`day ${day}`); assert.ok(await f.service.autoBackup('Asia/Shanghai')); }
   const summaries = await f.service.list(); assert.equal(summaries.filter(row => row.manifest.kind === 'automatic').length, 7); assert.ok(summaries.some(row => row.path === manual.path));
   f.setDay('2026-09-17T12:00:00Z'); assert.equal(await f.service.autoBackup('Asia/Shanghai'), null); assert.ok(await stat(manual.path));
+  // The copy folder feature reads this cheap listing: automatic backups only, never manual ones.
+  const listed = await f.service.automaticBackups(), automatic = summaries.filter(row => row.manifest.kind === 'automatic');
+  assert.deepEqual(listed.map(row => row.id).sort(), automatic.map(row => row.manifest.id).sort());
+  assert.ok(listed.every(row => row.path.startsWith(f.service.backupDirectory) && row.modified instanceof Date));
+});
+test('the minute timer skips revalidation once today is backed up, but rechecks a backup file that changed', async t => {
+  const f = await fixture(t), first = await f.service.autoBackup('Asia/Shanghai'); assert.ok(first);
+  await writeFile(first.path, 'damaged after today\'s backup');
+  assert.equal(await f.service.autoBackup('Asia/Shanghai'), null); assert.equal(f.service.status().lastError, null, 'today is done; existing packages are not reopened every minute');
+  f.setDay('2026-09-09T12:00:00Z'); f.db().prepare('UPDATE items SET value=?').run('next day');
+  assert.ok(await f.service.autoBackup('Asia/Shanghai')); assert.match(f.service.status().lastError ?? '', /已有自动备份损坏/);
 });
 test('future SQLite versions and non-whitelisted settings are rejected even with correct package hashes', async t => {
   const f = await fixture(t), backup = await f.service.create();
@@ -221,17 +233,6 @@ test('an intentionally zero daily review budget remains a valid portable setting
   assert.equal(JSON.parse(String(f.db().prepare("SELECT value FROM settings WHERE key='learning'").get()!.value)).dailyReviewBudget, 0);
 });
 
-
-test('legacy portable backups without a practice goal or AI opt-in still verify and preserve their original JSON', async t => {
-  const f = await fixture(t), backup = await f.service.create();
-  const oldFile = await transformed(f, backup.path, entries => {
-    const entry = entries.find(value => value.name === 'settings.json')!, settings = JSON.parse(entry.bytes.toString());
-    delete settings.learning.dailyPracticeGoal; delete settings.learning.aiAutoAnalyzeOfficial; entry.bytes = Buffer.from(JSON.stringify(settings));
-  }, true);
-  await f.service.restore(oldFile);
-  assert.deepEqual(JSON.parse(String(f.db().prepare("SELECT value FROM settings WHERE key='learning'").get()!.value)), learning);
-});
-
 test('backup creation and restore reject non-boolean AI opt-in values before maintenance', async t => {
   const f = await fixture(t), backup = await f.service.create();
   const settings = JSON.parse(unpack(await readFile(backup.path)).find(entry => entry.name === 'settings.json')!.bytes.toString());
@@ -246,4 +247,19 @@ test('backup creation and restore reject non-boolean AI opt-in values before mai
     await assert.rejects(f.service.create(), /备份学习设置无效/);
   }
   assert.deepEqual(f.events, []); assert.equal(f.db().prepare('SELECT value FROM items').get()!.value, 'original');
+});
+test('a backup whose packaged database is damaged is a damaged backup, never damage of the live database', async t => {
+  const f = await fixture(t); const backup = await f.service.create();
+  const file = await transformed(f, backup.path, entries => { entries.find(entry => entry.name === 'database.sqlite')!.bytes = Buffer.alloc(8192, 0x41); }, true);
+  const error = await f.service.inspect(file).then(() => null, (reason: unknown) => reason);
+  assert.ok(error instanceof Error); assert.match(error.message, /备份中的数据库未通过完整性检查/);
+  assert.equal(isDatabaseCorruption(error), false, 'reporting it must not schedule an integrity check of the live database');
+  assert.equal(f.db().prepare('SELECT value FROM items').get()!.value, 'original');
+});
+test('backups of earlier versions are refused with a clear message, before anything is extracted or changed', async t => {
+  const f = await fixture(t); const backup = await f.service.create();
+  const file = await transformed(f, backup.path, entries => { const manifest = JSON.parse(entries[0].bytes.toString()); manifest.formatVersion = 1; entries[0].bytes = Buffer.from(JSON.stringify(manifest)); });
+  await assert.rejects(f.service.inspect(file), /旧版本题炼的备份，当前版本不能恢复/);
+  await assert.rejects(f.service.restore(file), /旧版本题炼的备份/); assert.deepEqual(f.events, []);
+  assert.equal(f.db().prepare('SELECT value FROM items').get()!.value, 'original');
 });

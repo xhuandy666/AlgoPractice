@@ -32,11 +32,10 @@ test('Qwen format repair keeps the same system policy and one final user message
 test('A large malformed response is not copied into repair prompts and still stops after one repair', async () => {
   let calls = 0; const source = context(), request = input(), repository = new MemoryRepository();
   source.run = null; source.code = '# ' + '中'.repeat(16000); source.problem.description = '题'.repeat(8000);
-  source.notes = Array.from({ length: 3 }, (_, index) => ({ id: `n-${index}`, version: `v-${index}`, title: '笔记', markdown: '记'.repeat(2500) }));
   const provider = createAiProviderPreset('qwen-cn', 'repair-budget');
   const service = new AiService({ repository, vault: mockVault(), resolveContext: () => source, resolveProvider: () => provider,
     fetchImpl: async (_url, init) => { calls++; const body = String(init?.body); assert.ok(!body.includes('无效')); if (calls === 2) assert.match(body, /repairHint/); return sseCompletion('无效'.repeat(16000)); } });
-  const result = await service.request({ ...request, noteIds: source.notes.map(note => note.id) });
+  const result = await service.request(request);
   assert.equal(result.status, 'failed'); assert.equal(result.error?.code, 'FORMAT_INVALID'); assert.equal(calls, 2);
   assert.ok(!canonicalJson(result).includes('无效'.repeat(100)));
 });

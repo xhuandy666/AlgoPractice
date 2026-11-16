@@ -1,5 +1,6 @@
-import type { Adapter, TestCase, ValueType, WireValue } from './types.ts';
-import { observedType } from './values.ts';
+import type { Adapter, DesignAdapter, TestCase, ValueType, WireValue } from './types.ts';
+import { designSteps, type DesignStep } from './design.ts';
+import { containsValueType, observedType } from './values.ts';
 
 /** Independently authored portable convenience header; not GCC's private header. */
 export const CPP_BITS_HEADER = '#pragma once\n' + ['algorithm','array','bitset','cassert','cctype','climits','cmath','cstddef','cstdint','cstdio','cstdlib','cstring','deque','functional','iomanip','iostream','iterator','limits','list','map','memory','numeric','optional','queue','set','sstream','stack','stdexcept','string','tuple','type_traits','unordered_map','unordered_set','utility','vector'].map(header => `#include <${header}>`).join('\n') + '\n';
@@ -23,12 +24,8 @@ function encode(expression: string, type: ValueType): string {
   if (type === 'bigint') throw new Error('C++ portable function adapters do not support bigint');
   return `ap_runner::${{ int: 'integer32', int64: 'integer64', float: 'floating', boolean: 'boolean', string: 'quote', char: 'character', listnode: 'listJSON', treenode: 'treeJSON' }[type]}(${expression})`;
 }
-const hasType = (type: ValueType | 'void', wanted: ValueType): boolean => typeof type === 'string' ? type === wanted : hasType('array' in type ? type.array : type.list, wanted);
 
 export function cppWrapper(adapter: Adapter, cases: TestCase[]): string {
-  const types = [...adapter.params, adapter.returns];
-  const list = types.some(t => hasType(t, 'listnode'));
-  const tree = types.some(t => hasType(t, 'treenode'));
   const branches = cases.map((test, index) => {
     const declarations = adapter.params.map((type, i) => `${cppType(type)} a${i} = ${literal(test.args![i], type)};`).join('\n');
     const call = `Solution().${adapter.method}(${adapter.params.map((_, i) => `a${i}`).join(',')})`;
@@ -39,6 +36,30 @@ export function cppWrapper(adapter: Adapter, cases: TestCase[]): string {
     }
     return `case ${index}: { ${declarations}\n${invoke} }`;
   }).join('\n');
+  return cppProgram([...adapter.params, adapter.returns], branches);
+}
+/** Design problems: build the class with new (LeetCode's C++ templates), call its methods in order and encode one value
+ * per operation. Arguments are declared as locals first, since templates often take non-const references
+ * (vector<int>& nums); the class is qualified so the runner's own helper names can never shadow it. */
+export function cppDesignWrapper(adapter: DesignAdapter, cases: TestCase[]): string {
+  const branches = cases.map((test, index) => {
+    const [constructor, ...calls] = designSteps(adapter, test.args);
+    const call = (step: DesignStep, target: string) => {
+      const locals = step.args.map((value, i) => `${cppType(step.params[i])} apArg${i} = ${literal(value, step.params[i])}; `).join('');
+      return { locals, invocation: `${target}(${step.args.map((_, i) => `apArg${i}`).join(',')})` };
+    };
+    const lines = calls.map(step => {
+      const { locals, invocation } = call(step, `apObject->${step.name}`);
+      return step.returns === 'void' ? `{ ${locals}${invocation}; apOut += ",null"; }` : `{ ${locals}auto apValue = ${invocation}; apOut += ","; apOut += ${encode('apValue', step.returns)}; }`;
+    });
+    const built = call(constructor, `new ::${adapter.className}`);
+    return `case ${index}: { ::${adapter.className}* apObject = nullptr; { ${built.locals}apObject = ${built.invocation}; } std::string apOut = "[null";\n${lines.join('\n')}\napOut += "]"; return apOut; }`;
+  }).join('\n');
+  return cppProgram([...adapter.constructorParams, ...adapter.methods.flatMap(method => [...method.params, method.returns])], branches);
+}
+function cppProgram(types: Array<ValueType | 'void'>, branches: string): string {
+  const list = types.some(t => containsValueType(t, 'listnode'));
+  const tree = types.some(t => containsValueType(t, 'treenode'));
   return `#include <bits/stdc++.h>
 #include <fstream>
 #include <locale>

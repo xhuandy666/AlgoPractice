@@ -132,9 +132,9 @@ test('backfilled first AC preview and replay reclassify the later manual observa
   const laterCorrection = f.store.previewProblemReview({ problemId: 'late', source: 'correction', eventId: manual.event.id, rating: 4 });
   assert.equal(firstCorrection.isInitialAssessment, true); assert.equal(laterCorrection.isInitialAssessment, false);
   f.store.updateLearningSettings({ timeZone: 'Asia/Shanghai' });
-  const dashboard = f.store.getLearningDashboard('2026-10');
+  const dashboard = f.store.getLearningDashboard();
   assert.equal(dashboard.days.find(day => day.date === '2026-10-02')!.reviewCount, 1);
-  assert.equal(dashboard.reviewEvents.find(event => event.id === manual.event.id)!.learningDate, '2026-10-02');
+  assert.equal(f.store.getProblemReviewDetail('late').events.items.find(event => event.id === manual.event.id)!.learningDate, '2026-10-02');
   assert.equal(f.store.getArchiveStatistics({ timeZone: 'America/Los_Angeles' }).days.find(day => day.date === '2026-10-02')!.reviewCount, 1);
   assert.equal(f.store.getArchiveStatistics().reviewedItems, 1);
 });
@@ -294,7 +294,7 @@ test('large recommendation queues remain complete while page results stay bounde
   f.clock('2026-10-01T12:00:00.000Z'); f.store.updateLearningSettings({ dailyReviewBudget: null });
   const first = f.store.getReviewPlanSnapshot({ limit: 30 }), next = f.store.getReviewPlanSnapshot({ limit: 30, offset: 30 });
   assert.equal(first.items.total, 120); assert.equal(first.items.items.length, 30); assert.equal(first.items.hasMore, true);
-  assert.equal(first.summary.plannedCount, 120); assert.equal(f.store.getTodayQueue().items.length, 120, 'legacy compatibility is not silently capped at transport page size');
+  assert.equal(first.summary.plannedCount, 120);
   assert.equal(first.snapshotVersion, next.snapshotVersion);
   assert.equal(first.items.items.some(item => next.items.items.some(other => other.problemId === item.problemId)), false);
   assert.equal(JSON.stringify(first).includes('私有题面只供测试'), false); assert.equal(JSON.stringify(first).includes('class Solution'), false);

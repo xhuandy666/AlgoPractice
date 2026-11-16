@@ -1,4 +1,3 @@
-import type { Language } from '../runner/types';
 import type { LibraryProblem, ProblemContent } from './library';
 import { demoProblems } from './demo-problems';
 

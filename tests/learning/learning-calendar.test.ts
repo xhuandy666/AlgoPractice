@@ -1,15 +1,10 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { addDays, dateKey, learningStreak, monthGrid, reviewPlan, shiftMonth } from '../../src/renderer/learning-calendar.ts';
-import type { LearningDay, ReviewItem } from '../../src/shared/learning.ts';
+import { addDays, dateKey, learningStreak, monthGrid, shiftMonth } from '../../src/renderer/learning-calendar.ts';
+import type { LearningDay } from '../../src/shared/learning.ts';
 
-function review(id: string, dueAt: string, overrides: Partial<ReviewItem> = {}): ReviewItem {
-  return { id, problemId: `problem-${id}`, target: 'rewrite', language: 'python', dueAt, scheduledAt: null, suspended: false,
-    card: { due: dueAt, stability: 1, difficulty: 1, elapsed_days: 0, scheduled_days: 0, reps: 0, lapses: 0, state: 0, learning_steps: 0 },
-    algorithmVersion: 'fixture', createdAt: dueAt, updatedAt: dueAt, ...overrides };
-}
 function day(date: string, values: Partial<LearningDay> = {}): LearningDay {
-  return { date, activeMs: 0, completedAttempts: 0, completedProblems: 0, reviewCount: 0, ...values };
+  return { date, activeMs: 0, completedProblems: 0, reviewCount: 0, ...values };
 }
 
 test('dateKey follows the chosen learning time zone across midnight and year boundaries', () => {
@@ -59,41 +54,8 @@ test('monthGrid handles months starting on Monday or Sunday without dropping bou
   assert.equal(sunday.filter(value => value.inMonth).length, 28);
 });
 
-test('reviewPlan rolls overdue reviews onto today once, excludes suspended items, and honors postponement', () => {
-  const items = [
-    review('overdue', '2026-09-01T08:00:00Z'),
-    review('today', '2026-09-13T08:00:00Z'),
-    review('postponed', '2026-09-01T08:00:00Z', { scheduledAt: '2026-09-15T08:00:00Z' }),
-    review('suspended', '2026-09-01T08:00:00Z', { suspended: true }),
-    review('due-later', '2026-09-16T08:00:00Z', { scheduledAt: '2026-09-14T08:00:00Z' }),
-    review('postponement-overdue', '2026-09-01T08:00:00Z', { scheduledAt: '2026-09-10T08:00:00Z' }),
-  ];
-  const before = structuredClone(items), plan = reviewPlan(items, '2026-09-13', 'Asia/Shanghai');
-  assert.deepEqual([...plan].map(([date, values]) => [date, values.map(value => value.id)]), [
-    ['2026-09-13', ['overdue', 'today', 'postponement-overdue']],
-    ['2026-09-15', ['postponed']], ['2026-09-16', ['due-later']],
-  ]);
-  assert.equal([...plan.values()].flat().length, 5);
-  assert.equal(plan.has('2026-09-01'), false);
-  assert.deepEqual(items, before, 'planning must not mutate the review schedule');
-});
-
-test('reviewPlan chooses the latest instant before converting to the learning date', () => {
-  const items = [review('offsets', '2026-01-01T23:30:00-08:00', { scheduledAt: '2026-01-02T00:30:00+08:00' })];
-  assert.deepEqual([...reviewPlan(items, '2026-01-01', 'Asia/Shanghai').keys()], ['2026-01-02']);
-  assert.deepEqual([...reviewPlan(items, '2026-01-01', 'America/Los_Angeles').keys()], ['2026-01-01']);
-  assert.equal(reviewPlan([], '2026-01-01', 'UTC').size, 0);
-});
-
-test('reviewPlan excludes unassessed nullable plans instead of inventing dates', () => {
-  const items = [review('unassessed', '2026-01-01T00:00:00Z', { dueAt: null, card: null }),
-    review('postponed-unassessed', '2026-01-01T00:00:00Z', { dueAt: null, card: null, scheduledAt: '2026-01-03T00:00:00Z' }),
-    review('invalid', 'invalid-date'), review('assessed', '2026-01-04T00:00:00Z')];
-  assert.deepEqual([...reviewPlan(items, '2026-01-01', 'UTC')].map(([date, values]) => [date, values.map(item => item.id)]), [['2026-01-04', ['assessed']]]);
-});
-
-test('learningStreak counts study time, completed attempts and reviews through month boundaries', () => {
-  const days = [day('2024-02-28', { completedAttempts: 1 }), day('2024-02-29', { reviewCount: 1 }), day('2024-03-01', { activeMs: 1 })];
+test('learningStreak counts study time, completed problems and reviews through month boundaries', () => {
+  const days = [day('2024-02-28', { completedProblems: 1 }), day('2024-02-29', { reviewCount: 1 }), day('2024-03-01', { activeMs: 1 })];
   assert.equal(learningStreak(days, '2024-03-01'), 3);
   assert.equal(learningStreak([...days, day('2024-03-02')], '2024-03-02'), 3, 'today can remain unfinished');
   assert.equal(learningStreak(days, '2024-03-03'), 0, 'a missed yesterday ends the streak');
@@ -101,8 +63,8 @@ test('learningStreak counts study time, completed attempts and reviews through m
 
 test('learningStreak stops at gaps, ignores future and empty days, and counts duplicate dates once', () => {
   const days = [day('2025-12-30', { activeMs: 10 }), day('2025-12-31'), day('2026-01-01', { reviewCount: 1 }),
-    day('2026-01-01', { completedAttempts: 1 }), day('2026-01-02', { activeMs: 10 }), day('2026-01-03', { completedProblems: 1 })];
+    day('2026-01-01', { completedProblems: 1 }), day('2026-01-02', { activeMs: 10 }), day('2026-01-03', { completedProblems: 1 })];
   assert.equal(learningStreak(days, '2026-01-01'), 1);
-  assert.equal(learningStreak(days, '2026-01-03'), 2);
+  assert.equal(learningStreak(days, '2026-01-03'), 3, 'a problem completed today makes today a study day');
   assert.equal(learningStreak([], '2026-01-01'), 0);
 });

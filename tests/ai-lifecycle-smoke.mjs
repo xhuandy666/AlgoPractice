@@ -100,7 +100,7 @@ await build({ stdin: { resolveDir: root, sourcefile: 'authored-ai-lifecycle-main
       referenceKind(kind){test.referenceKind=kind;},
       compileRun(attemptId,id){const attempt=current.proxy.getAttempt(attemptId),draft=current.proxy.getDraft(problem.id,'python',attempt.draftScopeId,'function');
         const digest=sha256(JSON.stringify([problem.cases,'normalized']));
-        current.proxy.beginRun({id,attemptId,code:draft.code,testSuiteVersion:digest,adapterVersion:'authored-adapter',runtimeVersion:'Python 3.14.7',
+        current.proxy.beginRun({id,attemptId,code:draft.code,testSuiteVersion:digest,expectedOutputSource:'native-samples',adapterVersion:'authored-adapter',runtimeVersion:'Python 3.14.7',
           testSnapshot:{cases:problem.cases,acmCompare:'normalized',answerFormat:'function',specVersion:attempt.specVersion,testConfigDigest:null}});
         return current.proxy.finishRun(id,{status:'compile_error',result:{status:'compile_error',diagnostics:[{phase:'compile',source:'user',file:'solution.py',code:'syntax_error',line:2,column:35,message:'SyntaxError: expected colon'}],
           caseResults:[],stdout:'',stderr:'SyntaxError: expected colon'}});},

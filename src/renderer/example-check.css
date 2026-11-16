@@ -1,0 +1,15 @@
+/* Statement-example hints: deliberately softer than pass/fail colors, since they are not a verdict. */
+.example-check {
+  display: inline-flex; align-items: center; padding: 1px 8px; border-radius: var(--radius-pill);
+  font-size: 12px; font-weight: 800; white-space: nowrap;
+  color: var(--color-ink-2); background: var(--color-paper-2);
+}
+.example-check[data-verdict=match] { color: var(--color-success); background: var(--color-success-soft); }
+.example-check[data-verdict=unordered] { color: var(--color-warning); background: var(--color-warning-soft); }
+.example-check[data-verdict=different] { color: var(--color-error); background: var(--color-error-soft); }
+.result-examples { display: inline-flex; align-items: center; gap: 4px; }
+.result-examples[data-complete=true] { color: var(--color-success); }
+/* The case summary is a three-column grid; badge and value preview share its last, flexible column. */
+.case-detail summary .case-preview { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 8px; min-width: 0; }
+.case-detail summary .case-preview code { min-width: 0; overflow-wrap: anywhere; }
+@media (max-width: 740px) { .case-detail summary .case-preview { grid-column: 1 / -1; } }
