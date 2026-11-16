@@ -39,7 +39,7 @@ try {
   await page.getByRole('navigation', { name: '主导航' }).waitFor();
   await app.evaluate(async ({ net, shell }, fixture) => {
     const { DatabaseSync } = process.getBuiltinModule('node:sqlite'), fs = process.getBuiltinModule('node:fs');
-    const original = net.fetch.bind(net), bytes = Buffer.from(fixture.payload, 'base64');
+    const original = net.fetch.bind(net), originalRequest = net.request.bind(net), bytes = Buffer.from(fixture.payload, 'base64');
     globalThis.updateSmoke = { requests: [], corrupt: true, failOpen: true, opened: 0 };
     net.fetch = async (input, options) => {
       const url = String(input); if (!/^https?:/.test(url)) return original(input, options);
@@ -52,6 +52,8 @@ try {
     // The production update transport uses ClientRequest: Electron net.fetch rejects manual redirects.
     const { EventEmitter } = process.getBuiltinModule('node:events'), { Readable } = process.getBuiltinModule('node:stream');
     net.request = options => {
+      const url = typeof options === 'string' ? options : options.url;
+      if (!/^https?:/.test(String(url))) return originalRequest(options);
       const request = new EventEmitter(), controller = new AbortController(), headers = { ...options.headers };
       let aborted = false, body;
       request.setHeader = (name, value) => { headers[name] = value; };
