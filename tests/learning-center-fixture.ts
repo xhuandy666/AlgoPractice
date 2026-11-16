@@ -5,6 +5,7 @@ import { PracticeStore } from '../src/storage/practice-store.ts';
 import { archiveDateBoundary } from '../src/shared/archive-date.ts';
 import { localDate } from '../src/learning/fsrs.ts';
 import type { ProblemContent } from '../src/shared/library.ts';
+import type { RunResult } from '../src/runner/types.ts';
 
 // This fixture is authored test data in an explicitly supplied temporary directory. No user records.
 const [directory, metadataPath] = process.argv.slice(2);
@@ -45,8 +46,11 @@ try {
     clock(start + 13 * 60000); store.finishAttempt(attempt.id, { code }); return attempt;
   }
   function ranFinalCode(attemptId: string) {
+    const result = { status: 'completed', diagnostics: [], stdout: '', stderr: '', caseResults: [],
+      runtimeVersion: 'fixture-runtime', durationMs: 0, executionScope: 'local-user-code-not-sandboxed',
+      hostPlatform: `${process.platform}-${process.arch}` } satisfies RunResult;
     store.saveRun({ attemptId, code, testSuiteVersion: 'fixture-suite', expectedOutputSource: 'none', adapterVersion: 'fixture-adapter',
-      runtimeVersion: 'fixture-runtime', status: 'completed', result: { status: 'completed', caseResults: [] } });
+      runtimeVersion: 'fixture-runtime', status: 'completed', result });
   }
   // Rich but explicitly synthetic daily history, with gaps and varying daily completion counts.
   for (let daysAgo = 180; daysAgo >= 1; daysAgo--) {

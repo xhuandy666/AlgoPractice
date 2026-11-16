@@ -1,5 +1,7 @@
 import assert from 'node:assert/strict';
-import { mkdir, mkdtemp, readdir, readFile, rm, stat, symlink, utimes, writeFile } from 'node:fs/promises';
+import fs from 'node:fs/promises';
+import { mkdir, mkdtemp, readdir, readFile, realpath, rm, stat, symlink, utimes, writeFile } from 'node:fs/promises';
+import { syncBuiltinESMExports } from 'node:module';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { test } from 'node:test';
@@ -28,10 +30,48 @@ test('the newest automatic backup is copied once under an installation-specific 
   assert.deepEqual(await readdir(f.folder), [expected]);
   assert.equal(await readFile(join(f.folder, expected), 'utf8'), 'newest backup');
   assert.deepEqual([status.lastCopy, status.lastError, status.busy, status.directory], [expected, null, false, f.folder]);
+  // A sentinel timestamp makes a needless replacement visible even on filesystems with coarse timestamp precision.
+  await utimes(join(f.folder, expected), new Date('2001-01-01T00:00:00Z'), new Date('2001-01-01T00:00:00Z'));
   const before = (await stat(join(f.folder, expected))).mtimeMs;
-  await f.mirror.reconcile();
+  await f.mirror.reconcile(true);
   assert.equal((await stat(join(f.folder, expected))).mtimeMs, before, 'a second run is a no-op');
   assert.deepEqual((await readdir(f.local)).sort(), [`automatic-${id(1)}.algobak`, `automatic-${id(2)}.algobak`], 'local backups are never touched');
+});
+
+test('an equally sized damaged copy is replaced with the complete local backup', async t => {
+  const f = await fixture(t), body = 'original backup\n'.repeat(10_000);
+  await f.addLocal(1, '2026-11-11T08:00:00', body);
+  const first = await f.mirror.reconcile();
+  assert.equal(first.lastError, null);
+  const target = join(f.folder, first.lastCopy!), damaged = Buffer.from(body);
+  damaged[70_000] ^= 0xff;
+  await writeFile(target, damaged);
+  assert.equal((await stat(target)).size, Buffer.byteLength(body));
+  f.advance(1_000);
+  const repaired = await f.mirror.reconcile(true);
+  assert.equal(repaired.lastError, null);
+  assert.ok((await readFile(target)).equals(Buffer.from(body)), 'the full contents must match, not just the size');
+  assert.notEqual(repaired.lastCopiedAt, first.lastCopiedAt);
+  assert.deepEqual(await readdir(f.folder), [first.lastCopy], 'no partial copies are left behind');
+  assert.equal(await readFile(join(f.local, `automatic-${id(1)}.algobak`), 'utf8'), body, 'the local backup is untouched');
+});
+
+test('a damaged temporary copy is rejected before publication and never reported as a success', async t => {
+  const f = await fixture(t), body = 'original backup';
+  await f.addLocal(1, '2026-11-11T08:00:00', body);
+  const originalCopyFile = fs.copyFile;
+  const copy = t.mock.method(fs, 'copyFile', async (...[source, destination, mode]: Parameters<typeof fs.copyFile>) => {
+    await originalCopyFile(source, destination, mode);
+    await writeFile(destination, 'damaged! backup'); // Same size as the source: only a content check can reject it.
+  });
+  syncBuiltinESMExports();
+  try {
+    const failed = await f.mirror.reconcile(true);
+    assert.match(failed.lastError ?? '', /副本内容与本地备份不一致/);
+    assert.equal(failed.lastCopy, null); assert.equal(failed.lastCopiedAt, null);
+    assert.deepEqual(await readdir(f.folder), [], 'neither a published backup nor a temporary file survives');
+    assert.equal(await readFile(join(f.local, `automatic-${id(1)}.algobak`), 'utf8'), body);
+  } finally { copy.mock.restore(); syncBuiltinESMExports(); }
 });
 
 test('only this installation\'s older copies are pruned, and its leftovers cleaned', async t => {
@@ -75,7 +115,7 @@ test('no folder means no work and no status', async t => {
 
 test('a copy folder must exist, be writable and live outside the data directory', async t => {
   const f = await fixture(t);
-  assert.equal(await validateMirrorDirectory(f.folder, f.data), f.folder);
+  assert.equal(await validateMirrorDirectory(f.folder, f.data), await realpath(f.folder));
   assert.deepEqual(await readdir(f.folder), [], 'the write probe cleans up after itself');
   await assert.rejects(validateMirrorDirectory('relative/folder', f.data), /完整路径/);
   await assert.rejects(validateMirrorDirectory(join(f.root, 'missing'), f.data), /找不到/);

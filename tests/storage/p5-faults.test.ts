@@ -152,7 +152,11 @@ for (const fault of ['directory-readonly', 'database-readonly', 'database-unread
         assert.throws(() => readFileSync(dbPath), { code: 'EACCES' });
       }
       let opened: PracticeStore | undefined;
-      try { assert.throws(() => { opened = new PracticeStore(dbPath); }, /readonly|read-only|unable to open|permission denied|EACCES/i); }
+      try { assert.throws(() => { opened = new PracticeStore(dbPath); }, (error: unknown) => {
+        assert.match((error as Error).message, /readonly|read-only|unable to open|permission denied|EACCES/i);
+        if (fault === 'database-readonly') assert.equal((error as { errcode?: number }).errcode! & 0xff, 8, 'startup propagates SQLITE_READONLY');
+        return true;
+      }); }
       finally { opened?.close(); }
     } finally {
       chmodSync(path, 0o700);

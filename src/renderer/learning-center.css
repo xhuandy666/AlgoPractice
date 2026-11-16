@@ -122,7 +122,7 @@
 .streak-card[data-active=true] .streak-count strong { color: var(--color-warning); }
 .streak-top p:not(.streak-count) { margin-top: 2px; font-size: 13px; font-weight: 700; color: var(--color-muted); }
 .streak-week { display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); gap: 4px; margin: 16px 0 0; padding: 12px 8px; border-radius: var(--radius-md); background: var(--color-paper-2); list-style: none; }
-.streak-week li { display: grid; justify-items: center; gap: 6px; font-size: 12px; font-weight: 900; color: var(--color-muted); }
+.streak-week li { position: relative; display: grid; justify-items: center; gap: 6px; font-size: 12px; font-weight: 900; color: var(--color-muted); }
 .streak-week i { display: grid; place-items: center; width: 28px; height: 28px; border-radius: 50%; background: var(--color-paper-3); color: #fff; }
 .streak-week li[data-done=true] i { background: var(--color-flame); box-shadow: 0 2px 0 var(--color-flame-deep); }
 .streak-week li[data-today=true] > span:first-child { color: var(--color-warning); }

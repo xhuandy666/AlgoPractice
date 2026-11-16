@@ -313,6 +313,10 @@ export class PracticeStore {
           this.#db.exec(`PRAGMA application_id = ${APPLICATION_ID}; PRAGMA user_version = ${SCHEMA_VERSION};`);
         });
         checkDatabase(this.#db);
+      } else {
+        // SQLite may silently open an existing file read-only. BEGIN IMMEDIATE alone also succeeds in that mode;
+        // execute a write with no matching rows so startup fails before the UI can acknowledge any edits.
+        this.#transaction(() => this.#db.exec('UPDATE problem_review_meta SET revision = revision WHERE 0'));
       }
       this.#learning = new LearningRepository(this.#db, operation => this.#transaction(operation), attemptId => this.getInterviewForAttempt(attemptId)?.mode);
     } catch (error) {

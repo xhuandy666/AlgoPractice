@@ -35,13 +35,19 @@ const report = { startedAt: new Date().toISOString(), platform: process.platform
 };
 if (!packaged) report.build = Object.fromEntries(await Promise.all(['main.cjs', 'preload.cjs'].map(async name => [name, createHash('sha256').update(await readFile(join(launchDirectory, 'dist', name))).digest('hex')])));
 let app, page, cdp, viewport = [1440, 1000];
-const api = (method, ...args) => page.evaluate(({ method, args }) => window.algo[method](...args), { method, args });
+async function bounded(promise, description, timeout = 25000) {
+  let guard;
+  try { return await Promise.race([promise, new Promise((_, reject) => {
+    guard = setTimeout(() => reject(new Error(`Timed out: ${description}`)), timeout);
+  })]); } finally { clearTimeout(guard); }
+}
+const api = (method, ...args) => bounded(page.evaluate(({ method, args }) => window.algo[method](...args), { method, args }), `isolated IPC ${method}`);
 const nav = name => page.getByRole('navigation', { name: '主导航' }).getByRole('button', { name, exact: true }).click();
 const pass = (name, details = true) => { report.assertions.push({ name, details, passed: true }); console.log('PASS', name); };
 const alive = pid => { try { process.kill(pid, 0); return true; } catch (error) { if (error.code === 'ESRCH') return false; throw error; } };
 async function until(check, description, timeout = 20000) {
   const end = Date.now() + timeout;
-  while (Date.now() < end) { if (await check()) return; await delay(100); }
+  while (Date.now() < end) { if (await bounded(check(), description, Math.max(1, end - Date.now()))) return; await delay(100); }
   throw new Error(`Timed out: ${description}`);
 }
 async function resize(width, height) {
@@ -81,19 +87,26 @@ async function readyHome() {
 }
 async function close() {
   if (!app) return;
-  const closing = app, child = app.process();
-  await until(async () => !(await api('backups')).busy, 'automatic backup settles');
-  const intercepted = await closing.evaluate(({ clipboard, shell }) => {
-    const saved = globalThis.learningCenterSmoke;
-    clipboard.writeText = saved.originalWrite; shell.openExternal = saved.originalOpen; globalThis.fetch = saved.originalFetch;
-    return { http: saved.http, copies: saved.copies.length, opened: saved.opened };
-  });
-  report.httpAttempts.push(...intercepted.http.map(url => ({ source: 'main', url })));
-  const pids = [...new Set([child.pid, ...await closing.evaluate(({ app }) => app.getAppMetrics().map(metric => metric.pid))])];
-  await closing.close();
-  await until(async () => (child.exitCode !== null || child.signalCode !== null) && pids.every(pid => !alive(pid)), 'all recorded app processes exit', 15000);
-  report.exits.push({ pid: child.pid, pids, exitCode: child.exitCode, signal: child.signalCode, remaining: pids.filter(alive) });
-  app = null;
+  const closing = app, child = app.process(); app = null;
+  try {
+    await until(async () => !(await api('backups')).busy, 'automatic backup settles');
+    const intercepted = await bounded(closing.evaluate(({ clipboard, shell }) => {
+      const saved = globalThis.learningCenterSmoke;
+      clipboard.writeText = saved.originalWrite; shell.openExternal = saved.originalOpen; globalThis.fetch = saved.originalFetch;
+      return { http: saved.http, copies: saved.copies.length, opened: saved.opened };
+    }), 'restore isolated intercepted services', 5000);
+    report.httpAttempts.push(...intercepted.http.map(url => ({ source: 'main', url })));
+    const pids = [...new Set([child.pid, ...await bounded(closing.evaluate(({ app }) => app.getAppMetrics().map(metric => metric.pid)), 'read isolated process metrics', 5000)])];
+    await bounded(closing.close(), 'isolated Electron quits', 15000);
+    await until(async () => (child.exitCode !== null || child.signalCode !== null) && pids.every(pid => !alive(pid)), 'all recorded app processes exit', 15000);
+    report.exits.push({ pid: child.pid, pids, exitCode: child.exitCode, signal: child.signalCode, remaining: pids.filter(alive) });
+  } catch (error) {
+    if (child.exitCode === null && child.signalCode === null) {
+      if (process.platform === 'win32') execFileSync('taskkill', ['/pid', String(child.pid), '/T', '/F'], { stdio: 'pipe' });
+      else child.kill('SIGKILL');
+    }
+    throw error;
+  }
 }
 async function screenshot(name, lowerReview = false) {
   const notices = page.locator('.preview-banner').getByRole('button', { name: '收起', exact: true });
@@ -113,9 +126,65 @@ async function screenshot(name, lowerReview = false) {
 async function captureSizes(prefix) {
   for (const size of [[1440, 1000], [1280, 900], [820, 1000]]) {
     await resize(...size); await screenshot(`${prefix}-${size[0]}x${size[1]}.png`);
+    if (prefix === 'home') await homeContentReachable();
     if (prefix === 'home' && size[0] === 820) await screenshot('home-820x1000-review.png', true);
   }
   await resize(1440, 1000);
+}
+async function homeContentReachable() {
+  const home = page.locator('.learning-center');
+  const layout = await home.evaluate(element => {
+    const bounds = element.getBoundingClientRect(), shell = getComputedStyle(document.querySelector('.app-shell'));
+    return { width: innerWidth, height: innerHeight, top: bounds.top, bottom: bounds.bottom,
+      clientHeight: element.clientHeight, scrollHeight: element.scrollHeight, clientWidth: element.clientWidth,
+      scrollWidth: element.scrollWidth, overflowY: getComputedStyle(element).overflowY,
+      pageWidth: document.documentElement.scrollWidth, pageHeight: document.documentElement.scrollHeight,
+      // The existing narrow layout stacks navigation above a naturally scrolling document.
+      scrollOwner: shell.display === 'flex' && shell.flexDirection === 'column' ? 'document' : 'panel' };
+  });
+  layout.pageScrollProbe = await page.evaluate(async () => {
+    const root = document.scrollingElement; root.scrollTo(0, root.scrollHeight);
+    await new Promise(done => requestAnimationFrame(() => requestAnimationFrame(done)));
+    const result = { scrollTop: root.scrollTop, headerTop: document.querySelector('.app-header').getBoundingClientRect().top };
+    root.scrollTo(0, 0); await new Promise(done => requestAnimationFrame(done)); return result;
+  });
+  assert.ok(layout.clientHeight > 0 && ['auto', 'scroll'].includes(layout.overflowY), 'learning center owns a usable vertical scroll area');
+  assert.ok(layout.scrollWidth <= layout.clientWidth + 1 && layout.pageWidth <= layout.width, 'learning content does not overflow horizontally');
+  if (layout.scrollOwner === 'panel') {
+    assert.ok(layout.top >= 0 && layout.bottom <= layout.height + 1, 'desktop learning scroll area stays within the app viewport');
+    assert.ok(layout.pageHeight <= layout.height + 1, `desktop learning content cannot push app chrome off screen (${JSON.stringify(layout)})`);
+    assert.equal(layout.pageScrollProbe.scrollTop, 0, 'desktop document cannot scroll app chrome out of view');
+  }
+  const reached = [];
+  // Optional cards can extend the page; both the review action and the last content must remain reachable.
+  for (const selector of ['.center-review-summary', '.topic-card', '.activity-history', '.center-footer']) {
+    const target = home.locator(selector);
+    if (selector === '.topic-card' && !(await target.count())) continue;
+    await target.scrollIntoViewIfNeeded();
+    await page.evaluate(() => new Promise(done => requestAnimationFrame(() => requestAnimationFrame(done))));
+    const state = await target.evaluate((element, scrollOwner) => {
+      const root = element.closest('.learning-center'), bounds = root.getBoundingClientRect(), rect = element.getBoundingClientRect();
+      const hit = document.elementFromPoint(rect.left + rect.width / 2, rect.top + rect.height / 2);
+      return { top: rect.top, bottom: rect.bottom, viewportTop: Math.max(0, bounds.top),
+        viewportBottom: Math.min(innerHeight, bounds.bottom), scrollTop: (scrollOwner === 'panel' ? root : document.scrollingElement).scrollTop,
+        unobscured: Boolean(hit && element.contains(hit)), hitElement: hit?.className ?? null };
+    }, layout.scrollOwner);
+    assert.ok(state.top >= state.viewportTop - 1 && state.bottom <= state.viewportBottom + 1, `${selector}: all content can be scrolled above the app's bottom edge`);
+    assert.equal(state.unobscured, true, `${selector}: visible content is not covered by app chrome or an overlay (${JSON.stringify(state)})`);
+    const buttons = target.locator('button:enabled'), buttonCount = await buttons.count();
+    if (buttonCount) await buttons.first().click({ trial: true });
+    if (buttonCount > 1) await buttons.last().click({ trial: true });
+    reached.push({ selector, ...state });
+  }
+  if (layout.scrollOwner === 'document' ? layout.pageHeight > layout.height + 1 : layout.scrollHeight > layout.clientHeight + 1) assert.ok(reached.at(-1).scrollTop > 0, 'overflowing home content is reached through its intended scroll area');
+  await home.evaluate(element => { element.scrollTo(0, 0); document.scrollingElement.scrollTo(0, 0); });
+  await page.evaluate(() => new Promise(done => requestAnimationFrame(() => requestAnimationFrame(done))));
+  const navigation = page.getByRole('navigation', { name: '主导航' });
+  await navigation.getByRole('button', { name: '学习中心', exact: true }).click({ trial: true });
+  const result = { ...layout, reached };
+  report.homeScrollLayouts ??= []; report.homeScrollLayouts.push(result);
+  pass(`Learning summary, optional topics, heatmap and footer remain reachable at ${layout.width}x${layout.height}`, result);
+  return result;
 }
 async function reviewContrast(selector, label) {
   const result = await page.evaluate(selector => {
@@ -268,9 +337,7 @@ try {
   await captureSizes('home');
   await resize(1440, 1100); await screenshot('home-publish-1440x1100.png');
   await resize(1440, 1240); await screenshot('home-publish-1440x1240.png');
-  const completeHome = await page.evaluate(() => ({ summaryBottom: document.querySelector('.center-review-summary').getBoundingClientRect().bottom, footerBottom: document.querySelector('.center-footer').getBoundingClientRect().bottom, height: innerHeight }));
-  assert.ok(completeHome.summaryBottom < completeHome.height - 36 && completeHome.footerBottom < completeHome.height - 36, 'learning summary and footer remain above the app status bar');
-  report.publicationHome = completeHome;
+  report.publicationHome = await homeContentReachable();
   await resize(1440, 1000);
   if (!screenshotOnly) {
     await api('saveLearningSettings', { dailyReviewBudget: 2 });
@@ -367,9 +434,9 @@ try {
   pass('No renderer errors or outbound HTTP; every recorded Electron process exits'); report.result = 'passed';
 } catch (error) {
   report.result = 'failed'; report.error = String(error.stack || error); process.exitCode = 1; console.error(error);
-  if (page && !page.isClosed()) await page.screenshot({ path: join(captureDirectory, 'failure.png') }).catch(() => {});
+  if (page && !page.isClosed()) await bounded(page.screenshot({ path: join(captureDirectory, 'failure.png') }), 'capture isolated failure', 5000).catch(() => {});
 } finally {
-  if (app) try { await close(); } catch (error) { report.cleanupError = String(error); report.result = 'failed'; process.exitCode = 1; app?.process().kill(); }
+  if (app) try { await close(); } catch (error) { report.cleanupError = String(error); report.result = 'failed'; process.exitCode = 1; }
   report.finishedAt = new Date().toISOString(); await writeFile(join(directory, 'report.json'), JSON.stringify(report, null, 2));
   console.log('Learning center report:', join(directory, 'report.json')); console.log('Screenshots:', captureDirectory);
 }

@@ -243,6 +243,52 @@ public:
 };`,
 };
 
+// Methods may return the object's own storage. Later calls must not rewrite an earlier operation's output,
+// including nested collections and node graphs that remain attached to the object.
+const mutableViews: DesignAdapter = { kind: 'design', className: 'MutableViews', constructorParams: [], methods: [
+  { name: 'values', params: [], returns: { array: 'int' } },
+  { name: 'matrix', params: [], returns: { array: { array: 'int' } } },
+  { name: 'head', params: [], returns: 'listnode' }, { name: 'root', params: [], returns: 'treenode' },
+  { name: 'change', params: ['int'], returns: 'void' },
+] };
+const mutableViewSolutions: Record<Language, string> = {
+  python: `class MutableViews:
+    def __init__(self):
+        self.v, self.m = [1, 2], [[1], [2]]
+        self.h, self.t = ListNode(1, ListNode(2)), TreeNode(1, TreeNode(2), TreeNode(3))
+    def values(self): return self.v
+    def matrix(self): return self.m
+    def head(self): return self.h
+    def root(self): return self.t
+    def change(self, value):
+        self.v[0] = self.m[0][0] = self.h.val = self.t.val = value
+`,
+  java: `class MutableViews {
+    private int[] v = {1, 2}; private int[][] m = {{1}, {2}};
+    private ListNode h = new ListNode(1, new ListNode(2));
+    private TreeNode t = new TreeNode(1, new TreeNode(2), new TreeNode(3));
+    public int[] values() { return v; } public int[][] matrix() { return m; }
+    public ListNode head() { return h; } public TreeNode root() { return t; }
+    public void change(int value) { v[0] = m[0][0] = h.val = t.val = value; }
+}`,
+  go: `type MutableViews struct { v []int; m [][]int; h *ListNode; t *TreeNode }
+func Constructor() MutableViews { return MutableViews{[]int{1, 2}, [][]int{{1}, {2}}, &ListNode{1, &ListNode{2, nil}}, &TreeNode{1, &TreeNode{2, nil, nil}, &TreeNode{3, nil, nil}}} }
+func (this *MutableViews) Values() []int { return this.v }
+func (this *MutableViews) Matrix() [][]int { return this.m }
+func (this *MutableViews) Head() *ListNode { return this.h }
+func (this *MutableViews) Root() *TreeNode { return this.t }
+func (this *MutableViews) Change(value int) { this.v[0] = value; this.m[0][0] = value; this.h.Val = value; this.t.Val = value }`,
+  cpp: `class MutableViews {
+    vector<int> v{1, 2}; vector<vector<int>> m{{1}, {2}};
+    ListNode* h = new ListNode(1, new ListNode(2));
+    TreeNode* t = new TreeNode(1, new TreeNode(2), new TreeNode(3));
+public:
+    vector<int>& values() { return v; } vector<vector<int>>& matrix() { return m; }
+    ListNode* head() { return h; } TreeNode* root() { return t; }
+    void change(int value) { v[0] = m[0][0] = h->val = t->val = value; }
+};`,
+};
+
 async function run(language: Language, slug: string, code: string, cases?: TestCase[]): Promise<RunResult> {
   const { adapter, cases: samples } = problem(slug);
   return runCode({ language, runtimePath: runtimePath(language), code, mode: 'function', adapter, cases: cases ?? samples }, { runtimeRoot: root });
@@ -271,6 +317,37 @@ for (const language of ['python', 'java', 'go', 'cpp'] as const) {
     const result = await runCode({ language, runtimePath: runtimePath(language), code: bagSolutions[language], mode: 'function', adapter: bag, cases: [test] }, { runtimeRoot: root });
     assert.equal(result.status, 'passed', JSON.stringify(result.diagnostics.length ? result.diagnostics : result.caseResults[0]?.actual));
     assert.equal((test.args![0] as string[]).length > 150, true);
+  });
+  test(`${language}: design returns preserve mutable arrays and nodes at each operation`, { skip }, async () => {
+    const sample: TestCase = {
+      args: [['MutableViews', 'values', 'matrix', 'head', 'root', 'change', 'values', 'matrix', 'head', 'root'],
+        [[], [], [], [], [], [9], [], [], [], []]],
+      expected: [null, [1, 2], [[1], [2]], [1, 2], [1, 2, 3], null, [9, 2], [[9], [2]], [9, 2], [9, 2, 3]],
+    };
+    const request = { language, runtimePath: runtimePath(language), code: mutableViewSolutions[language], mode: 'function' as const, adapter: mutableViews };
+    const judged = await runCode({ ...request, cases: [sample] }, { runtimeRoot: root });
+    assert.equal(judged.status, 'passed', JSON.stringify(judged.diagnostics.length ? judged.diagnostics : judged.caseResults));
+    assert.deepEqual(judged.caseResults[0].actual, sample.expected);
+    const unjudged = await runCode({ ...request, cases: [{ args: sample.args }] }, { runtimeRoot: root });
+    assert.equal(unjudged.status, 'completed', JSON.stringify(unjudged.diagnostics));
+    assert.deepEqual(unjudged.caseResults[0].actual, sample.expected);
+    const limited = await runCode({ ...request, cases: [sample], outputLimitBytes: 64 }, { runtimeRoot: root });
+    assert.equal(limited.status, 'output_limit', JSON.stringify(limited));
+  });
+  test(`${language}: an invalid design return is reported before a later operation repairs it`, { skip }, async () => {
+    const adapter: DesignAdapter = { kind: 'design', className: 'Cycle', constructorParams: [], methods: [
+      { name: 'head', params: [], returns: 'listnode' }, { name: 'repair', params: [], returns: 'void' },
+    ] };
+    const code = {
+      python: 'class Cycle:\n    def __init__(self):\n        self.h = ListNode(1)\n        self.h.next = self.h\n    def head(self): return self.h\n    def repair(self): self.h.next = None',
+      java: 'class Cycle { ListNode h = new ListNode(1); public Cycle(){h.next=h;} public ListNode head(){return h;} public void repair(){h.next=null;} }',
+      go: 'type Cycle struct { h *ListNode }\nfunc Constructor() Cycle { h := &ListNode{Val:1}; h.Next=h; return Cycle{h} }\nfunc (this *Cycle) Head() *ListNode { return this.h }\nfunc (this *Cycle) Repair() { this.h.Next=nil }',
+      cpp: 'class Cycle { ListNode* h = new ListNode(1); public: Cycle(){h->next=h;} ListNode* head(){return h;} void repair(){h->next=nullptr;} };',
+    }[language];
+    const result = await runCode({ language, runtimePath: runtimePath(language), code, mode: 'function', adapter,
+      cases: [{ args: [['Cycle', 'head', 'repair'], [[], [], []]] }] }, { runtimeRoot: root });
+    assert.equal(result.status, 'runtime_error', JSON.stringify(result));
+    assert.ok(result.diagnostics.some(diagnostic => diagnostic.source === 'user' && diagnostic.code === 'invalid_return'), JSON.stringify(result.diagnostics));
   });
   test(`${language}: an exception inside a design method is the user's runtime error`, { skip }, async () => {
     const top = { python: ['return self.stack[-1][0]', "raise ValueError('boom')"], java: ['return stack.peek()[0];', 'throw new IllegalStateException("boom");'],

@@ -1,6 +1,6 @@
-import { randomBytes } from 'node:crypto';
+import { createHash, randomBytes } from 'node:crypto';
 import { constants } from 'node:fs';
-import { copyFile, readdir, realpath, rename, rm, stat, unlink, writeFile } from 'node:fs/promises';
+import { copyFile, open, readdir, realpath, rename, rm, stat, unlink, writeFile } from 'node:fs/promises';
 import { isAbsolute, join, relative, sep } from 'node:path';
 import type { MirrorStatus } from '../shared/maintenance';
 
@@ -38,6 +38,26 @@ export const mirrorName = (installId: string, id: string, modified: Date) => `�
 const ownCopy = (installId: string) => new RegExp(`^题炼-备份-${installId}-\\d{8}-\\d{6}-[a-f0-9-]{36}\\.algobak$`);
 const ownPartial = (installId: string) => new RegExp(`^\\.题炼-备份-${installId}-[a-f0-9]{16}\\.partial$`);
 
+interface FileDigest { size: number; sha256: string }
+/** Read every byte with bounded memory: an equally sized copy may still be incomplete or damaged. */
+async function fileDigest(path: string): Promise<FileDigest> {
+  const input = await open(path, constants.O_RDONLY | constants.O_NOFOLLOW);
+  try {
+    const info = await input.stat();
+    if (!info.isFile()) throw new Error('备份路径不是普通文件。');
+    const hash = createHash('sha256'), buffer = Buffer.alloc(65_536); let size = 0;
+    for (;;) {
+      const { bytesRead } = await input.read(buffer);
+      if (!bytesRead) break;
+      size += bytesRead;
+      if (size > info.size) throw new Error('备份文件在读取时发生变化。');
+      hash.update(buffer.subarray(0, bytesRead));
+    }
+    if (size !== info.size) throw new Error('备份文件在读取时发生变化。');
+    return { size, sha256: hash.digest('hex') };
+  } finally { await input.close(); }
+}
+
 /** Real path of a folder that can hold copies: an existing, writable directory outside the data directory. */
 export async function validateMirrorDirectory(directory: string, dataDirectory: string): Promise<string> {
   if (!isAbsolute(directory)) throw new Error('请选择一个完整路径的文件夹。');
@@ -73,8 +93,10 @@ export class BackupMirror {
       const local = (await this.options.localBackups()).sort((a, b) => b.modified.getTime() - a.modified.getTime() || b.id.localeCompare(a.id))[0];
       if (!local) return this.status();
       const name = mirrorName(setting.installId, local.id, local.modified), target = join(setting.directory, name);
-      const size = (await stat(local.path)).size, present = await stat(target).catch(() => null);
-      if (!present || present.size !== size) await this.#copy(local.path, target, setting, size);
+      const expected = await fileDigest(local.path), present = await stat(target).catch(() => null);
+      if (!present || present.size !== expected.size || (await fileDigest(target)).sha256 !== expected.sha256) {
+        await this.#copy(local.path, target, setting, expected);
+      }
       await this.#prune(setting);
       this.#lastCopy = name; this.#lastCopiedAt = this.#now().toISOString(); this.#lastError = null; this.#failures = 0; this.#retryAt = 0;
     } catch (error) {
@@ -84,12 +106,13 @@ export class BackupMirror {
     return this.status();
   }
   #reset(directory: string | null) { this.#directory = directory; this.#lastCopy = null; this.#lastCopiedAt = null; this.#lastError = null; this.#failures = 0; this.#retryAt = 0; }
-  /** Copy beside the target, check the size, then rename: a reader of the synced folder never sees half a backup. */
-  async #copy(source: string, target: string, setting: MirrorSetting, size: number) {
+  /** Check the complete temporary copy before atomic publication; never publish an unverified backup. */
+  async #copy(source: string, target: string, setting: MirrorSetting, expected: FileDigest) {
     const partial = join(setting.directory, `.题炼-备份-${setting.installId}-${randomBytes(8).toString('hex')}.partial`);
     try {
       await copyFile(source, partial, constants.COPYFILE_EXCL);
-      if ((await stat(partial)).size !== size) throw new Error('副本大小与本地备份不一致。');
+      const copied = await fileDigest(partial);
+      if (copied.size !== expected.size || copied.sha256 !== expected.sha256) throw new Error('副本内容与本地备份不一致。');
       await rename(partial, target);
     } catch (error) { await rm(partial, { force: true }).catch(() => {}); throw error; }
   }

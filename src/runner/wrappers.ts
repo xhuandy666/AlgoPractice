@@ -84,16 +84,18 @@ _ap_observe = lambda: encode(result, kind)
 ${PYTHON_RESULT}`;
 }
 /** Design problems: construct the class with the first operation's arguments, then call each method in order and
- * record one value per operation (None for the constructor and void methods). */
+ * encode each return before the next call can mutate it (None for the constructor and void methods). */
 export function pythonDesignWrapper(adapter: DesignAdapter, cases: TestCase[]): string {
   return `${pythonPrelude(adapter, cases)}adapter = meta['adapter']; operations, arguments = meta['cases'][int(sys.argv[1])]['args']
 methods = {method['name']: method for method in adapter['methods']}
 instance = scope[adapter['className']](*[decode(v, t) for v, t in zip(arguments[0], adapter['constructorParams'])])
-returned = [('void', None)]
+returned = [None]
 for name, values in zip(operations[1:], arguments[1:]):
     method = methods[name]
-    returned.append((method['returns'], getattr(instance, name)(*[decode(v, t) for v, t in zip(values, method['params'])])))
-_ap_observe = lambda: [None if kind == 'void' else encode(value, kind) for kind, value in returned]
+    value = getattr(instance, name)(*[decode(v, t) for v, t in zip(values, method['params'])])
+    try: returned.append(None if method['returns'] == 'void' else encode(value, method['returns']))
+    except (TypeError,ValueError,OverflowError) as error: raise _APInvalidReturnError(str(error)) from error
+_ap_observe = lambda: returned
 ${PYTHON_RESULT}`;
 }
 function javaType(type: ValueType, boxed = false): string {
@@ -184,7 +186,8 @@ ${invoke}  static Object slice(Object value,int start,int end){
 }
 `;
 }
-/** Design problems: each case builds the class, then calls its methods in order. Calls are split into helper methods
+/** Design problems: each case builds the class, then encodes each method's return immediately so later calls cannot
+ * mutate an earlier result. Calls are split into helper methods
  * so long cases stay far below the JVM's 64 KB limit per method. */
 export function javaDesignWrapper(adapter: DesignAdapter, cases: TestCase[]): string {
   const chunks: string[] = [];
@@ -192,14 +195,14 @@ export function javaDesignWrapper(adapter: DesignAdapter, cases: TestCase[]): st
     const [constructor, ...calls] = designSteps(adapter, test.args), parts: string[] = [];
     for (let start = 0; start < calls.length; start += 100) {
       const name = `case${index}Part${parts.length}`; parts.push(name);
-      chunks.push(`  static void ${name}(${adapter.className} apObject, ArrayList<Object> apOut) throws Exception {\n${calls.slice(start, start + 100).map(step => {
+      chunks.push(`  static void ${name}(${adapter.className} apObject, ArrayList<String> apOut) throws Exception {\n${calls.slice(start, start + 100).map(step => {
         const call = `apObject.${step.name}(${step.args.map((value, i) => literal(value, step.params[i])).join(',')})`;
-        return step.returns === 'void' ? `    ${call}; apOut.add(null);` : `    apOut.add(${call});`;
+        return step.returns === 'void' ? `    ${call}; apOut.add("null");` : `    apOut.add(json(${call}));`;
       }).join('\n')}\n  }\n`);
     }
-    return `case ${index}: { ArrayList<Object> apOut = new ArrayList<>(); ${adapter.className} apObject = new ${adapter.className}(${constructor.args.map((value, i) => literal(value, constructor.params[i])).join(',')}); apOut.add(null);\n${parts.map(name => `${name}(apObject, apOut);`).join('\n')}\nreturn apOut; }`;
+    return `case ${index}: { ArrayList<String> apOut = new ArrayList<>(); ${adapter.className} apObject = new ${adapter.className}(${constructor.args.map((value, i) => literal(value, constructor.params[i])).join(',')}); apOut.add("null");\n${parts.map(name => `${name}(apObject, apOut);`).join('\n')}\nreturn "[" + String.join(",", apOut) + "]"; }`;
   }).join('\n');
-  return javaMain(`${chunks.join('')}  static Object invoke(int index) throws Exception { switch(index) { ${branches} default: throw new IllegalArgumentException("Invalid test index"); } }\n`, 'json(result)');
+  return javaMain(`${chunks.join('')}  static Object invoke(int index) throws Exception { switch(index) { ${branches} default: throw new IllegalArgumentException("Invalid test index"); } }\n`, '(String)result');
 }
 export const JAVA_NODES = `class ListNode { int val; ListNode next; ListNode(){} ListNode(int v){val=v;} ListNode(int v,ListNode n){val=v;next=n;} }
 class TreeNode { int val; TreeNode left,right; TreeNode(){} TreeNode(int v){val=v;} TreeNode(int v,TreeNode l,TreeNode r){val=v;left=l;right=r;} }

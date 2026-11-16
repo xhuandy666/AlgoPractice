@@ -20,8 +20,10 @@ test('a new database is created in one step with this lineage\'s marker and reop
   const root = directory(t), file = join(root, 'practice.sqlite');
   const store = new PracticeStore(file); store.saveDraft({ problemId: 'p', language: 'python', code: 'kept' }); store.close();
   assert.deepEqual(header(file), { applicationId: APPLICATION_ID, version: SCHEMA_VERSION });
+  const beforeReopen = digest(file);
   const reopened = new PracticeStore(file);
   try { assert.equal(reopened.getDraft('p', 'python')?.code, 'kept'); reopened.integrityCheck(); } finally { reopened.close(); }
+  assert.equal(digest(file), beforeReopen, 'opening a writable database does not change its persisted contents');
 });
 
 test('databases of earlier versions and foreign SQLite files are refused without changing a byte', t => {
