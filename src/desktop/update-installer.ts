@@ -77,9 +77,9 @@ export async function downloadInstaller(asset: UpdateInstaller, directory: strin
   let reader: ReadableStreamDefaultReader<Uint8Array> | undefined;
   try {
     const response = await fetchInstaller(asset, fetchImpl, signal);
-    if (!response.ok || !response.body) throw new Error('更新下载失败，请检查网络后重试。');
+    if (!response.ok || !response.body) { await response.body?.cancel(); throw new Error('更新下载失败，请检查网络后重试。'); }
     const declared = response.headers.get('content-length');
-    if (declared !== null && Number(declared) !== asset.size) throw new Error('安装包大小与发布记录不一致。');
+    if (declared !== null && Number(declared) !== asset.size) { await response.body.cancel(); throw new Error('安装包大小与发布记录不一致。'); }
     reader = response.body.getReader();
     const file = await open(partial, 'wx', 0o600), hash = createHash('sha256'); let transferred = 0;
     try {

@@ -33,3 +33,27 @@ test('only well-formed final releases on the project page are accepted', async (
   await assert.rejects(checkForUpdate('0.91.0', respond({}, 500)), /HTTP 500/);
   await assert.rejects(checkForUpdate('0.91.0', (async () => { throw new TypeError('fetch failed'); }) as typeof fetch), /无法连接 GitHub/);
 });
+
+test('release HTTP failures cancel their unread response body', async () => {
+  for (const status of [403, 404, 500]) {
+    let cancelled = false;
+    const body = new ReadableStream<Uint8Array>({ cancel() { cancelled = true; } });
+    await assert.rejects(checkForUpdate('0.91.0', async () => new Response(body, { status })));
+    assert.equal(cancelled, true);
+  }
+});
+
+test('release metadata has a streaming byte limit and preserves split UTF-8 text', async () => {
+  let cancelled = false;
+  const oversized = new ReadableStream<Uint8Array>({
+    start(controller) { controller.enqueue(new Uint8Array(1_000_001)); }, cancel() { cancelled = true; },
+  });
+  await assert.rejects(checkForUpdate('0.91.0', async () => new Response(oversized)), /更新信息过大/);
+  assert.equal(cancelled, true, 'an oversized stream is cancelled before waiting for its remaining bytes');
+  const bytes = new TextEncoder().encode(JSON.stringify(release())), split = bytes.indexOf(0xe9) + 1;
+  assert.ok(split > 0);
+  const body = new ReadableStream<Uint8Array>({ start(controller) {
+    controller.enqueue(bytes.subarray(0, split)); controller.enqueue(bytes.subarray(split)); controller.close();
+  } });
+  assert.equal((await checkForUpdate('0.91.0', async () => new Response(body))).name, '题炼 v0.92.0');
+});

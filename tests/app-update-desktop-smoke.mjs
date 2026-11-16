@@ -49,6 +49,24 @@ try {
       const body = Buffer.from(bytes); if (globalThis.updateSmoke.corrupt) body[70_000] ^= 0xff;
       return new Response(body, { headers: { 'content-length': String(body.length) } });
     };
+    // The production update transport uses ClientRequest: Electron net.fetch rejects manual redirects.
+    const { EventEmitter } = process.getBuiltinModule('node:events'), { Readable } = process.getBuiltinModule('node:stream');
+    net.request = options => {
+      const request = new EventEmitter(), controller = new AbortController(), headers = { ...options.headers };
+      let aborted = false, body;
+      request.setHeader = (name, value) => { headers[name] = value; };
+      request.end = () => {
+        void net.fetch(options.url, { headers, signal: controller.signal }).then(response => {
+          if (aborted) return;
+          body = Readable.fromWeb(response.body);
+          body.statusCode = response.status; body.statusMessage = response.statusText;
+          body.headers = Object.fromEntries(response.headers);
+          request.emit('response', body);
+        }).catch(error => { if (!aborted) request.emit('error', error); });
+      };
+      request.abort = () => { if (aborted) return; aborted = true; controller.abort(); body?.destroy(); request.emit('abort'); };
+      return request;
+    };
     shell.openPath = async path => {
       globalThis.updateSmoke.opened++;
       if (globalThis.updateSmoke.failOpen) return 'Synthetic installer open failure';

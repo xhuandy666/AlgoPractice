@@ -39,6 +39,7 @@ import { RendererRecovery } from './renderer-recovery';
 import { createFatalErrorHandlers } from './fatal-errors';
 import { AppUpdateService } from './app-update-service';
 import { nativeUpdateEngine, updateInstallMode } from './update-runtime';
+import { createUpdateFetch } from './update-transport';
 import type { EnvironmentInfo, RunArchive, WorkspaceData } from '../shared/bridge';
 import type { ImportJob } from '../shared/library';
 import type { ImportInput } from '../source/index';
@@ -499,7 +500,7 @@ else {
     const updateMode = updateInstallMode(app.isPackaged, process.platform, process.arch, app.getPath('exe'));
     updates = new AppUpdateService({ version: app.getVersion(), platform: process.platform, arch: process.arch,
       mode: updateMode, directory: join(dataDirectory, 'updates'), automatic: config.automaticUpdates !== false,
-      fetch: (url, options) => net.fetch(url, options), native: updateMode === 'native' ? nativeUpdateEngine(process.platform, process.arch) : undefined,
+      fetch: createUpdateFetch(options => net.request(options)), native: updateMode === 'native' ? nativeUpdateEngine(process.platform, process.arch) : undefined,
       persistAutomatic: enabled => saveConfig({ ...config, automaticUpdates: enabled }),
       changed: state => { if (!win.isDestroyed()) win.webContents.send('app:update-state', state); },
       installationBlocker: updateInstallationBlocker, install: installAppUpdate,

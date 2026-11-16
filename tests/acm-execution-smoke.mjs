@@ -205,7 +205,9 @@ try {
   for (const language of languages) {
     const program = programs.find(item => item.language === language && item.answerFormat === 'acm');
     const frozen = await execute(program, baseTests, `acm-archive-${language}`);
-    const ended = await api('finishPractice', frozen.run.attemptId, program.code);
+    // finishPractice adds completion statistics; archiveOverview intentionally returns the base immutable Attempt.
+    const { completedAt, notCountedBecause, ...ended } = await api('finishPractice', frozen.run.attemptId, program.code);
+    assert.equal(completedAt, ended.endedAt); assert.equal(notCountedBecause, null);
     assert.equal(ended.isActive, false); assert.equal(ended.finalCode, program.code); assert.equal(ended.lastRunMatchesFinal, true);
     assert.deepEqual(ended.finalTestConfig, baseTests);
     const restored = await api('restoreRun', frozen.run.id, randomUUID());

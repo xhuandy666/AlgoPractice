@@ -16,16 +16,30 @@ export function compareVersions(a: string, b: string): number | null {
 }
 
 type FetchLike = (url: string, init: RequestInit) => Promise<Response>;
+async function releaseText(response: Response): Promise<string> {
+  if (!response.body) return '';
+  const reader = response.body.getReader(), decoder = new TextDecoder(); let bytes = 0, text = '';
+  try {
+    for (;;) {
+      const { done, value } = await reader.read(); if (done) break;
+      bytes += value.byteLength;
+      if (bytes > 1_000_000) throw new Error('更新信息过大，已忽略。');
+      text += decoder.decode(value, { stream: true });
+    }
+    return text + decoder.decode();
+  } finally { await reader.cancel().catch(() => {}); }
+}
 export async function latestRelease(fetchImpl: FetchLike, signal?: AbortSignal): Promise<Record<string, unknown>> {
   let response: Response;
   try {
     // No cookies or credentials of the app session ever go with it.
     response = await fetchImpl(RELEASES_API, { headers: { accept: 'application/vnd.github+json', 'user-agent': 'AlgoPractice-update-check' }, credentials: 'omit', redirect: 'error', signal: signal ?? AbortSignal.timeout(10_000) });
   } catch { throw new Error('无法连接 GitHub，请检查网络或代理后重试。'); }
+  if (!response.ok) await response.body?.cancel();
   if (response.status === 403 || response.status === 429) throw new Error('GitHub 暂时限制了访问频率，请稍后再试。');
   if (response.status === 404) throw new Error('尚未找到正式发布的版本。');
   if (!response.ok) throw new Error(`检查更新失败（HTTP ${response.status}）。`);
-  const text = await response.text(); if (text.length > 1_000_000) throw new Error('更新信息过大，已忽略。');
+  const text = await releaseText(response);
   let release: Record<string, unknown>;
   try { release = JSON.parse(text) as Record<string, unknown>; } catch { throw new Error('更新信息格式无法识别。'); }
   if (!release || typeof release !== 'object' || Array.isArray(release)) throw new Error('更新信息格式无法识别。');

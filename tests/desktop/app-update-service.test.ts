@@ -183,6 +183,18 @@ test('installer selection rejects other architectures, missing checksums and sub
   assert.equal(releaseInstaller(release(), 'linux', 'x64'), null);
 });
 
+test('rejected HTTP status and declared size cancel the unread installer body', async t => {
+  const f = await fixture(t), asset = releaseInstaller(release(), 'darwin', 'arm64')!;
+  for (const failure of ['status', 'size']) {
+    let cancelled = false;
+    const body = new ReadableStream<Uint8Array>({ cancel() { cancelled = true; } });
+    const response = new Response(body, failure === 'status' ? { status: 503 } : { headers: { 'content-length': '1' } });
+    await assert.rejects(downloadInstaller(asset, f.directory, async () => response, () => {}, new AbortController().signal), /下载失败|大小/);
+    assert.equal(cancelled, true, 'a rejected response must not leave the network stream paused indefinitely');
+    assert.deepEqual(await readdir(f.directory), []);
+  }
+});
+
 test('download rejects truncation and unexpected redirect hosts before publishing or sending another request', async t => {
   const f = await fixture(t), asset = releaseInstaller(release(), 'darwin', 'arm64')!;
   for (const body of [contents.subarray(1), Buffer.concat([contents, Buffer.from('extra')])]) {
