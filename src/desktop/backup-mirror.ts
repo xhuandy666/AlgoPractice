@@ -92,6 +92,8 @@ export class BackupMirror {
     try {
       const local = (await this.options.localBackups()).sort((a, b) => b.modified.getTime() - a.modified.getTime() || b.id.localeCompare(a.id))[0];
       if (!local) return this.status();
+      // Windows may report ENOENT for file/child where POSIX reports ENOTDIR. Check the chosen folder itself.
+      if (!(await stat(setting.directory)).isDirectory()) throw Object.assign(new Error('副本路径现在不是文件夹。'), { code: 'ENOTDIR' });
       const name = mirrorName(setting.installId, local.id, local.modified), target = join(setting.directory, name);
       const expected = await fileDigest(local.path), present = await stat(target).catch(() => null);
       if (!present || present.size !== expected.size || (await fileDigest(target)).sha256 !== expected.sha256) {

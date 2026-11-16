@@ -97,7 +97,13 @@ async function launch(profileDirectory = dataDirectory) {
       ipcMain.removeHandler(channel);
       ipcMain.handle(channel, async (...args) => {
         const state = globalThis.reviewPlanSmoke;
-        if (channel === 'problem-review:snapshot' && state.failSnapshot) throw new Error('合成验收：复习读取暂时失败');
+        if (channel === 'problem-review:snapshot' && state.failSnapshot) {
+          // Background refreshes must keep failing until the real retry click. Restoring the transport before
+          // Playwright clicks lets an automatic refresh remove the very button this scenario needs to exercise.
+          const retryClicked = await args[0].sender.executeJavaScript('globalThis.reviewSnapshotRetryClicked === true');
+          if (!retryClicked) throw new Error('合成验收：复习读取暂时失败');
+          state.failSnapshot = false;
+        }
         if (channel === 'problem-review:request' && state.failNextRequest) { state.failNextRequest = false; throw new Error('合成验收：原请求状态暂时不可读取'); }
         if (channel === 'problem-review:draft' && state.failNextDraftRead) { state.failNextDraftRead = false; throw new Error('合成验收：草稿读回暂时失败'); }
         if (channel === 'problem-review:time' && state.failNextDraftTime) { state.failNextDraftTime = false; throw new Error('合成验收：保存时钟读回暂时失败'); }
@@ -377,14 +383,18 @@ try {
   pass('Restart retains session, rating and daily AC ledger, without reviving automatic prompts');
 
   // An operation failure must not be represented as an empty successful query.
+  await page.evaluate(() => { globalThis.reviewSnapshotRetryClicked = false; });
   await nav('学习中心'); await app.evaluate(() => { globalThis.reviewPlanSmoke.failSnapshot = true; });
   await nav('复习计划');
   let restoredReviews = page.getByRole('region', { name: '复习计划', exact: true });
   await restoredReviews.getByRole('button', { name: '重试读取', exact: true }).waitFor();
   assert.equal(await restoredReviews.getByRole('heading', { name: '从第一道复习题开始', exact: true }).count(), 0);
-  await app.evaluate(() => { globalThis.reviewPlanSmoke.failSnapshot = false; });
+  await restoredReviews.getByRole('button', { name: '重试读取', exact: true }).evaluate(button => {
+    button.addEventListener('click', () => { globalThis.reviewSnapshotRetryClicked = true; }, { capture: true, once: true });
+  });
   await restoredReviews.getByRole('button', { name: '重试读取', exact: true }).click();
   await until(async () => await restoredReviews.getByRole('button', { name: '重试读取', exact: true }).count() === 0, 'failed snapshot explicitly retries');
+  await page.evaluate(() => { delete globalThis.reviewSnapshotRetryClicked; });
   pass('Failed query has an explicit retry and is never shown as a successful empty plan');
 
   await restoredReviews.getByRole('navigation', { name: '复习视图' }).getByRole('button', { name: '全部题目', exact: true }).click();

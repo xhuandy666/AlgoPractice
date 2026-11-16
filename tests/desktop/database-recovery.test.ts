@@ -38,9 +38,12 @@ const media = (text: string) => { const bytes = Buffer.concat([Buffer.from([137,
 /** A data directory whose history holds a manual backup (v1), an automatic one (v2, newest usable) and a before-restore
  * one (v3, newest of all but never offered); the live file then gets damaged. */
 async function fixture(t: test.TestContext, options: { damage?: 'garbage' | 'pages' | 'none' } = {}) {
-  const root = mkdtempSync(join(tmpdir(), 'db-recovery-')); t.after(() => rmSync(root, { recursive: true, force: true }));
+  const root = mkdtempSync(join(tmpdir(), 'db-recovery-')), openedDatabases: DatabaseSync[] = [];
+  let database: DatabaseSync | undefined;
+  // after hooks run in registration order; Windows cannot remove a database while a later hook still owns it.
+  t.after(() => { database?.close(); for (const db of openedDatabases) db.close(); rmSync(root, { recursive: true, force: true }); });
   const file = join(root, 'practice.sqlite'); let now = new Date('2026-11-10T08:00:00Z');
-  let database: DatabaseSync | undefined = new DatabaseSync(file);
+  database = new DatabaseSync(file);
   database.exec("PRAGMA journal_mode=WAL; PRAGMA user_version=3; CREATE TABLE items(value TEXT); CREATE TABLE media_versions(hash TEXT); CREATE TABLE settings(key TEXT PRIMARY KEY, value TEXT); CREATE TABLE filler(v TEXT);");
   database.prepare('INSERT INTO items VALUES (?)').run('v1'); database.prepare('INSERT INTO settings VALUES (?, ?)').run('learning', JSON.stringify(learning));
   const lifecycle: RestoreLifecycle = { hasActiveInterview: () => false, enterMaintenance: async () => {}, closeDatabase: () => {}, openDatabase: () => {}, clearCredentials: async () => {}, leaveMaintenance: () => {} };
@@ -62,7 +65,7 @@ async function fixture(t: test.TestContext, options: { damage?: 'garbage' | 'pag
   if (options.damage === 'garbage' || options.damage === undefined) { writeFileSync(file, garbage); writeFileSync(`${file}-wal`, staleWal); }
   if (options.damage === 'pages') { const size = statSync(file).size, fd = openSync(file, 'r+'); try { writeSync(fd, Buffer.alloc(4096, 0x5a), 0, 4096, Math.floor(size * 0.7 / 4096) * 4096); } finally { closeSync(fd); } }
   const backups = readdirSync(join(root, 'backups')).sort();
-  return { root, file, older, newer, backups };
+  return { root, file, older, newer, backups, trackDatabase: (db: DatabaseSync) => { openedDatabases.push(db); return db; } };
 }
 /** The app's startup steps, reduced: open, check, read. Closes what it opened before throwing. */
 function opener(file: string, onCall?: (call: number) => void) {
@@ -109,7 +112,7 @@ test('restore from the newest valid backup keeps a copy of the damaged files, de
   const before = tree(f.root);
   const { result, prompts } = run(f.root, open, [0]);
   const opened = await result; assert.ok('store' in opened);
-  const store = opened.store; t.after(() => store.close());
+  const store = f.trackDatabase(opened.store);
   assert.equal(store.prepare('SELECT value FROM items').get()!.value, 'v2', 'the automatic backup, not the newer before-restore one');
   assert.equal(prompts.length, 1); assert.deepEqual(prompts[0].actions, ['restore', 'quit']); assert.match(prompts[0].detail, /自动备份/);
   assert.equal(opened.restored?.manifest.kind, 'automatic');
@@ -185,7 +188,7 @@ test('damage that only the read-write open runs into is confirmed by the full ch
     try { db.prepare('SELECT value FROM items').get(); if (calls === 1) db.prepare('SELECT count(*), sum(length(v)) FROM filler').get(); return db; } catch (error) { db.close(); throw error; }
   };
   const { result, prompts } = run(f.root, open, [0]);
-  const opened = await result; assert.ok('store' in opened); t.after(() => opened.store.close());
+  const opened = await result; assert.ok('store' in opened); f.trackDatabase(opened.store);
   assert.equal(calls, 2, 'the failed open, then the restored file');
   assert.deepEqual(prompts[0].actions, ['restore', 'quit']);
   assert.equal(opened.store.prepare('SELECT value FROM items').get()!.value, 'v2');

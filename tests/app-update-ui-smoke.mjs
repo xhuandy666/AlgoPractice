@@ -116,10 +116,25 @@ try {
   await page.evaluate(() => window.fixture.reject('install','当前有任务正在运行，请结束后重试。'));
   await banner.getByRole('alert').getByText('当前有任务正在运行，请结束后重试。').waitFor();
   await banner.getByRole('button', { name: '打开安装包', exact: true }).click();
+  assert.equal(await page.evaluate(() => window.fixture.calls.filter(call => call[0] === 'install').length), 2);
+  await page.evaluate(() => {
+    window.fixture.emit({phase:'installing'});
+    window.fixture.emit({phase:'available',error:'下载的安装包不可用，请重新下载。'});
+    window.fixture.reject('install','下载的安装包不可用，请重新下载。');
+    window.fixture.showSection(true);
+  });
+  await section.getByRole('alert').getByText('下载的安装包不可用，请重新下载。').waitFor();
+  await section.getByRole('button', { name: '重试更新', exact: true }).click();
+  assert.equal(await page.evaluate(() => window.fixture.calls.filter(call => call[0] === 'download').length), 4);
+  assert.equal(await page.evaluate(() => window.fixture.calls.filter(call => call[0] === 'install').length), 2);
+  await page.evaluate(() => {window.fixture.emit({phase:'downloaded',error:null});window.fixture.resolve('download');});
+  await banner.getByRole('button', { name: '打开安装包', exact: true }).click();
   await page.evaluate(() => window.fixture.resolve('install'));
+  await page.evaluate(() => window.fixture.showSection(false));
   await banner.getByRole('button', { name: '稍后', exact: true }).click();
   assert.equal(await banner.count(), 0);
   passed.push('Downloaded installer stays available across pages, ignores stale replies, never auto-installs, and installs only once per explicit click with retry');
+  passed.push('Install validation falling back to available retries download; a downloaded installer rejected by a busy task still retries install');
 
   await page.evaluate(() => {window.fixture.normal(false);});
   await wait(() => window.fixture.counts.unsubscribe === 1);

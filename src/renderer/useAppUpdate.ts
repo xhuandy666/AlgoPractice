@@ -61,7 +61,11 @@ function createUpdateStore(api: DesktopBridge | undefined) {
       const phase = snapshot.state?.phase ?? '';
       const newerSuccess = revision !== currentRevision && (action === 'check' && ['available', 'downloading', 'downloaded', 'up-to-date'].includes(phase)
         || action === 'download' && ['downloaded', 'installing'].includes(phase));
-      if (command === commandGeneration && epoch === currentEpoch && !newerSuccess) publish({ error: errorText(error), failedAction: action });
+      if (command === commandGeneration && epoch === currentEpoch && !newerSuccess) {
+        // An invalid cached installer is no longer downloaded. Recover by downloading it again, not reopening it.
+        const failedAction = action === 'install' && phase === 'available' ? 'download' : action;
+        publish({ error: errorText(error), failedAction });
+      }
     } finally {
       if (command === commandGeneration) { locked = false; publish({ action: null }); }
     }

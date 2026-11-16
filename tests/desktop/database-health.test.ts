@@ -31,7 +31,12 @@ test('a healthy database passes, including committed transactions left in the WA
     const { DatabaseSync } = require('node:sqlite'); const db = new DatabaseSync(${JSON.stringify(file)});
     db.exec("PRAGMA journal_mode=WAL; PRAGMA wal_autocheckpoint=0; CREATE TABLE t(v TEXT); INSERT INTO t VALUES ('committed')");
     process.kill(process.pid, 'SIGKILL');`], { encoding: 'utf8' });
-  assert.equal(child.signal, 'SIGKILL', child.stderr);
+  assert.equal(child.error, undefined, child.stderr);
+  if (process.platform === 'win32') {
+    // TerminateProcess reports an exit status, rather than a POSIX signal, for the same abrupt self-kill.
+    assert.equal(child.signal, null, child.stderr);
+    assert.ok(Number.isInteger(child.status) && child.status !== 0, child.stderr);
+  } else assert.equal(child.signal, 'SIGKILL', child.stderr);
   assert.ok(statSync(`${file}-wal`).size > 0, 'the commit is still only in the WAL');
   const before = digest(file);
   assert.deepEqual(checkDatabaseFile(file), { verdict: 'ok' });
