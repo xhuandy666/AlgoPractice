@@ -103,7 +103,7 @@ test('packaging uses ad-hoc macOS signing without credentials and requires an id
   assert.equal(signed.publish.channel, 'latest-x64');
   const windows = desktopPackageConfiguration(pkg, 'win32', 'x64', {});
   assert.equal(windows.publish.channel, 'latest');
-  assert.ok([unsigned, signed, windows].every(config => config.win.verifyUpdateCodeSignature !== false));
+  assert.ok([unsigned, signed, windows].every(config => config.win?.verifyUpdateCodeSignature !== false));
   assert.deepEqual(pkg, before, 'packaging must not mutate source package configuration');
   assert.throws(() => desktopPackageConfiguration(pkg, 'win32', 'arm64', {}));
 });
@@ -153,5 +153,24 @@ test('the builder 26 API merges the architecture channel into the actual package
     const config = await getConfig(process.cwd(), null, desktopPackageConfiguration(pkg, 'darwin', arch, {}));
     assert.deepEqual(config.publish, [{ provider: 'github', owner: 'xhuandy666', repo: 'AlgoPractice', channel: `latest-${arch}` }]);
     assert.equal(config.mac.identity, '-');
+  }
+});
+
+test('sparse packaging overrides preserve static configuration and copy the Windows helper exactly once', async () => {
+  const { getConfig } = createRequire(import.meta.url)('app-builder-lib/out/util/config/config.js');
+  const pkg = JSON.parse(await readFile(new URL('../../package.json', import.meta.url), 'utf8'));
+  const baseline = await getConfig(process.cwd(), null, {});
+  for (const [platform, arch] of [['win32', 'x64'], ['darwin', 'arm64'], ['darwin', 'x64']]) {
+    const config = await getConfig(process.cwd(), null, desktopPackageConfiguration(pkg, platform, arch, {}));
+    assert.equal(config.win.extraResources.filter((resource: { to: string }) => resource.to === 'windows-job-helper.exe').length, 1,
+      'duplicate Windows helper matchers race while copying to the same destination');
+    assert.deepEqual(config.win.extraResources, baseline.win.extraResources);
+    assert.deepEqual(config.files, baseline.files);
+    assert.deepEqual(config.mac.target, baseline.mac.target); assert.deepEqual(config.win.target, baseline.win.target);
+    assert.equal(config.mac.icon, pkg.build.mac.icon); assert.equal(config.win.icon, pkg.build.win.icon);
+    assert.equal(config.mac.hardenedRuntime, true); assert.equal(config.mac.minimumSystemVersion, pkg.build.mac.minimumSystemVersion);
+    assert.notEqual(config.win.verifyUpdateCodeSignature, false);
+    assert.deepEqual(config.nsis, baseline.nsis);
+    assert.equal(config.publish[0].channel, platform === 'darwin' ? `latest-${arch}` : 'latest');
   }
 });
