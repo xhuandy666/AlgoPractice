@@ -259,6 +259,29 @@ async function activityTimingRegression() {
   await app.evaluate(({ app, BrowserWindow }) => { app.focus({ steal: true }); BrowserWindow.getAllWindows()[0].focus(); });
   await until(focused, 'isolated test window is focused before timing');
   const outcomes = []; report.activityDiagnostics = [];
+  await app.evaluate(({ ipcMain }) => {
+    const pulse = ipcMain._invokeHandlers.get('learning:pulse'), time = ipcMain._invokeHandlers.get('learning:attempt-time');
+    if (typeof pulse !== 'function' || typeof time !== 'function') throw new Error('Missing real activity IPC handlers');
+    const trace = globalThis.learningCenterSmoke.activity = { sequence: 0, samples: [], originalPulse: pulse };
+    ipcMain.removeHandler('learning:pulse');
+    ipcMain.handle('learning:pulse', async (...args) => {
+      const sample = { sequence: ++trace.sequence, attemptId: args[1], at: performance.now() }; trace.samples.push(sample);
+      // Enqueue the two read-only observations around the unchanged real handler in the same main-process turn.
+      // Waiting for a renderer probe misses the automatic mount/focus pulse on a slower CI host.
+      const before = time(...args), result = pulse(...args), after = time(...args);
+      const [start, value, end] = await Promise.all([before, result, after]);
+      Object.assign(sample, { before: start, after: end }); return value;
+    });
+  });
+  const pulseCursor = () => app.evaluate(() => globalThis.learningCenterSmoke.activity.sequence);
+  const pulseSamples = cursor => app.evaluate((_electron, { cursor, attemptId }) => globalThis.learningCenterSmoke.activity.samples.filter(sample => sample.sequence > cursor && sample.attemptId === attemptId), { cursor, attemptId });
+  async function firstReturnedPulse(cursor, name) {
+    const samples = await pulseSamples(cursor);
+    assert.ok(samples.length, `${name}: a real return pulse was observed`);
+    const first = samples[0]; assert.equal(first.after - first.before, 0, `${name}: the first actual return pulse cannot credit the away interval`);
+    report.activityDiagnostics.push({ label: `${name}: actual return pulses`, samples });
+    return measured();
+  }
   async function activityState(label) {
     const native = await app.evaluate(({ BrowserWindow }) => { const win = BrowserWindow.getAllWindows()[0]; return { focused: win.isFocused(), visible: win.isVisible() }; });
     const renderer = await page.evaluate(() => ({ focused: document.hasFocus(), visibility: document.visibilityState, page: document.querySelector('.app-header h1')?.textContent }));
@@ -270,16 +293,19 @@ async function activityTimingRegression() {
       if (retry) {
         await app.evaluate(({ app, BrowserWindow }) => { app.focus({ steal: true }); BrowserWindow.getAllWindows()[0].focus(); });
         await until(focused, 'isolated window is focused for the interrupted interval retry');
-        await settled(); await api('pauseActivity'); await api('activityPulse', attemptId); before = await measured();
       }
+      await settled(); await api('pauseActivity');
+      const cursor = await pulseCursor(); await api('activityPulse', attemptId);
+      const seed = (await pulseSamples(cursor))[0]; before = seed.after;
       await activityState(`${name}: before continuous interval ${retry}`);
-      const started = performance.now(); await delay(600); const middle = await activityState(`${name}: midpoint ${retry}`);
-      await delay(600); const ending = await activityState(`${name}: before second pulse ${retry}`); await api('activityPulse', attemptId);
+      const started = performance.now(); await delay(1100); const middle = await activityState(`${name}: midpoint ${retry}`);
+      await delay(1100); const ending = await activityState(`${name}: before second pulse ${retry}`); await api('activityPulse', attemptId);
       await activityState(`${name}: after second pulse ${retry}`);
-      const after = await measured(), elapsed = performance.now() - started, credited = after - before;
+      const samples = await pulseSamples(cursor), last = samples.at(-1);
+      const after = last.after, elapsed = last.at - seed.at, credited = after - before;
       if (!middle.native.focused || !ending.native.focused) {
         assert.equal(credited, 0, 'a real native focus loss during the test interval must not receive activity credit');
-        outcomes.push({ transition: name, interruptedByNativeFocusLoss: true, creditedMs: credited, waitedMs: Math.round(elapsed) });
+        outcomes.push({ transition: name, interruptedByNativeFocusLoss: true, creditedMs: credited, waitedMs: Math.round(elapsed), driverWaitedMs: Math.round(performance.now() - started) });
         continue;
       }
       assert.ok(credited >= 1000 && credited <= elapsed + 300, `${name}: continuous foreground interval is measured (${credited}ms, elapsed ${elapsed}ms)`);
@@ -292,31 +318,37 @@ async function activityTimingRegression() {
   let before = await measured();
   await nav('题库'); await page.locator('.app-header h1').filter({ hasText: /^题库$/ }).waitFor();
   await delay(1200);
+  let cursor = await pulseCursor();
   await nav('练习工作台'); await page.locator('.app-header h1').filter({ hasText: /^练习工作台$/ }).waitFor();
   await settled(); await activityState('returned before first pulse');
+  // Deliberately let the later manual probe cross the one-second credit threshold, as slow CI diagnostics do.
+  await delay(1100);
   await api('activityPulse', attemptId);
-  assert.equal(await measured(), before, 'the first pulse after a short page switch cannot credit the away interval');
+  before = await firstReturnedPulse(cursor, 'short page switch');
   before = await continuous('short page switch', before);
 
   await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].blur());
   await until(async () => !(await focused()), 'isolated test window actually loses focus');
   await delay(1200);
+  cursor = await pulseCursor();
   await app.evaluate(({ app, BrowserWindow }) => { app.focus({ steal: true }); BrowserWindow.getAllWindows()[0].focus(); });
   await until(focused, 'isolated test window regains focus');
   await settled(); await activityState('returned before first pulse');
   await api('activityPulse', attemptId);
-  assert.equal(await measured(), before, 'the first pulse after a short blur cannot credit the unfocused interval');
+  before = await firstReturnedPulse(cursor, 'short native blur');
   before = await continuous('short native blur', before);
 
   await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].hide());
   await until(() => app.evaluate(({ BrowserWindow }) => !BrowserWindow.getAllWindows()[0].isVisible()), 'isolated test window actually hides');
   await delay(1200);
+  cursor = await pulseCursor();
   await app.evaluate(({ app, BrowserWindow }) => { const win = BrowserWindow.getAllWindows()[0]; win.show(); app.focus({ steal: true }); win.focus(); });
   await until(focused, 'isolated test window shows and regains focus');
   await settled(); await activityState('returned before first pulse');
   await api('activityPulse', attemptId);
-  assert.equal(await measured(), before, 'the first pulse after a short hide cannot credit the hidden interval');
+  before = await firstReturnedPulse(cursor, 'short native hide');
   await continuous('short native hide', before);
+  await app.evaluate(({ ipcMain }) => { const trace = globalThis.learningCenterSmoke.activity; ipcMain.removeHandler('learning:pulse'); ipcMain.handle('learning:pulse', trace.originalPulse); });
   pass('Short page switches, native blur and hide reset measured activity; each first returning pulse credits zero and the next continuous foreground pulse credits real time', { attemptId, outcomes });
 }
 let reviewEvent;

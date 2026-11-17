@@ -1,16 +1,20 @@
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import { createRequire } from 'node:module';
+import { spawnSync } from 'node:child_process';
 import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { gzipSync, gunzipSync } from 'node:zlib';
 import { test } from 'node:test';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 import { blake2b } from '@noble/hashes/blake2.js';
 // @ts-expect-error Standalone packaging tools are deliberately plain Node.js.
 import { platformUpdateArtifacts, updateMetadataName, validateUpdateArtifacts } from '../../scripts/update-artifacts.mjs';
 // @ts-expect-error Standalone packaging tools are deliberately plain Node.js.
 import { desktopPackageConfiguration } from '../../scripts/package-desktop.mjs';
+// @ts-expect-error Standalone packaging tools are deliberately plain Node.js.
+import * as packaging from '../../scripts/package-desktop.mjs';
 
 const version = '0.96.0';
 type Target = 'darwin-arm64' | 'darwin-x64' | 'win32-x64';
@@ -89,6 +93,11 @@ test('packaging uses ad-hoc macOS signing without credentials and requires an id
   const unsigned = desktopPackageConfiguration(pkg, 'darwin', 'arm64', {});
   assert.equal(unsigned.mac.identity, '-');
   assert.equal(unsigned.publish.channel, 'latest-arm64');
+  for (const link of ['', ' \t\r\n ']) {
+    const empty = desktopPackageConfiguration(pkg, 'darwin', 'arm64', { CSC_LINK: link });
+    assert.equal(empty.mac.identity, '-', 'an empty or whitespace-only CI secret is not a certificate');
+    assert.notEqual(empty.forceCodeSigning, true);
+  }
   const signed = desktopPackageConfiguration(pkg, 'darwin', 'x64', { CSC_LINK: 'fixture-certificate-location' });
   assert.equal(signed.mac.identity, undefined); assert.equal(signed.forceCodeSigning, true);
   assert.equal(signed.publish.channel, 'latest-x64');
@@ -97,6 +106,44 @@ test('packaging uses ad-hoc macOS signing without credentials and requires an id
   assert.ok([unsigned, signed, windows].every(config => config.win.verifyUpdateCodeSignature !== false));
   assert.deepEqual(pkg, before, 'packaging must not mutate source package configuration');
   assert.throws(() => desktopPackageConfiguration(pkg, 'win32', 'arm64', {}));
+});
+
+test('empty CI certificate links are absent to the real builder while nonempty links and empty passwords survive', async () => {
+  const require = createRequire(import.meta.url); require('app-builder-lib');
+  const { PlatformPackager } = require('app-builder-lib/out/platformPackager.js');
+  const { importCertificate } = require('app-builder-lib/out/codeSign/codesign.js');
+  const context = { info: { config: {} }, platformSpecificBuildOptions: {} };
+  const keys = ['CSC_LINK', 'CSC_INSTALLER_LINK', 'WIN_CSC_LINK', 'CSC_KEY_PASSWORD', 'CSC_INSTALLER_KEY_PASSWORD'];
+  const original = Object.fromEntries(keys.map(key => [key, process.env[key]]));
+  try {
+    Object.assign(process.env, { CSC_LINK: '', CSC_INSTALLER_LINK: ' \t ', WIN_CSC_LINK: '\n', CSC_KEY_PASSWORD: '', CSC_INSTALLER_KEY_PASSWORD: '' });
+    assert.equal(PlatformPackager.prototype.getCscLink.call(context), '', 'the actual builder preserves the CI empty-string bug');
+    await assert.rejects(importCertificate('', { getTempFile() { throw new Error('no temporary certificate expected'); } }, process.cwd()), /not a file/);
+    packaging.normalizeSigningEnvironment(process.env);
+    for (const key of keys.slice(0, 3)) assert.equal(Object.hasOwn(process.env, key), false);
+    assert.equal(PlatformPackager.prototype.getCscLink.call(context), undefined, 'builder must no longer attempt to import the project directory');
+    assert.equal(PlatformPackager.prototype.getCscLink.call(context, 'WIN_CSC_LINK'), undefined);
+    assert.equal(process.env.CSC_KEY_PASSWORD, ''); assert.equal(process.env.CSC_INSTALLER_KEY_PASSWORD, '');
+    process.env.CSC_LINK = 'definitely-missing-signing-fixture.p12';
+    process.env.CSC_INSTALLER_LINK = ' https://certificate.fixture.invalid/installer.p12 ';
+    process.env.WIN_CSC_LINK = 'fixture-windows-certificate.p12';
+    packaging.normalizeSigningEnvironment(process.env);
+    assert.equal(process.env.CSC_INSTALLER_LINK, ' https://certificate.fixture.invalid/installer.p12 ', 'nonempty secrets are never rewritten or downgraded');
+    assert.equal(PlatformPackager.prototype.getCscLink.call(context), 'definitely-missing-signing-fixture.p12');
+    assert.equal(PlatformPackager.prototype.getCscLink.call(context, 'WIN_CSC_LINK'), 'fixture-windows-certificate.p12');
+    await assert.rejects(importCertificate(process.env.CSC_LINK, { getTempFile() { throw new Error('no temporary certificate expected'); } }, process.cwd()), /doesn't exist/);
+  } finally { for (const key of keys) { if (original[key] === undefined) delete process.env[key]; else process.env[key] = original[key]; } }
+});
+
+test('the real packaging CLI keeps a nonzero failure status after builder temporary-file exit hooks run', { timeout: 20_000 }, async t => {
+  const root = fileURLToPath(new URL('../..', import.meta.url)), temporary = await mkdtemp(join(tmpdir(), 'algopractice-signing-exit-'));
+  t.after(() => rm(temporary, { recursive: true, force: true }));
+  const preload = `import {createRequire} from 'node:module'; const {TmpDir}=createRequire(${JSON.stringify(pathToFileURL(join(root, 'package.json')).href)})('temp-file'); await new TmpDir('packaging-exit-test').createTempDir();`;
+  const result = spawnSync(process.execPath, ['--import', `data:text/javascript;base64,${Buffer.from(preload).toString('base64')}`, join(root, 'scripts/package-desktop.mjs'), '--invalid'], {
+    cwd: root, env: { ...process.env, APP_BUILDER_TMP_DIR: temporary }, encoding: 'utf8', timeout: 15_000,
+  });
+  assert.equal(result.signal, null, result.stderr); assert.equal(result.status, 1, result.stderr);
+  assert.match(result.stderr, /Use --platform/);
 });
 
 test('the builder 26 API merges the architecture channel into the actual package provider configuration', async () => {

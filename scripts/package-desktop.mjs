@@ -4,6 +4,15 @@ import { join, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { platformUpdateArtifacts, validateUpdateArtifacts } from './update-artifacts.mjs';
 
+const certificateLinkConfigured = value => typeof value === 'string' && value.trim().length > 0;
+/** CI represents absent secrets as empty strings; builder 26 otherwise interprets them as the project directory. */
+export function normalizeSigningEnvironment(env) {
+  for (const key of ['CSC_LINK', 'CSC_INSTALLER_LINK', 'WIN_CSC_LINK']) {
+    if (typeof env[key] === 'string' && !certificateLinkConfigured(env[key])) delete env[key];
+  }
+  return env;
+}
+
 /** Keep one architecture per channel, and require a real signing identity whenever credentials were supplied. */
 export function desktopPackageConfiguration(pkg, platform, arch, env = process.env) {
   assert.ok((platform === 'darwin' && ['arm64', 'x64'].includes(arch)) || (platform === 'win32' && arch === 'x64'), 'Unsupported desktop package target');
@@ -11,7 +20,7 @@ export function desktopPackageConfiguration(pkg, platform, arch, env = process.e
   // builder 26 merges an API publish override into the first package.json provider: it must be an object, not an array.
   config.publish = { provider: 'github', owner: 'xhuandy666', repo: 'AlgoPractice', channel: platform === 'darwin' ? `latest-${arch}` : 'latest' };
   if (platform === 'darwin') {
-    if (env.CSC_LINK) {
+    if (certificateLinkConfigured(env.CSC_LINK)) {
       delete config.mac.identity;
       if (env.CSC_NAME) config.mac.identity = env.CSC_NAME;
       config.forceCodeSigning = true;
@@ -24,6 +33,9 @@ export async function packageDesktop(argv = process.argv.slice(2), env = process
   assert.equal(argv.length, 4, 'Use --platform darwin|win32 --arch arm64|x64');
   assert.equal(argv[0], '--platform'); assert.equal(argv[2], '--arch');
   const [, platform, , arch] = argv;
+  normalizeSigningEnvironment(env);
+  // The builder API reads process.env directly, even when the wrapper received explicit configuration input.
+  if (env !== process.env) normalizeSigningEnvironment(process.env);
   const pkg = JSON.parse(await readFile(join(root, 'package.json'), 'utf8'));
   const config = desktopPackageConfiguration(pkg, platform, arch, env);
   const { build, Platform, Arch } = await import('electron-builder');
@@ -34,6 +46,11 @@ export async function packageDesktop(argv = process.argv.slice(2), env = process
   console.log(JSON.stringify({ result: 'update-artifacts-verified', target: targetId, assets: platformUpdateArtifacts(pkg.version, targetId) }));
 }
 
-if (import.meta.url === pathToFileURL(resolve(process.argv[1] ?? '')).href) packageDesktop().catch(error => {
-  console.error(error.message); process.exitCode = 1;
-});
+if (import.meta.url === pathToFileURL(resolve(process.argv[1] ?? '')).href) {
+  try { await packageDesktop(); }
+  catch (error) {
+    console.error(error.message); process.exitCode = 1;
+    // Match electron-builder's CLI: async-exit-hook otherwise replaces a failed build's status with beforeExit's 0.
+    process.on('exit', () => { process.exitCode = 1; });
+  }
+}
