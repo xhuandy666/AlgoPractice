@@ -2,9 +2,11 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import type { Adapter, DesignAdapter } from '../../src/runner/types.ts';
 import type { DesktopBridge } from '../../src/shared/bridge.ts';
+import type { SubmissionHistoryItem } from '../../src/shared/submission-history.ts';
 import { caseInputRows, CASE_INPUT_DISPLAY_LIMIT, firstFailedCase } from '../../src/renderer/case-input.ts';
 import { parsePracticeMemory, withOpenedProblem, withoutMissing } from '../../src/renderer/practice-memory.ts';
 import { resolveResume } from '../../src/renderer/practice-resume.ts';
+import { loadReviewReference, pickReferenceRecord, referenceRank } from '../../src/renderer/review-reference.ts';
 import { parseSelfTestInputs, SELF_TEST_STORED_PROBLEMS, SELF_TEST_STORED_TEXT, withSelfTestInput } from '../../src/renderer/self-test-store.ts';
 import { formatSelfTestInput, parseSelfTestInput, selfTestAdapter, SELF_TEST_INPUT_LIMIT, validateSelfTestArguments } from '../../src/shared/self-test.ts';
 
@@ -138,4 +140,42 @@ test('stored self-test inputs keep the most recent problems and drop blank or ov
   assert.equal(many.length, SELF_TEST_STORED_PROBLEMS); assert.equal(many[0][0], `p${SELF_TEST_STORED_PROBLEMS + 4}`);
   assert.deepEqual(parseSelfTestInputs(JSON.stringify([['a', '1'], ['b', 2], 'x', ['c', '3', 'extra'], ['d', '4']])), [['a', '1'], ['d', '4']]);
   assert.deepEqual(parseSelfTestInputs('{}'), []); assert.deepEqual(parseSelfTestInputs('nope'), []); assert.deepEqual(parseSelfTestInputs(null), []);
+});
+
+const record = (id: string, source: 'local' | 'official', status: string, verdict: string | null = null, answerFormat: 'function' | 'acm' = 'function') =>
+  ({ id, source, status, verdict, answerFormat }) as unknown as SubmissionHistoryItem;
+
+test('the review reference is the newest record of the best kind: official Accepted, then a local pass', () => {
+  assert.equal(referenceRank(record('a', 'official', 'completed', 'accepted')), 3);
+  assert.equal(referenceRank(record('a', 'official', 'completed', 'wrong_answer')), 0);
+  assert.equal(referenceRank(record('a', 'official', 'judging')), 0);
+  assert.equal(referenceRank(record('a', 'local', 'passed')), 2);
+  assert.equal(referenceRank(record('a', 'local', 'passed', null, 'acm')), 1);
+  assert.equal(referenceRank(record('a', 'local', 'wrong_answer')), 0);
+  // Newest first: the later local pass does not displace the official Accepted, and the newer of two equals wins.
+  assert.equal(pickReferenceRecord([record('r4', 'local', 'passed'), record('r3', 'official', 'completed', 'accepted'), record('r2', 'official', 'completed', 'accepted'), record('r1', 'local', 'passed')])?.id, 'r3');
+  assert.equal(pickReferenceRecord([record('r3', 'local', 'wrong_answer'), record('r2', 'local', 'passed', null, 'acm'), record('r1', 'local', 'passed')])?.id, 'r1');
+  assert.equal(pickReferenceRecord([record('r1', 'local', 'runtime_error'), record('r0', 'official', 'completed', 'timeout')]), null);
+  assert.equal(pickReferenceRecord([]), null);
+});
+
+test('loading a review reference prefers the current language, falls back to another, and keeps only notes with text', async () => {
+  const calls: string[] = [];
+  const histories: Record<string, ReturnType<typeof record>[]> = { python: [record('py-fail', 'local', 'wrong_answer')], java: [record('java-ok', 'local', 'passed')], go: [], cpp: [record('cpp-ac', 'official', 'completed', 'accepted')] };
+  const api = {
+    submissionHistory: async (filter: { problemId: string; language: string; limit?: number }) => { calls.push(`history:${filter.language}:${filter.limit}`); return { items: histories[filter.language], total: histories[filter.language].length, offset: 0, limit: 50, hasMore: false }; },
+    submissionHistoryDetail: async (source: string, id: string) => { calls.push(`detail:${source}:${id}`); return { ...record(id, source as 'local', 'passed'), language: id.split('-')[0] === 'java' ? 'java' : 'cpp', createdAt: '2026-11-01T00:00:00Z', finishedAt: '2026-11-01T00:00:05Z', code: `// ${id}` }; },
+    notePage: async (filter: unknown) => { calls.push(`notes:${JSON.stringify(filter)}`); return { items: [{ id: 'n1' }, { id: 'n2' }, { id: 'n3' }], total: 3, offset: 0, limit: 5, hasMore: false }; },
+    note: async (id: string) => id === 'n3' ? null : { id, updatedAt: '2026-11-02T00:00:00Z', current: { title: id === 'n1' ? '双指针要点' : '', markdown: id === 'n1' ? '## 思路\n左右指针' : '  \n' } },
+  } as unknown as Parameters<typeof loadReviewReference>[0];
+  const reference = await loadReviewReference(api, 'two-sum', 'python');
+  assert.deepEqual(reference.code, { source: 'local', language: 'java', answerFormat: 'function', createdAt: '2026-11-01T00:00:05Z', code: '// java-ok' });
+  assert.deepEqual(reference.notes, [{ id: 'n1', title: '双指针要点', markdown: '## 思路\n左右指针', updatedAt: '2026-11-02T00:00:00Z' }], 'a blank note and a removed note are left out');
+  assert.deepEqual(calls.slice(0, 3), ['history:python:50', 'history:java:50', 'detail:local:java-ok'], 'languages after the first solution are not read');
+  assert.equal(calls[3], 'notes:{"kind":"problem","subjectId":"two-sum","limit":5}');
+
+  histories.java = [];
+  assert.equal((await loadReviewReference(api, 'two-sum', 'cpp')).code?.code, '// cpp-ac');
+  histories.cpp = [];
+  assert.equal((await loadReviewReference(api, 'two-sum', 'python')).code, null, 'no passing record in any language');
 });

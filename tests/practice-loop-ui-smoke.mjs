@@ -21,6 +21,7 @@ const compiled = await build({
     import { CaseResults } from './src/renderer/CaseResults';
     import { SelfTestPanel } from './src/renderer/SelfTestPanel';
     import { ReviewSessionBar } from './src/renderer/ReviewSessionBar';
+    import { ReviewReferenceDialog } from './src/renderer/ReviewReferenceDialog';
     import { caseInputRows } from './src/renderer/case-input';
     import { rewardProfile } from './src/renderer/rewards';
     import { readPracticeMemory, savePracticeMemory } from './src/renderer/practice-memory';
@@ -69,9 +70,20 @@ const compiled = await build({
       },
       cases(name) { app.render(<div className="results-pane"><CaseResults key={name} cases={runs[name]} inputOf={index => caseInputRows(content, index)} verdicts={new Map()} exampleOf={() => undefined} designRowsOf={() => null} /></div>); },
       selfTest() { app.render(<div className="results-pane"><SelfTest /></div>); },
-      review(position, rated, onCurrent = true, total = 3) {
+      review(position, rated, onCurrent = true, total = 3, reference = null) {
         app.render(<ReviewSessionBar key={++generation} session={session(position, total)} onCurrent={onCurrent} rated={rated} disabled={false} leaveDisabled={false} ratingBlocked={false}
+          referenced={reference === 'opened'} onReference={reference ? record('reference') : undefined}
           onNext={record('next')} onRate={record('rate')} onSkip={record('skip')} onReturn={record('return')} onLeave={record('leave')} onEnd={record('end')} />);
+      },
+      reference(kind, canRate = true) {
+        const history = { solved: { python: [], java: [{ id: 'j1', source: 'official', status: 'completed', verdict: 'accepted', answerFormat: 'function' }] }, none: {}, broken: null }[kind];
+        const reader = {
+          submissionHistory: async filter => { if (!history) throw new Error('记录库暂时不可用。'); const items = history[filter.language] ?? []; return { items, total: items.length, offset: 0, limit: 50, hasMore: false }; },
+          submissionHistoryDetail: async (source, id) => ({ id, source, language: 'java', answerFormat: 'function', createdAt: '2026-11-10T08:00:00Z', finishedAt: '2026-11-10T08:00:09Z', code: 'class Solution {\\n    public int[] twoSum(int[] nums, int target) {\\n        return new int[0];\\n    }\\n}\\n' }),
+          notePage: async () => ({ items: kind === 'solved' ? [{ id: 'n1' }] : [], total: 0, offset: 0, limit: 5, hasMore: false }),
+          note: async id => ({ id, updatedAt: '2026-11-11T09:00:00Z', current: { title: '哈希表一次遍历', markdown: '## 要点\\n\\n先查 **补数** 再放入当前数。' } }),
+        };
+        app.render(<><button id="opener" autoFocus>对照上次的解法</button><ReviewReferenceDialog key={++generation} api={reader} problem={{ id: 'two-sum', title: '两数之和' }} language="python" canRate={canRate} onRate={record('reference-rate')} onClose={record('reference-close')} /></>);
       },
     };
   ` },
@@ -180,6 +192,36 @@ try {
   assert.deepEqual(await bar.getByRole('button').allTextContents(), ['记录本题自评', '回到队列当前题', '退出并保留进度', '结束本轮']);
   await bar.getByText('浏览邻题 · 队列进度保留 · 第 2 / 3 题', { exact: true }).waitFor();
   pass('The review bar offers one rate-and-advance step, a plain next once rated, and the finishing wording on the last problem');
+
+  // Recall review: comparing with the earlier solution is an explicit, optional step that leads into the rating.
+  await page.evaluate(() => window.fixture.review(0, false, true, 3, 'offered'));
+  assert.deepEqual(await bar.getByRole('button').allTextContents(), ['对照上次的解法', '自评并下一题', '跳过本题', '退出并保留进度', '结束本轮']);
+  await bar.getByRole('button', { name: '对照上次的解法', exact: true }).click(); assert.equal((await calls('reference')).length, 1);
+  await page.evaluate(() => window.fixture.review(0, false, true, 3, 'opened')); await bar.getByText('复习 · 第 1 / 3 题 · 已对照', { exact: true }).waitFor();
+  await page.evaluate(() => window.fixture.reference('solved'));
+  const reference = page.getByRole('dialog', { name: '对照上次的解法', exact: true });
+  await reference.getByText('两数之和 · 只读，不会改动这次的复习草稿', { exact: true }).waitFor();
+  const solution = reference.getByRole('region', { name: '上次通过的代码', exact: true });
+  await solution.getByText(/^力扣官方通过 · Java · .+ · 这道题没有 Python 的通过记录$/).waitFor();
+  assert.match(await solution.locator('pre').textContent(), /^class Solution \{\n    public int\[\] twoSum/);
+  const notes = reference.getByRole('region', { name: '这道题的笔记', exact: true });
+  await notes.getByRole('heading', { name: /^哈希表一次遍历/ }).waitFor(); assert.equal(await notes.locator('strong').textContent(), '补数');
+  await shot('review-reference');
+  await reference.getByRole('button', { name: '对照完了，去自评', exact: true }).click(); assert.equal((await calls('reference-rate')).length, 1);
+  await page.keyboard.press('Escape'); assert.equal((await calls('reference-close')).length, 1, 'Escape asks to close instead of leaving a stale dialog');
+  await page.evaluate(() => window.fixture.reference('none', false));
+  await reference.getByText('这道题还没有通过的代码记录。', { exact: true }).waitFor(); await reference.getByText(/^这道题还没有笔记。/).waitFor();
+  assert.equal(await reference.getByRole('button', { name: '对照完了，去自评', exact: true }).count(), 0, 'an already rated problem offers no second rating');
+  assert.deepEqual(await reference.locator('footer').getByRole('button').allTextContents(), ['关闭']);
+  await page.evaluate(() => window.fixture.reference('broken'));
+  assert.equal(await reference.getByRole('alert').textContent(), '没能读取记录：记录库暂时不可用。');
+  for (const width of [820, 375]) {
+    await page.setViewportSize({ width, height: 720 }); await page.evaluate(() => window.fixture.reference('solved'));
+    await solution.locator('pre').waitFor();
+    assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth), true, 'no horizontal page scroll at ' + width);
+    assert.equal(await reference.evaluate(element => element.scrollWidth <= element.clientWidth), true, 'the dialog itself does not scroll sideways at ' + width);
+  }
+  pass('The compare step shows the latest passing code and notes read-only, leads into the rating, and explains empty and failed reads');
 
   assert.deepEqual(errors, []); assert.deepEqual(await calls('error'), []);
   console.log(JSON.stringify({ result: 'passed', assertions: passed.length }));

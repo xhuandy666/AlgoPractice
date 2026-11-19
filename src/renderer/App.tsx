@@ -41,6 +41,7 @@ import { WorkbenchSplitter } from './WorkbenchSplitter';
 import { practiceShortcutDirection, sidebarAfterNavigation } from './workbench-navigation';
 import { reviewSessionSummary } from './review-session';
 import { ReviewSessionBar } from './ReviewSessionBar';
+import { ReviewReferenceDialog } from './ReviewReferenceDialog';
 import { REVIEW_RATING_REQUIRED } from '../shared/review-plan';
 import './workbench-layout.css';
 import './workbench-navigation.css';
@@ -151,6 +152,9 @@ export function App() {
   const [manualReview, setManualReview] = useState<{ id: string; title: string; attemptId?: string; prompt?: { learningDate: string }; advance?: boolean } | null>(null);
   // Whether the review session's shown problem already has a rating today; decides if "next" must rate first.
   const [reviewRated, setReviewRated] = useState<boolean | null>(null); const [ratingRevision, setRatingRevision] = useState(0);
+  // The compare step of a recall review, and the problems of this session whose earlier solution was opened.
+  const [reviewReference, setReviewReference] = useState<{ id: string; title: string } | null>(null); const [referenced, setReferenced] = useState<ReadonlySet<string>>(() => new Set());
+  useEffect(() => { setReferenced(new Set()); setReviewReference(null); }, [reviewSession?.id]);
   const putOffPrompts = useRef(new Set<string>());
   const [localOffer, setLocalOffer] = useState<{ problemId: string; title: string; runId: string; attemptId: string; learningDate: string } | null>(null);
   const [reviewAdvancing, setReviewAdvancing] = useState(false);
@@ -455,7 +459,8 @@ export function App() {
       {page === 'archives' && <ArchivePage key={archiveDate ?? 'all'} initialLearningDate={archiveDate} api={api} onError={setError} onRestore={async archive => { if (!api) return; await practice.flush(); const restored = await api.restoreRun(archive.id, crypto.randomUUID()); await openProblem(restored.draft.problemId, restored.draft.language, restored.draft.scopeId, restored.draft.answerFormat ?? undefined, makeFrozenPracticeSource([restored.draft.problemId], '档案恢复 · 单题')); setNotice('已恢复为新草稿。'); }} />}
       {page === 'environment' && <EnvironmentPage api={api} onError={setError} onChanged={() => { void refreshEnvironment().catch(error => setError(errorText(error))); }} />}
       {workbenchMounted && <div className="workbench-screen" hidden={page !== 'workbench'}>{problem ? <>
-        {reviewSession && practice.target.scope === `review:${reviewSession.id}` && <ReviewSessionBar session={reviewSession} onCurrent={reviewSession.currentProblemId === practice.target.id} rated={reviewRated} disabled={navigationDisabled} leaveDisabled={frozen || reviewAdvancing || problemOpening || neighborOpening} ratingBlocked={Boolean(officialPrompt.opportunity)}
+        {reviewSession && practice.target.scope === `review:${reviewSession.id}` && <ReviewSessionBar session={reviewSession} onCurrent={reviewSession.currentProblemId === practice.target.id} rated={reviewRated} disabled={navigationDisabled} leaveDisabled={frozen || reviewAdvancing || problemOpening || neighborOpening} ratingBlocked={Boolean(officialPrompt.opportunity)} referenced={referenced.has(practice.target.id)}
+          onReference={api ? () => { setReferenced(current => new Set(current).add(practice.target.id)); setReviewReference({ id: practice.target.id, title: problem.title }); } : undefined}
           onNext={() => { if (reviewRated) void advanceReview(false); else rateInReview(true); }} onRate={() => rateInReview(false)} onSkip={() => { void advanceReview(true); }} onReturn={() => { void jumpToProblem(reviewSession.currentProblemId); }} onLeave={() => { void setPage('reviews'); }} onEnd={() => { void endReview(); }} />}
         {help?.show && <div className="help-prompt"><span>连续 3 次运行未通过</span><button className="button" onClick={() => { setPanel('ai'); setShowHistory(true); setHelp(null); }}>打开 AI 教练</button><button className="text-button" onClick={() => { if (workspace?.attempt) void api?.dismissAiHelp(workspace.attempt.id); setHelp(null); }}>关闭提示</button></div>}
         {workspace?.latestVersion !== workspace?.problem.version && <div className="version-notice">此练习使用开始时的题面；结束后，新练习将使用已缓存的新版。</div>}
@@ -481,6 +486,8 @@ export function App() {
         </div>
       </> : <div className="empty-state"><Mascot mood="think" size={88} /><h2>正在读取工作台</h2><p>可先从题库中选择需要练习的题目。</p><button className="text-button" onClick={() => setPage('library')}>打开题库</button></div>}</div>}
     </main>
+    {reviewReference && api && <ReviewReferenceDialog api={api} problem={reviewReference} language={practice.target.language} canRate={reviewRated === false && reviewReference.id === practice.target.id && !officialPrompt.opportunity}
+      onRate={() => { setReviewReference(null); rateInReview(reviewSession?.currentProblemId === practice.target.id); }} onClose={() => setReviewReference(null)} />}
     {noteDialog && api && <WorkbenchNoteDialog key={`${noteDialog.problem.id}:${noteDialog.initialNoteId ?? 'new'}`} api={api} problem={noteDialog.problem} initialNoteId={noteDialog.initialNoteId} onClose={() => setNoteDialog(null)} onError={setError} />}
     {officialPrompt.opportunity && api && <ProblemReviewRating key={officialPrompt.opportunity.id} api={api} problem={{ id: officialPrompt.opportunity.problemId, title: problem?.title ?? '本题' }} mode={{ kind: 'official', opportunity: officialPrompt.opportunity }} autoPrompt onSaved={async () => { officialPrompt.dismiss(); setRatingRevision(value => value + 1); setNotice('自评已记录，题目复习计划已更新。'); await refreshLibrary(); }} onDismiss={officialPrompt.dismiss} onError={setError} />}
     {manualReview && api && <ProblemReviewRating key={`manual:${manualReview.id}`} api={api} problem={manualReview} mode={{ kind: 'manual', attemptId: manualReview.attemptId }} autoPrompt={Boolean(manualReview.prompt)} onSaved={async () => { const advance = manualReview.advance && reviewSession?.currentProblemId === manualReview.id && reviewScope !== null; setManualReview(null); setLocalOffer(null); setReviewRated(current => reviewScope && manualReview.id === practice.target.id ? true : current); setNotice(advance ? '' : '自评已记录，可继续下一题。'); await refreshLibrary(); if (advance) await advanceReview(false); }} onDismiss={() => { if (manualReview.prompt) { putOffPrompts.current.add(`${manualReview.id}:${manualReview.prompt.learningDate}`); setLocalOffer(null); setNotice('本题已加入复习计划，可稍后在“复习计划”中记录自评。'); } setManualReview(null); }} onError={setError} />}
