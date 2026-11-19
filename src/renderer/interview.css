@@ -7,6 +7,11 @@
 .interview-setup form{min-width:0;}
 .interview-setup h3,.interview-pool h3,.interview-history h3{font-size:var(--text-md);margin-bottom:var(--space-lg);}
 .interview-fields{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:var(--space-md);margin-block:var(--space-md);}
+.interview-scope label{display:flex;flex-direction:column;gap:var(--space-xs);font-size:var(--text-sm);min-width:0;}
+.interview-scope .field-help{display:flex;flex-wrap:wrap;align-items:center;gap:var(--space-2xs);}
+.interview-scope .field-help .text-button{min-height:28px;padding:2px 8px;}
+.interview-scope-summary{font-size:var(--text-sm);font-weight:700;color:var(--color-ink-2);}
+.interview-exclusions li p{margin:2px 0 0;color:var(--color-muted);font-size:var(--text-xs);line-height:1.7;overflow-wrap:anywhere;}
 .interview-fields label,.interview-counts label{display:flex;flex-direction:column;gap:var(--space-xs);font-size:var(--text-sm);min-width:0;}
 .interview-page input,.interview-page select,.interview-page textarea{width:100%;min-width:0;}
 .interview-counts{border:0;padding:var(--space-md) 0;margin:0;display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:var(--space-md);}

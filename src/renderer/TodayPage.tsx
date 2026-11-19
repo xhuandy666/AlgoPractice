@@ -7,7 +7,10 @@ import { errorText, Icon, type IconName } from './ui';
 import type { RewardProfile } from './rewards';
 import { LevelRing } from './PlayerStats';
 import { Mascot } from './Mascot';
-import type { ReviewPlanSummary } from '../shared/review-plan';
+import type { ReviewPlanSummary, ReviewSession } from '../shared/review-plan';
+import { makeReviewSessionPracticeSource, type PracticeNavigationSource } from '../shared/practice-navigation';
+import { demoProblems } from '../shared/demo-problems';
+import { GrowthDetails, type GrowthFocus } from './GrowthDetails';
 import { useEditsFrozen } from './pending-saves';
 import { addDays, dateKey, isStudyDay, learningStreak } from './learning-calendar';
 import { HelpHint } from './HelpHint';
@@ -60,24 +63,31 @@ function Quest({ icon, tone, title, value, max, caption, children }: { icon: Ico
   </li>;
 }
 
-function Starter({ profile, library, onBrowse, onNavigate }: { profile: RewardProfile; library: LibraryIndex; onBrowse: () => void; onNavigate?: (page: Page) => void }) {
+/** The built-in sample a newcomer can run at once; undefined when it is not on the first library page or cannot run. */
+export function starterSample(library: LibraryIndex) {
+  return library.problems.find(item => item.id === demoProblems[0].id && item.capability.canRun);
+}
+function Starter({ profile, library, onBrowse, onNavigate, onOpenSample }: { profile: RewardProfile; library: LibraryIndex; onBrowse: () => void; onNavigate?: (page: Page) => void; onOpenSample?: (problemId: string, title: string) => void }) {
+  const sample = onOpenSample ? starterSample(library) : undefined, openSample = sample ? () => onOpenSample!(sample.id, sample.content.title) : onBrowse;
+  // Built-in samples are ready on first launch, so the first step is to run one; importing a list comes after the first win.
   const steps = [
-    { done: library.totalProblems > 0, title: '准备题目', detail: '导入 Hot100 或自己的题单', action: '导入题单', go: () => onNavigate?.('sources') },
-    { done: profile.totals.runs > 0, title: '运行一次代码', detail: '在练习工作台按 ⌘ / Ctrl + Enter', action: '打开题库', go: onBrowse },
-    { done: profile.totals.solvedProblems > 0, title: '解出第一道题', detail: '题目自带的用例全部通过或力扣官方 AC，解锁成就「初露锋芒」', action: '开始练习', go: onBrowse },
+    { done: profile.totals.runs > 0, title: '运行一次代码', detail: sample ? `自带样例「${sample.content.title}」已就绪，打开后按 ⌘ / Ctrl + Enter` : '在练习工作台按 ⌘ / Ctrl + Enter', action: sample ? `试做「${sample.content.title}」` : '打开题库', go: openSample },
+    { done: profile.totals.solvedProblems > 0, title: '解出第一道题', detail: '题目自带的用例全部通过或力扣官方 AC，解锁成就「初露锋芒」', action: sample ? '继续做样例' : '开始练习', go: openSample },
+    { done: library.lists.length > 0 || library.totalProblems > demoProblems.length, title: '导入自己的题单', detail: '一键导入 Hot100，或粘贴力扣题单链接', action: '导入题单', go: () => onNavigate?.('sources') },
   ];
   return <section className="starter-card dash-card" aria-label="新手任务">
-    <div className="dash-card-heading"><span className="dash-tile" data-tone="purple" aria-hidden="true"><Icon name="sparkle" size={20} /></span><div><h3>新手任务</h3><p>完成 {steps.filter(step => step.done).length} / {steps.length} · 三步拿到第一枚成就</p></div><button className="text-button" onClick={() => onNavigate?.('environment')}>检查运行环境</button></div>
+    <div className="dash-card-heading"><span className="dash-tile" data-tone="purple" aria-hidden="true"><Icon name="sparkle" size={20} /></span><div><h3>新手任务</h3><p>完成 {steps.filter(step => step.done).length} / {steps.length} · 先跑通一道样例，再导入自己的题单</p></div><button className="text-button" onClick={() => onNavigate?.('environment')}>检查运行环境</button></div>
     <ol className="starter-path">{steps.map((step, index) => <li key={step.title} data-done={step.done}><span className="starter-node" aria-hidden="true">{step.done ? <Icon name="check" size={18} strokeWidth={3} /> : index + 1}</span><div><strong>{step.title}</strong><span>{step.detail}</span></div>{!step.done && <button className="button" onClick={step.go}>{step.action}</button>}</li>)}</ol>
   </section>;
 }
 
-function RankCard({ profile }: { profile: RewardProfile }) {
+function RankCard({ profile, onOpen }: { profile: RewardProfile; onOpen: () => void }) {
   const into = profile.xp - profile.levelStartXp, span = profile.nextLevelXp - profile.levelStartXp;
   return <section className="rank-card dash-card" data-rank={profile.rank.id} aria-label="等级与段位">
     <div className="rank-top"><LevelRing profile={profile} size={76} /><div><p className="rank-eyebrow">当前段位</p><p className="rank-name">{profile.rank.name}<span>Lv.{profile.level}</span></p></div><Icon name="crown" size={28} /></div>
     <div className="rank-bar" role="progressbar" aria-label="本级经验" aria-valuemin={0} aria-valuemax={span} aria-valuenow={into}><span style={scale(Math.max(0.03, profile.levelProgress))} /><em>{into} / {span} XP</em></div>
     <p className="rank-caption">还差 <strong>{span - into} XP</strong> 升到 Lv.{profile.level + 1}{profile.nextRank && profile.nextRank.minLevel === profile.level + 1 ? `，晋升${profile.nextRank.name}` : ''}</p>
+    <button type="button" className="text-button growth-open" onClick={onOpen}>查看段位阶梯</button>
   </section>;
 }
 
@@ -91,28 +101,36 @@ function StreakCard({ today, days, streak, profile }: { today: string; days: Map
   </section>;
 }
 
-function AchievementWall({ profile }: { profile: RewardProfile }) {
+function AchievementWall({ profile, onOpen }: { profile: RewardProfile; onOpen: (achievementId?: string) => void }) {
   const unlocked = profile.achievements.filter(item => item.unlocked).length;
   return <section className="achievement-wall dash-card" aria-label="成就徽章">
-    <div className="achievement-heading"><h3>成就</h3><span>{unlocked} / {profile.achievements.length}</span></div>
+    <div className="achievement-heading"><h3>成就</h3><span>{unlocked} / {profile.achievements.length}</span><button type="button" className="text-button growth-open" onClick={() => onOpen()}>条件与进度</button></div>
     <ul>{profile.achievements.map((item, index) => <li key={item.id} data-unlocked={item.unlocked} data-hue={index % 5} title={`${item.title}：${item.description}${item.unlocked ? '' : `（${item.progress} / ${item.target}）`}`}>
       <span className="achievement-badge" aria-hidden="true"><Icon name={item.icon} size={24} strokeWidth={2.4} /></span>
       <strong>{item.title}</strong>
       {item.unlocked ? <span className="achievement-state">已解锁</span> : <span className="achievement-progress" role="progressbar" aria-label={`${item.title}进度`} aria-valuemin={0} aria-valuemax={item.target} aria-valuenow={item.progress}><i style={scale(item.progress / item.target)} /></span>}
+      <button type="button" className="achievement-open" aria-label={`${item.title}：${item.unlocked ? '已解锁' : `${item.progress} / ${item.target}`}，查看条件和下一步`} onClick={() => onOpen(item.id)} />
     </li>)}</ul>
   </section>;
 }
 
-export function TodayPage({ api, library, profile = null, language, onOpenProblems, onRedoProblems, onReviewPlan, onSettings, onArchives, onBrowse, onNavigate, onError }: {
+export function TodayPage({ api, library, profile = null, language, onOpenProblems, onRedoProblems, onReviewPlan, onStartReview, onSettings, onArchives, onBrowse, onNavigate, onError }: {
   api: DesktopBridge | undefined; library: LibraryIndex; profile?: RewardProfile | null;
   language?: Language; onOpenProblems?: (problemIds: string[], label: string) => void;
   /** Reopens problems for a from-scratch rewrite in a separate draft scope; falls back to onOpenProblems. */
   onRedoProblems?: (problemIds: string[], label: string) => void;
+  /** Opens the workbench on a review session's current problem; without it the summary only links to the plan. */
+  onStartReview?: (problemId: string, session: ReviewSession, source: PracticeNavigationSource) => void | Promise<void>;
   onReviewPlan?: () => void; onSettings: () => void; onArchives: (date?: string) => void;
   onBrowse: () => void; onNavigate?: (page: Page) => void; onError: (message: string) => void;
 }) {
   const [dashboard, setDashboard] = useState<LearningDashboard | null>(null);
   const [review, setReview] = useState<ReviewPlanSummary | null>(null);
+  const [ongoing, setOngoing] = useState<ReviewSession | null>(null), [growth, setGrowth] = useState<GrowthFocus | null>(null);
+  // Shown in the review card: a failed start is not a failure to read the learning record.
+  const [reviewFailure, setReviewFailure] = useState('');
+  // Kept until a start succeeds, so a retry after a failure cannot create a second session.
+  const reviewRequest = useRef<string | null>(null);
   const [busy, setBusy] = useState(false), [loading, setLoading] = useState(true);
   const [message, setMessage] = useState(''), [failure, setFailure] = useState('');
   const [goalOpen, setGoalOpen] = useState(false), [goal, setGoal] = useState('3');
@@ -120,8 +138,8 @@ export function TodayPage({ api, library, profile = null, language, onOpenProble
   const load = useCallback(async () => {
     if (!api) { setLoading(false); return; } const current = ++generation.current;
     try {
-      const [result, plan] = await Promise.all([api.learningDashboard(), api.reviewPlan({ view: 'today', limit: 1 })]);
-      if (current === generation.current) { setDashboard(result); setReview(plan.summary); setFailure(''); setLoading(false); }
+      const [result, plan, session] = await Promise.all([api.learningDashboard(), api.reviewPlan({ view: 'today', limit: 1 }), api.reviewSession()]);
+      if (current === generation.current) { setDashboard(result); setReview(plan.summary); setOngoing(session?.status === 'active' && session.currentProblemId ? session : null); setFailure(''); setLoading(false); }
     } catch (error) { if (current === generation.current) { setFailure(errorText(error)); setLoading(false); onError(errorText(error)); } }
   }, [api]);
   useEffect(() => {
@@ -141,6 +159,18 @@ export function TodayPage({ api, library, profile = null, language, onOpenProble
     try { await api.saveLearningSettings({ dailyPracticeGoal: value }); await load(); setGoalOpen(false); setMessage('每日目标已更新'); }
     catch (error) { setFailure(errorText(error)); onError(errorText(error)); } finally { working.current = false; setBusy(false); }
   }
+  /** Continues the session in progress, or starts today's recommended queue: the same request the plan page sends. */
+  async function startReview() {
+    if (!api || !onStartReview || working.current || frozen) return;
+    working.current = true; setBusy(true); setMessage(''); setReviewFailure('');
+    try {
+      const session = ongoing ? await api.reviewSession(ongoing.id) : await api.startReviewSession({ requestId: reviewRequest.current ??= crypto.randomUUID() });
+      if (!session?.currentProblemId || session.status !== 'active') { reviewRequest.current = null; await load(); setMessage('本轮暂无可开始的题目，请到复习计划查看待评估或待补评的记录。'); return; }
+      reviewRequest.current = null; await onStartReview(session.currentProblemId, session, makeReviewSessionPracticeSource(session));
+    } catch (error) { setReviewFailure(errorText(error)); onError(errorText(error)); } finally { working.current = false; setBusy(false); }
+  }
+  const reviewOpportunity = { planned: onStartReview ? review?.plannedCount ?? 0 : 0, ongoing: Boolean(onStartReview && ongoing) };
+  const canStartReview = Boolean(api && onStartReview && (ongoing || (review?.plannedCount ?? 0) > 0));
   const streak = profile?.streak ?? (dashboard ? learningStreak(dashboard.days, today) : null);
   const focus = minutes(day.activeMs);
   return <section className="learning-center scroll-page" aria-busy={loading}>
@@ -163,22 +193,24 @@ export function TodayPage({ api, library, profile = null, language, onOpenProble
                 : <div className="quest-bar goal-progress" role="progressbar" aria-label="今日练习目标" aria-valuemin={0} aria-valuemax={target} aria-valuenow={Math.min(day.completedProblems, target)} aria-valuetext={`今日完成 ${day.completedProblems} 题，目标 ${target} 题`}><span style={scale(progress)} /><em>{dashboard ? day.completedProblems : '—'} / {target}</em></div>}
             </Quest>
             <Quest icon="timer" tone="blue" title={<>专注学习 {FOCUS_QUEST_MINUTES} 分钟<button className="text-button quest-link" onClick={() => onArchives(today)}>学习记录</button></>} value={focus} max={FOCUS_QUEST_MINUTES} caption={`${dashboard ? Math.min(focus, FOCUS_QUEST_MINUTES) : '—'} / ${FOCUS_QUEST_MINUTES}`} />
-            {profile && <Quest icon="bolt" tone="gold" title={`获得 ${XP_QUEST} 经验`} value={profile.todayXp} max={XP_QUEST} caption={`${Math.min(profile.todayXp, XP_QUEST)} / ${XP_QUEST}`} />}
+            {profile && <Quest icon="bolt" tone="gold" title={<>获得 {XP_QUEST} 经验<button className="text-button quest-link" onClick={() => setGrowth({ section: 'xp' })}>经验明细</button></>} value={profile.todayXp} max={XP_QUEST} caption={`${Math.min(profile.todayXp, XP_QUEST)} / ${XP_QUEST}`} />}
           </ol>
         </section>
-        {profile && profile.totals.solvedProblems === 0 && profile.level <= 2 && <Starter profile={profile} library={library} onBrowse={onBrowse} onNavigate={onNavigate} />}
+        {profile && profile.totals.solvedProblems === 0 && profile.level <= 2 && <Starter profile={profile} library={library} onBrowse={onBrowse} onNavigate={onNavigate} onOpenSample={onOpenProblems ? (id, title) => onOpenProblems([id], `自带样例 · ${title}`) : undefined} />}
         {message && <p role="status" className="center-message">{message}</p>}
         {failure && <div className="center-load-error" role="alert"><p>学习记录读取失败：{failure}</p><button className="button" onClick={() => { setLoading(true); void load(); }}>重试读取</button></div>}
-        <section className="center-review-summary dash-card" aria-label="复习计划摘要"><span className="dash-tile" data-tone="orange" aria-hidden="true"><Icon name="calendar" size={22} /></span><div><p className="dash-eyebrow">复习计划</p><h3>{review ? review.plannedCount > 0 ? `今天推荐复习 ${review.plannedCount} 题` : '今天暂无推荐复习' : failure ? '复习摘要暂不可用' : '正在读取复习摘要…'}</h3>{review && <p>已复习 {review.reviewedToday} 题 · {review.budget === null ? '不限量' : `每日量 ${review.budget} 题`}{review.extraDueCount > 0 && ` · 另有 ${review.extraDueCount} 题到期`}{review.pendingAssessmentCount > 0 && ` · ${review.pendingAssessmentCount} 题待补自评`}</p>}</div><button className="button" disabled={!api || frozen} onClick={onReviewPlan ?? onSettings}>查看复习计划</button></section>
+        <section className="center-review-summary dash-card" aria-label="复习计划摘要"><span className="dash-tile" data-tone="orange" aria-hidden="true"><Icon name="calendar" size={22} /></span><div><p className="dash-eyebrow">复习计划</p><h3>{ongoing && onStartReview ? `本轮复习进行到第 ${ongoing.position + 1} / ${ongoing.problemIds.length} 题` : review ? review.plannedCount > 0 ? `今天推荐复习 ${review.plannedCount} 题` : '今天暂无推荐复习' : failure ? '复习摘要暂不可用' : '正在读取复习摘要…'}</h3>{review && <p>已复习 {review.reviewedToday} 题 · {review.budget === null ? '不限量' : `每日量 ${review.budget} 题`}{review.extraDueCount > 0 && ` · 另有 ${review.extraDueCount} 题到期`}{review.pendingAssessmentCount > 0 && ` · ${review.pendingAssessmentCount} 题待补自评`}</p>}{reviewFailure && <p role="alert" className="error-text">没能开始复习：{reviewFailure}</p>}</div>{canStartReview && <button className="button primary" disabled={busy || frozen} onClick={() => { void startReview(); }}>{ongoing ? '继续本轮复习' : `开始今日 ${review!.plannedCount} 题`}</button>}<button className={canStartReview ? 'text-button' : 'button'} disabled={!api || frozen} onClick={onReviewPlan ?? onSettings}>查看复习计划</button></section>
         {language && onOpenProblems && <TopicInsightsCard api={api} language={language} library={library} onOpen={onOpenProblems} onRedo={onRedoProblems ?? onOpenProblems} />}
         {dashboard ? <ActivityHeatmap dashboard={dashboard} onArchives={onArchives} /> : <section className="activity-history dash-card dashboard-skeleton" aria-label={api ? '正在读取学习记录' : '暂无学习记录'}><h3>学习轨迹</h3><div /><p>{failure ? '学习记录读取失败，请重试。' : api ? '正在读取学习记录…' : '请在桌面应用中查看学习记录。'}</p></section>}
       </div>
       <aside className="dash-rail" aria-label="成长">
-        {profile && <RankCard profile={profile} />}
+        {profile && <RankCard profile={profile} onOpen={() => setGrowth({ section: 'ranks' })} />}
         <StreakCard today={today} days={dayMap} streak={streak} profile={profile} />
-        {profile && <AchievementWall profile={profile} />}
+        {profile && <AchievementWall profile={profile} onOpen={achievementId => setGrowth({ section: 'achievements', achievementId })} />}
       </aside>
     </div>
+    {growth && profile && <GrowthDetails profile={profile} focus={growth} review={reviewOpportunity} onClose={() => setGrowth(null)}
+      onAction={action => { if (action === 'review') void startReview(); else if (action === 'review-plan') (onReviewPlan ?? onSettings)(); else onBrowse(); }} />}
     <footer className="center-footer"><span>近一年完成 {dashboard?.totals.completedProblems ?? '—'} 道不同题目</span><span>题炼</span></footer>
   </section>;
 }

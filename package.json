@@ -32,7 +32,7 @@
     "test:learning-center": "node tests/learning-center-smoke.mjs",
     "test:reviews": "node tests/review-plan-desktop-smoke.mjs",
     "test:editor-performance": "node tests/editor-performance-smoke.mjs",
-    "test:ui": "node tests/ai-chat-smoke.mjs && node tests/runtime-ui-smoke.mjs && node tests/hot100-ui-smoke.mjs && node tests/runtime-gate-smoke.mjs && node tests/app-update-ui-smoke.mjs",
+    "test:ui": "node tests/ai-chat-smoke.mjs && node tests/runtime-ui-smoke.mjs && node tests/hot100-ui-smoke.mjs && node tests/runtime-gate-smoke.mjs && node tests/app-update-ui-smoke.mjs && node tests/workbench-controls-ui-smoke.mjs && node tests/learning-flow-ui-smoke.mjs",
     "test:updates": "node tests/app-update-desktop-smoke.mjs"
   },
   "devDependencies": {

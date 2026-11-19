@@ -66,7 +66,10 @@
 .center-review-summary > div { flex: 1; min-width: 0; }
 .center-review-summary h3 { font-size: 18px; line-height: 1.4; font-weight: 900; }
 .center-review-summary p { margin-top: 2px; font-size: 13px; font-weight: 700; line-height: 1.7; color: var(--color-ink-2); }
+.center-review-summary { flex-wrap: wrap; }
 .center-review-summary > button { flex-shrink: 0; }
+.achievement-heading .growth-open { margin-left: auto; margin-right: 8px; min-height: 28px; padding: 0 6px; font-size: 12px; order: 1; }
+.achievement-heading > span { order: 2; }
 .center-load-error { display: flex; flex-wrap: wrap; gap: 12px; align-items: center; color: var(--color-error); font-size: 13px; font-weight: 700; line-height: 1.8; }
 
 /* Activity heatmap. */

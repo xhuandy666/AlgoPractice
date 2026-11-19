@@ -24,12 +24,16 @@ const decision = (pool: InterviewPool) => ({ ...pool, candidates: pool.candidate
 
 test('P5 interview metadata preview includes all pages and preserves full-pool decisions, exclusions, weights and recent filtering', t => {
   const store = fixture(t); for (let index = 0; index < 205; index++) store.upsertProblem(problem(index));
-  const practiced = store.getProblem('p0001')!; store.startAttempt({ problemId: practiced.id, problemVersion: practiced.version, language: 'java' });
+  const practiced = store.getProblem('p0001')!, practice = store.startAttempt({ problemId: practiced.id, problemVersion: practiced.version, language: 'java' });
+  store.saveRun({ attemptId: practice.id, code: 'class Solution {}', testSuiteVersion: 'fixture', expectedOutputSource: 'none', adapterVersion: '1', runtimeVersion: '1', status: 'completed' });
+  const opened = store.getProblem('p0002')!; store.startAttempt({ problemId: opened.id, problemVersion: opened.version, language: 'java' });
   const at = new Date().toISOString(), wall = Date.parse(at), service = new InterviewService({ store: () => store, clock: { wall: () => wall, monotonic: () => 0 } });
   const company = service.commitCompany(service.previewCompany({ kind: 'json', name: 'frequency', text: JSON.stringify(Array.from({ length: 205 }, (_, i) => ({ company: 'Acme', problemId: problem(i).id, frequency: i % 13, window: 'same', frequencyMeaning: 'mentions' }))) }).id);
   const inputs = [rules(), rules({ language: 'java', counts: { easy: 1, medium: 1, hard: 1 } }),
     rules({ excludeRecentDays: 14, tags: ['数组'] }), rules({ company: 'Acme', datasetId: company.id, sampling: 'frequency' }), rules({ tags: ['missing'] })];
-  const expected = inputs.map(input => buildPool(store.listProblems(), store.listAttempts(), input, input.datasetId ? company : null, at));
+  // Only p0001 was run; p0002 was merely opened and stays eligible.
+  assert.deepEqual(store.listRecentPracticeDates().map(row => row.problemId), ['p0001']);
+  const expected = inputs.map(input => buildPool(store.listProblems(), store.listAttempts().filter(attempt => attempt.problemId === 'p0001'), input, input.datasetId ? company : null, at));
   const offsets: number[] = [], originalPage = store.listProblemPage.bind(store);
   store.listProblemPage = filter => { offsets.push(filter?.offset ?? 0); return originalPage(filter); };
   store.listProblems = () => { throw new Error('No full problem list during preview'); };

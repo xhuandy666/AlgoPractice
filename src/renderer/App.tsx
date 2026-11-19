@@ -38,6 +38,7 @@ import { usePracticeNavigation } from './usePracticeNavigation';
 import { useWorkbenchLayout } from './useWorkbenchLayout';
 import { WorkbenchSplitter } from './WorkbenchSplitter';
 import { practiceShortcutDirection, sidebarAfterNavigation } from './workbench-navigation';
+import { reviewSessionSummary } from './review-session';
 import './workbench-layout.css';
 import './workbench-navigation.css';
 import { useRuntimeGate } from './useRuntimeGate';
@@ -254,7 +255,7 @@ export function App() {
       const next = await api.advanceReviewSession({ sessionId: reviewSession.id, problemId: practice.target.id, skipped });
       setReviewSession(next);
       if (next.currentProblemId) await openReviewProblem(next.currentProblemId, next, practiceSource ?? undefined);
-      else { await setPage('reviews'); setNotice(`本轮复习已结束 · 跳过 ${next.skippedProblemIds.length} 题`); }
+      else { await setPage('reviews'); setNotice(reviewSessionSummary(next, true)); }
     } catch (error) { setError(errorText(error)); }
     finally { setReviewAdvancing(false); }
   }
@@ -265,7 +266,7 @@ export function App() {
       await flushPendingSaves();
       const ended = await api.endReviewSession(reviewSession.id);
       setReviewSession(ended);
-      await setPage('reviews'); setNotice('本轮复习已结束，未复习的题目仍按原计划安排。');
+      await setPage('reviews'); setNotice(reviewSessionSummary(ended, false));
     } catch (error) { setError(errorText(error)); }
     finally { setReviewAdvancing(false); }
   }
@@ -393,8 +394,8 @@ export function App() {
       {page !== 'interview' && <AppUpdateNotice api={api} disabled={maintenance || frozen || running || officialBusy || finishing} />}
       {environment?.reminder && !environment.reminder.deliveredAt && Date.parse(environment.reminder.dueAt) <= Date.now() && <div className="preview-banner overdue-banner" role="status">有一条测试提醒已逾期。<button className="text-button" onClick={() => setPage('environment')}>查看提醒</button></div>}
       {!api && <p className="preview-banner">当前为浏览器设计预览。运行、导入和保存需要打开桌面应用。</p>}
-      {page === 'interview' && <InterviewPage api={api} onError={setError} onNavigate={next => { void setPage(next); }} />}
-      {page === 'today' && <TodayPage api={api} library={library} profile={profile} language={practice.target.language} onOpenProblems={(ids, label) => { void openProblem(ids[0], undefined, 'practice', undefined, makeFrozenPracticeSource(ids, label)); }} onRedoProblems={(ids, label) => { void openRedo(ids, label); }} onReviewPlan={() => { void setPage('reviews'); }} onSettings={() => { void setPage('learning-settings'); }} onArchives={date => { void openArchives(date); }} onBrowse={() => { void setPage('library'); }} onNavigate={next => { void setPage(next); }} onError={setError} />}
+      {page === 'interview' && <InterviewPage api={api} lists={library.lists} onError={setError} onNavigate={next => { void setPage(next); }} />}
+      {page === 'today' && <TodayPage api={api} library={library} profile={profile} language={practice.target.language} onOpenProblems={(ids, label) => { void openProblem(ids[0], undefined, 'practice', undefined, makeFrozenPracticeSource(ids, label)); }} onRedoProblems={(ids, label) => { void openRedo(ids, label); }} onReviewPlan={() => { void setPage('reviews'); }} onStartReview={openReviewProblem} onSettings={() => { void setPage('learning-settings'); }} onArchives={date => { void openArchives(date); }} onBrowse={() => { void setPage('library'); }} onNavigate={next => { void setPage(next); }} onError={setError} />}
       {page === 'reviews' && <ReviewPlanPage api={api} onPractice={openReviewProblem} onChanged={refreshLibrary} onError={setError} />}
       {page === 'notes' && <NotesPage api={api} library={library} initialSubject={practice.target.id} onError={setError} />}
       {page === 'learning-settings' && <LearningSettingsPage api={api} onError={setError} />}

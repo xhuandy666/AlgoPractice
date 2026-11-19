@@ -44,13 +44,19 @@ export class InterviewService {
   preview(input: InterviewRules): { id: string; pool: InterviewPool } {
     if (this.active() || this.#starting) throw new Error('已有面试正在进行。'); const store = this.options.store();
     const rules = validateRules(input), dataset = store.listCompanyDatasets().find(d => d.id === rules.datasetId) ?? null;
+    const list = rules.listId ? store.getList(rules.listId) : undefined; if (rules.listId && !list) throw new Error('所选题单不存在，可能已被移除。请重新选择题目范围。');
     const problems: ProblemListItem[] = [];
     // Read every metadata page. Language/exclusion checks stay in buildPool so no candidate disappears silently.
+    // With a list scope only that list's pages are read, so a shortage can never be filled from another list.
     for (let offset = 0;; offset += 100) {
-      const page = store.listProblemPage({ offset, limit: 100 }); problems.push(...page.items);
+      const page = store.listProblemPage({ ...(list ? { listId: list.id } : {}), offset, limit: 100 });
+      problems.push(...page.items.map(({ listItem: _listItem, ...item }) => item));
       if (!page.hasMore) break;
     }
-    const pool = buildPool(problems,store.listAttemptDates(),rules,dataset,iso(this.#clock.wall())); const key = randomUUID();
+    // A list member whose statement was never fetched exists only as a link; buildPool reports it as excluded with that reason.
+    const scope = list ? { listId: list.id, title: list.title, total: new Set(list.items.map(item => item.problemId)).size,
+      cached: new Set(problems.filter(item => item.capability.level !== 'link-only').map(item => item.id)).size } : null;
+    const pool = buildPool(problems,store.listRecentPracticeDates(),rules,dataset,iso(this.#clock.wall()),scope); const key = randomUUID();
     if (this.#previews.size >= 20) this.#previews.delete(this.#previews.keys().next().value!); this.#previews.set(key,pool); return { id:key, pool:structuredClone(pool) };
   }
   previewCompany(input: {kind:'csv'|'json';text:string;name:string}) { const result = parseCompanyFile(input,new Set(this.options.store().listProblemIds()),iso(this.#clock.wall())); const key = randomUUID(); if(this.#companyPreviews.size>=10) this.#companyPreviews.delete(this.#companyPreviews.keys().next().value!); this.#companyPreviews.set(key,result); return {id:key,preview:structuredClone(result)}; }
@@ -61,6 +67,7 @@ export class InterviewService {
     if (existing) { if (pool && canonicalJson(pool) !== canonicalJson(existing.pool)) throw new Error('面试请求标识冲突。'); return this.view(existing.id); }
     if (this.active() || this.#starting) throw new Error('已有面试正在进行。'); if (!pool || Date.parse(pool.evaluatedAt) < this.#clock.wall()-600000) throw new Error('题池预览已失效，请重新检查。');
     if(pool.shortages.length || !pool.selectedIds.length) throw new Error(pool.shortages.join('\n') || '没有可用题目。');
+    if (pool.scope) { const members = new Set(store.getList(pool.scope.listId)?.items.map(item => item.problemId) ?? []); if (pool.selectedIds.some(problemId => !members.has(problemId))) throw new Error('题单成员在检查题池后发生了变化，请重新检查。'); }
     this.#starting = true; this.#epoch++;
     try {
       await this.options.beforeStart?.(structuredClone(pool));

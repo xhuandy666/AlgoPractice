@@ -382,9 +382,15 @@ export class PracticeStore {
     return (this.#db.prepare('SELECT problem_id FROM library_problem_heads ORDER BY rowid').all() as Row[]).map(row => row.problem_id as string);
   }
 
-  /** Only the two immutable fields used to exclude recently practiced interview candidates. */
-  listAttemptDates(): Array<Pick<Attempt, 'problemId' | 'startedAt'>> {
-    return (this.#db.prepare('SELECT problem_id, started_at FROM attempts ORDER BY rowid DESC').all() as Row[])
+  /** Attempts that count as practice when an interview excludes recently practiced problems: code was run locally or
+   * submitted, or the problem was drawn in an earlier interview. Opening a problem to read it starts an attempt too,
+   * but that alone must not remove it from the pool. Returns only the two immutable fields the exclusion needs. */
+  listRecentPracticeDates(): Array<Pick<Attempt, 'problemId' | 'startedAt'>> {
+    return (this.#db.prepare(`SELECT a.problem_id, a.started_at FROM attempts a
+      WHERE EXISTS(SELECT 1 FROM runs r WHERE r.attempt_id = a.id AND r.status <> 'queued')
+        OR EXISTS(SELECT 1 FROM official_submissions o WHERE o.attempt_id = a.id)
+        OR EXISTS(SELECT 1 FROM interview_attempts i WHERE i.attempt_id = a.id)
+      ORDER BY a.rowid DESC`).all() as Row[])
       .map(row => ({ problemId: row.problem_id as string, startedAt: row.started_at as string }));
   }
 
