@@ -10,5 +10,9 @@ import './styles.css';
 import './shell.css';
 import './interview.css';
 import './learning-center.css';
+import './theme-dark.css';
 import { DesktopRoot } from './DesktopRoot';
+import { startTheme } from './theme';
+// Before the first paint, so a dark window never flashes white.
+startTheme();
 createRoot(document.getElementById('root')!).render(<React.StrictMode><DesktopRoot /></React.StrictMode>);

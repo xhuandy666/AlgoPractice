@@ -54,6 +54,6 @@
 /* Level ring. */
 .level-ring { position: relative; display: grid; place-items: center; flex-shrink: 0; width: 44px; height: 44px; border-radius: 50%; }
 .level-ring > svg { position: absolute; inset: 0; transform: rotate(-90deg); overflow: visible; }
-.level-ring-track { fill: color-mix(in srgb, var(--rank-color) 18%, #fff); stroke: var(--color-paper-3); stroke-width: 5; }
+.level-ring-track { fill: color-mix(in srgb, var(--rank-color) 18%, var(--color-surface)); stroke: var(--color-paper-3); stroke-width: 5; }
 .level-ring-value { fill: none; stroke: var(--rank-color); stroke-width: 5; stroke-linecap: round; transition: stroke-dashoffset 900ms var(--ease-spring); }
 .level-ring > strong { position: relative; font: 900 1em/1 var(--font-display); color: var(--rank-ink); font-variant-numeric: tabular-nums; }

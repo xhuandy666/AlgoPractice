@@ -21,6 +21,7 @@ const compiled = await build({
     import './src/renderer/shell.css';
     import './src/renderer/interview.css';
     import './src/renderer/learning-center.css';
+    import './src/renderer/theme-dark.css';
     import { TodayPage } from './src/renderer/TodayPage';
     import { InterviewPage } from './src/renderer/InterviewPage';
     import { rewardProfile } from './src/renderer/rewards';
@@ -95,6 +96,8 @@ try {
   await page.setContent('<!doctype html><html lang="zh-CN"><meta name="viewport" content="width=device-width, initial-scale=1"><body><main id="root"></main></body></html>');
   await page.addStyleTag({ content: compiled.outputFiles.find(file => file.path.endsWith('.css')).text });
   await page.addScriptTag({ content: compiled.outputFiles.find(file => file.path.endsWith('.js')).text });
+  // Visual check only: UI_SMOKE_THEME=dark renders the same flow in the dark theme.
+  if (process.env.UI_SMOKE_THEME === 'dark') await page.evaluate(() => { document.documentElement.dataset.theme = 'dark'; });
 
   await page.evaluate(() => window.fixture.today('newcomer'));
   const starter = page.getByRole('region', { name: '新手任务', exact: true });

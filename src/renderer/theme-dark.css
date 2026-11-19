@@ -1,0 +1,13 @@
+/* Dark theme exceptions. Most of the theme is the token set in tokens.css; these are the places where a light-only
+ * assumption (a white overlay, dark ink on a pale mix, a diagram drawn for white paper) needs its own rule. */
+:root[data-theme=dark] .learning-center { --heat-1: #24401a; --heat-2: #3b7a16; --heat-3: #58cc02; --heat-4: #9be85a; }
+:root[data-theme=dark] [data-rank] { --rank-ink: color-mix(in srgb, var(--rank-color) 58%, #fff); }
+/* Labels drawn across a partly filled bar sit on both the fill and the dark track. */
+:root[data-theme=dark] :is(.rank-bar, .quest-bar) > em { color: #fff; text-shadow: 0 1px 2px rgb(0 0 0 / 0.85), 0 0 4px rgb(0 0 0 / 0.6); }
+:root[data-theme=dark] .hot100-card-progress progress, :root[data-theme=dark] .hot100-card-progress progress::-webkit-progress-bar, :root[data-theme=dark] .review-progress { background: var(--color-paper-3); }
+:root[data-theme=dark] .reward-hero::before { background: radial-gradient(closest-side, rgb(23 24 26 / 0.97) 52%, rgb(23 24 26 / 0.82) 72%, rgb(23 24 26 / 0)); }
+:root[data-theme=dark] .reward-hero:is([data-variant=official], [data-variant=level]) .reward-hero-title { color: var(--color-gold-text); }
+/* Statement diagrams are usually dark lines on a transparent or white canvas. */
+:root[data-theme=dark] :is(.statement, .interview-statement, .review-reference-note) img { padding: 6px; border-radius: var(--radius-xs); background: #fff; }
+/* The pressed-button depth is a darker edge of the same surface, not a light rule. */
+:root[data-theme=dark] { --shadow-panel: 0 2px 0 #121315; --shadow-raised: 0 4px 0 #121315; }

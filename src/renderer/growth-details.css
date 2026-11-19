@@ -6,14 +6,14 @@
 .growth-section { padding-block: var(--space-md); border-top: 2px solid var(--color-rule); scroll-margin-top: 72px; }
 .growth-section h3 { font-size: var(--text-base); font-weight: 900; margin-bottom: var(--space-xs); }
 .growth-summary { font-size: var(--text-sm); line-height: 1.8; color: var(--color-ink-2); }
-.growth-summary strong { color: var(--color-gold-ink); }
+.growth-summary strong { color: var(--color-gold-text); }
 .rank-ladder { display: grid; gap: 6px; margin: var(--space-sm) 0 0; padding: 0; list-style: none; }
 .rank-ladder li { display: grid; grid-template-columns: 4.5em 5.5em 1fr auto; align-items: center; gap: var(--space-sm); padding: 8px 12px; border: 2px solid var(--color-rule); border-radius: var(--radius-sm); font-size: var(--text-sm); font-variant-numeric: tabular-nums; }
 .rank-ladder li > span { color: var(--color-muted); }
 .rank-ladder li > em { font-style: normal; font-size: var(--text-xs); font-weight: 900; color: var(--color-muted); }
 .rank-ladder li[data-state=reached] strong { color: var(--color-muted); }
 .rank-ladder li[data-state=current] { border-color: var(--color-gold-deep); background: color-mix(in srgb, var(--color-gold) 16%, var(--color-surface)); }
-.rank-ladder li[data-state=current] > em { color: var(--color-gold-ink); }
+.rank-ladder li[data-state=current] > em { color: var(--color-gold-text); }
 .rank-ladder li[data-state=next] { border-color: var(--color-blue-line); background: var(--color-blue-soft); }
 .rank-ladder li[data-state=next] > em { color: var(--color-blue-deep); }
 .xp-sources { width: 100%; border-collapse: collapse; font-size: var(--text-sm); font-variant-numeric: tabular-nums; }

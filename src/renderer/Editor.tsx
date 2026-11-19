@@ -9,6 +9,8 @@ import 'monaco-editor/editor/contrib/suggest/browser/suggestController';
 import { LANGUAGE_DETAILS } from '../shared/languages';
 import EditorWorker from 'monaco-editor/editor/editor.worker?worker';
 import type { Diagnostic, Language } from '../runner/types';
+import { editorLineHeight, useEditorPreferences } from './editor-preferences';
+import { currentTheme, onThemeChange } from './theme';
 
 (self as unknown as { MonacoEnvironment: unknown }).MonacoEnvironment = { getWorker: () => new EditorWorker() };
 // Monaco requires hex colors. Convert the CSS palette once, and keep it until
@@ -26,7 +28,7 @@ export function defineEditorTheme() {
   const pixels = ctx.getImageData(0, 0, palette.length, 1).data;
   const hex = (token: typeof themeTokens[number]) => { const index = themeTokens.indexOf(token) * 4; return '#' + [...pixels.slice(index, index + 3)].map(n => n.toString(16).padStart(2, '0')).join(''); };
   monaco.editor.defineTheme('algopractice', {
-    base: 'vs', inherit: true,
+    base: currentTheme() === 'dark' ? 'vs-dark' : 'vs', inherit: true,
     rules: [
       { token: 'comment', foreground: hex('--color-muted').slice(1) },
       { token: 'keyword', foreground: hex('--color-code-keyword').slice(1) },
@@ -41,6 +43,8 @@ export function defineEditorTheme() {
   });
   themeSignature = signature;
 }
+// The palette is copied into Monaco, so a theme switch has to copy it again for editors that are already open.
+onThemeChange(() => { if (!themeSignature) return; defineEditorTheme(); monaco.editor.setTheme('algopractice'); });
 const noDiagnostics: Diagnostic[] = [];
 /** Word suggestions: 'auto' pops them up while typing code (never in comments or strings), 'manual' only on request
  * (Ctrl+Space), 'off' not at all — strict interviews swallow every key that would request them. */
@@ -60,13 +64,14 @@ export function Editor({ code, language, readOnly = false, suggestions = 'manual
   const instance = useRef<monaco.editor.IStandaloneCodeEditor | null>(null);
   const suggestAllowed = useRef<monaco.editor.IContextKey<boolean> | null>(null);
   const callbacks = useRef({ onChange, onRun }); callbacks.current = { onChange, onRun };
+  const { fontSize } = useEditorPreferences(); const preferences = useRef({ fontSize }); preferences.current = { fontSize };
   useEffect(() => {
     defineEditorTheme();
     const model = monaco.editor.createModel(code, LANGUAGE_DETAILS[language].monacoLanguage);
     const editor = monaco.editor.create(host.current!, {
       model, theme: 'algopractice', automaticLayout: true, minimap: { enabled: false },
       fontFamily: getComputedStyle(document.documentElement).getPropertyValue('--font-mono'),
-      fontSize: 14, lineHeight: 26, padding: { top: 20, bottom: 20 },
+      fontSize: preferences.current.fontSize, lineHeight: editorLineHeight(preferences.current.fontSize), padding: { top: 20, bottom: 20 },
       scrollBeyondLastLine: false, wordWrap: 'on', tabSize: 4, insertSpaces: true,
       renderLineHighlight: 'line', overviewRulerLanes: 0, hideCursorInOverviewRuler: true,
       lineNumbersMinChars: 3, glyphMargin: false, folding: false,
@@ -92,6 +97,7 @@ export function Editor({ code, language, readOnly = false, suggestions = 'manual
     if (model && model.getLanguageId() !== LANGUAGE_DETAILS[language].monacoLanguage) monaco.editor.setModelLanguage(model, LANGUAGE_DETAILS[language].monacoLanguage);
   }, [language]);
   useEffect(() => { instance.current?.updateOptions({ readOnly }); }, [readOnly]);
+  useEffect(() => { instance.current?.updateOptions({ fontSize, lineHeight: editorLineHeight(fontSize) }); }, [fontSize]);
   useEffect(() => {
     const editor = instance.current; if (!editor) return;
     editor.updateOptions(suggestionOptions(suggestions)); suggestAllowed.current?.set(suggestions !== 'off');

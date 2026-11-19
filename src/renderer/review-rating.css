@@ -3,7 +3,7 @@
 .problem-rating-dialog :is(button, input):focus-visible { outline: 3px solid var(--color-blue-bright); outline-offset: 3px; }
 .problem-rating-header { display: flex; align-items: flex-start; gap: 16px; padding: 24px 26px 16px; }
 .problem-rating-header > div { flex: 1; min-width: 0; }
-.problem-rating-eyebrow { display: inline-block; padding: 2px 10px; border-radius: var(--radius-pill); background: #d7ffb8; color: var(--color-accent-strong); font-size: 12px; font-weight: 900; margin: 0 0 8px; }
+.problem-rating-eyebrow { display: inline-block; padding: 2px 10px; border-radius: var(--radius-pill); background: var(--tint-green); color: var(--color-accent-strong); font-size: 12px; font-weight: 900; margin: 0 0 8px; }
 .problem-rating-header h2 { font-size: 24px; font-weight: 900; line-height: 1.35; text-wrap: balance; }
 .problem-rating-subject { color: var(--color-ink-2); font-size: 14px; font-weight: 700; margin-top: 6px; overflow-wrap: anywhere; }
 .problem-rating-close { flex: 0 0 40px; min-height: 40px; border-radius: 12px; font-size: 24px; color: var(--color-muted); }
@@ -29,7 +29,7 @@
 .problem-rating-warning, .problem-rating-error { margin-top: 12px; font-size: 13px; line-height: 1.8; overflow-wrap: anywhere; }
 .problem-rating-warning { color: var(--color-warning); font-weight: 700; }
 .problem-rating-error { color: var(--color-error); font-weight: 700; }
-.problem-rating-confirmed { padding: 18px 18px; margin-top: 20px; border: 2px solid #a5ed6e; background: #d7ffb8; border-radius: var(--radius-md); }
+.problem-rating-confirmed { padding: 18px 18px; margin-top: 20px; border: 2px solid var(--tint-green-line); background: var(--tint-green); border-radius: var(--radius-md); }
 .problem-rating-confirmed > strong { font-size: 20px; font-weight: 900; color: var(--color-accent-strong); }
 .problem-rating-confirmed p { margin-top: 8px; font-size: 14px; font-weight: 700; line-height: 1.8; color: var(--color-accent-strong); }
 .problem-rating-footer { display: flex; flex-direction: column; gap: 12px; padding: 16px 26px 22px; border-top: 2px solid var(--color-rule); }

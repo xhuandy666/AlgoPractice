@@ -1,4 +1,4 @@
-.hot100-card { position: relative; display: flex; align-items: center; gap: var(--space-lg); padding: 18px 22px 18px 100px; margin-bottom: 18px; border: 2px solid #ffd59e; border-radius: var(--radius-lg); background: var(--color-warning-soft); box-shadow: 0 4px 0 #ffd59e; }
+.hot100-card { position: relative; display: flex; align-items: center; gap: var(--space-lg); padding: 18px 22px 18px 100px; margin-bottom: 18px; border: 2px solid var(--tint-orange-line); border-radius: var(--radius-lg); background: var(--color-warning-soft); box-shadow: 0 4px 0 var(--tint-orange-line); }
 .hot100-card::before { content: '100'; position: absolute; left: 22px; top: 50%; display: grid; place-items: center; width: 58px; height: 58px; border-radius: 18px; transform: translateY(-50%) rotate(-6deg); background: var(--gradient-flame); color: #fff; font: 900 20px/1 var(--font-display); box-shadow: 0 4px 0 var(--color-flame-deep); }
 .hot100-card-main { flex: 1; min-width: 0; }
 .hot100-card-heading { display: flex; align-items: baseline; flex-wrap: wrap; gap: var(--space-xs) var(--space-sm); }

@@ -16,6 +16,7 @@ const compiled = await build({
     import './src/renderer/styles.css';
     import './src/renderer/shell.css';
     import './src/renderer/learning-center.css';
+    import './src/renderer/theme-dark.css';
     import './src/renderer/review-workbench.css';
     import { TodayPage } from './src/renderer/TodayPage';
     import { CaseResults } from './src/renderer/CaseResults';
@@ -103,6 +104,8 @@ try {
   await page.setContent('<!doctype html><html lang="zh-CN"><meta name="viewport" content="width=device-width, initial-scale=1"><body><main id="root"></main></body></html>');
   await page.addStyleTag({ content: compiled.outputFiles.find(file => file.path.endsWith('.css')).text });
   await page.addScriptTag({ content: compiled.outputFiles.find(file => file.path.endsWith('.js')).text });
+  // Visual check only: UI_SMOKE_THEME=dark renders the same flow in the dark theme.
+  if (process.env.UI_SMOKE_THEME === 'dark') await page.evaluate(() => { document.documentElement.dataset.theme = 'dark'; });
 
   // Home: nothing remembered keeps the plain entry to the library.
   const hero = page.getByRole('region', { name: '今日概览', exact: true });

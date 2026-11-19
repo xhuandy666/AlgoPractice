@@ -27,7 +27,7 @@
 
 /* Greeting: the mascot talks, the CTA is the biggest button on the page. */
 .dash-hello { position: relative; display: flex; align-items: center; gap: 18px; padding: 18px 22px; border: 2px solid var(--color-rule); border-radius: var(--radius-lg); background: var(--color-surface); overflow: hidden; }
-.dash-hello::before { content: ''; position: absolute; left: -40px; bottom: -70px; width: 220px; height: 160px; border-radius: 50%; background: radial-gradient(closest-side, #fff1d2, transparent); pointer-events: none; }
+.dash-hello::before { content: ''; position: absolute; left: -40px; bottom: -70px; width: 220px; height: 160px; border-radius: 50%; background: radial-gradient(closest-side, var(--tint-orange-soft), transparent); pointer-events: none; }
 .dash-hello > .mascot { position: relative; margin: -6px -4px -10px 0; }
 .speech-bubble { position: relative; flex: 1; min-width: 0; padding: 12px 18px; border: 2px solid var(--color-rule); border-radius: 18px; background: var(--color-surface); }
 .speech-bubble::before, .speech-bubble::after { content: ''; position: absolute; top: 50%; width: 0; height: 0; border-style: solid; transform: translateY(-50%); }
@@ -107,7 +107,7 @@
 .dashboard-skeleton p { font-size: 13px; }
 
 /* Rail: rank, streak calendar, achievements. */
-.rank-card { --rank-tint: color-mix(in srgb, var(--rank-color) 16%, #fff); background: linear-gradient(180deg, var(--rank-tint), var(--color-surface) 70%); border-color: color-mix(in srgb, var(--rank-color) 35%, var(--color-rule)); }
+.rank-card { --rank-tint: color-mix(in srgb, var(--rank-color) 16%, var(--color-surface)); background: linear-gradient(180deg, var(--rank-tint), var(--color-surface) 70%); border-color: color-mix(in srgb, var(--rank-color) 35%, var(--color-rule)); }
 .rank-top { display: flex; align-items: center; gap: 14px; }
 .rank-top > div { flex: 1; min-width: 0; }
 .rank-top > svg { color: var(--rank-color); transform: rotate(10deg); }
@@ -120,12 +120,12 @@
 .rank-bar > span::after { content: ''; position: absolute; left: 10px; right: 10px; top: 5px; height: 5px; border-radius: 3px; background: rgb(255 255 255 / 0.45); }
 .rank-bar > em { position: relative; display: block; text-align: center; font: 900 12px/22px var(--font-display); font-style: normal; color: var(--color-gold-ink); font-variant-numeric: tabular-nums; }
 .rank-caption { margin-top: 10px; font-size: 13px; font-weight: 700; color: var(--color-ink-2); }
-.rank-caption strong { color: var(--color-gold-ink); }
+.rank-caption strong { color: var(--color-gold-text); }
 
 .streak-top { display: flex; align-items: center; gap: 14px; }
 .streak-flame { display: grid; place-items: center; flex: none; width: 56px; height: 56px; border-radius: 18px; background: var(--color-paper-2); color: var(--color-control-rule); }
 .streak-flame svg { fill: currentColor; }
-.streak-card[data-active=true] .streak-flame { background: #fff0db; color: var(--color-flame); animation: flame-flicker 1.8s var(--ease-in-out) infinite; }
+.streak-card[data-active=true] .streak-flame { background: var(--tint-orange-soft); color: var(--color-flame); animation: flame-flicker 1.8s var(--ease-in-out) infinite; }
 .streak-count { font: 900 15px/1.2 var(--font-display); color: var(--color-ink-2); }
 .streak-count strong { font-size: 32px; color: var(--color-ink); font-variant-numeric: tabular-nums; }
 .streak-card[data-active=true] .streak-count strong { color: var(--color-warning); }
@@ -158,7 +158,7 @@
 .achievement-progress > i { display: block; height: 100%; background: var(--color-gold); transform-origin: left; }
 @media (hover: hover) { .achievement-wall li[data-unlocked=true]:hover .achievement-badge { transform: translateY(-3px) rotate(0) scale(1.06); } }
 
-.starter-card { border-color: #e2c4ff; background: linear-gradient(180deg, var(--color-purple-soft), var(--color-surface) 75%); }
+.starter-card { border-color: var(--tint-purple-line); background: linear-gradient(180deg, var(--color-purple-soft), var(--color-surface) 75%); }
 .starter-path { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; margin: 0; padding: 0; list-style: none; }
 .starter-path li { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; min-width: 0; padding: 12px; border: 2px solid var(--color-rule); border-radius: var(--radius-md); background: var(--color-surface); }
 .starter-path li > div { display: grid; flex: 1; min-width: 110px; }

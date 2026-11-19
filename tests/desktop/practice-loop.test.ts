@@ -5,6 +5,8 @@ import type { DesktopBridge } from '../../src/shared/bridge.ts';
 import type { SubmissionHistoryItem } from '../../src/shared/submission-history.ts';
 import { caseInputRows, CASE_INPUT_DISPLAY_LIMIT, firstFailedCase } from '../../src/renderer/case-input.ts';
 import { parseDisplayPreferences } from '../../src/renderer/display-preferences.ts';
+import { DEFAULT_EDITOR_FONT_SIZE, EDITOR_FONT_SIZES, editorLineHeight, parseEditorPreferences } from '../../src/renderer/editor-preferences.ts';
+import { resolveTheme } from '../../src/renderer/theme.ts';
 import { parsePracticeMemory, withOpenedProblem, withoutMissing } from '../../src/renderer/practice-memory.ts';
 import { resolveResume } from '../../src/renderer/practice-resume.ts';
 import { loadReviewReference, pickReferenceRecord, referenceRank } from '../../src/renderer/review-reference.ts';
@@ -181,9 +183,25 @@ test('loading a review reference prefers the current language, falls back to ano
   assert.equal((await loadReviewReference(api, 'two-sum', 'python')).code, null, 'no passing record in any language');
 });
 
-test('topic tags stay hidden unless the stored preference explicitly turns them on', () => {
-  assert.deepEqual(parseDisplayPreferences(null), { topicTags: false });
-  assert.deepEqual(parseDisplayPreferences('{"topicTags":true}'), { topicTags: true });
-  assert.deepEqual(parseDisplayPreferences('{"topicTags":"yes"}'), { topicTags: false });
-  assert.deepEqual(parseDisplayPreferences('{broken'), { topicTags: false });
+test('display preferences default to the light theme with topic tags hidden, and ignore unknown values', () => {
+  assert.deepEqual(parseDisplayPreferences(null), { topicTags: false, theme: 'light' });
+  assert.deepEqual(parseDisplayPreferences('{"topicTags":true,"theme":"dark"}'), { topicTags: true, theme: 'dark' });
+  assert.deepEqual(parseDisplayPreferences('{"topicTags":"yes","theme":"sepia"}'), { topicTags: false, theme: 'light' });
+  assert.deepEqual(parseDisplayPreferences('{"theme":"system"}'), { topicTags: false, theme: 'system' });
+  assert.deepEqual(parseDisplayPreferences('{broken'), { topicTags: false, theme: 'light' });
+});
+
+test('the theme follows the system only when asked to', () => {
+  assert.equal(resolveTheme('light', true), 'light'); assert.equal(resolveTheme('dark', false), 'dark');
+  assert.equal(resolveTheme('system', true), 'dark'); assert.equal(resolveTheme('system', false), 'light');
+});
+
+test('editor preferences keep an offered font size and scale the line height with it', () => {
+  assert.deepEqual(parseEditorPreferences(null), { suggestions: false, fontSize: DEFAULT_EDITOR_FONT_SIZE });
+  // Preferences saved before the font size existed keep their completion choice.
+  assert.deepEqual(parseEditorPreferences('{"suggestions":true}'), { suggestions: true, fontSize: 14 });
+  assert.deepEqual(parseEditorPreferences('{"suggestions":true,"fontSize":18}'), { suggestions: true, fontSize: 18 });
+  for (const bad of ['{"fontSize":17}', '{"fontSize":"16"}', '{"fontSize":400}', '{broken']) assert.equal(parseEditorPreferences(bad).fontSize, 14);
+  assert.equal(editorLineHeight(14), 26, 'the default keeps its line height');
+  assert.deepEqual(EDITOR_FONT_SIZES.map(editorLineHeight), [22, 24, 26, 28, 30, 33, 37]);
 });
