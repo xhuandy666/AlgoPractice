@@ -11,9 +11,12 @@ import type { RunStatus } from '../runner/types.ts';
 import { FAILED_RUN_STATUSES } from '../ai/help-card.ts';
 import { dayNumberDate, isoMsSql, localDayAt, localDaySegments, localDaySql } from './local-days.ts';
 
-/** Run outcomes where the user's own code compiled or executed but did not pass every case. */
+/** Run outcomes where the user's own code compiled or executed but did not pass every case. A pass against expected
+ * outputs the user typed in is practice as well (see practiceRunSql): it cannot count as solving the problem, but it
+ * must not earn less than a wrong answer does. */
 const PRACTICE_RUN_STATUS_LIST: readonly RunStatus[] = ['completed', 'wrong_answer', 'compile_error', 'runtime_error', 'timeout', 'output_limit'];
 const PRACTICE_RUN_STATUSES = PRACTICE_RUN_STATUS_LIST.map(status => `'${status}'`).join(', ');
+const practiceRunSql = `(status IN (${PRACTICE_RUN_STATUSES}) OR (status = 'passed' AND expected_output_source <> 'native-samples'))`;
 /** Local outcomes that are the user's code failing a check. Unlike the AI help suggestion, compile errors are left out:
  * they say little about the topic. A stored wrong_answer always had an expectation: unjudged runs end as completed. */
 const STRUGGLE_RUN_STATUSES = ['wrong_answer', ...FAILED_RUN_STATUSES].map(status => `'${status}'`).join(', ');
@@ -430,7 +433,7 @@ export class LearningRepository {
         day(date(row.day)).completedProblems = row.count as number;
       }
       for (const row of this.db.prepare(`SELECT ${byDay} AS day, COUNT(*) AS count, SUM(${trustedPassSql()}) AS passed,
-        SUM(status IN (${PRACTICE_RUN_STATUSES})) AS practiced FROM ${timestamps('created_at', `, status, expected_output_source
+        SUM(${practiceRunSql}) AS practiced FROM ${timestamps('created_at', `, status, expected_output_source
         FROM runs WHERE created_at >= ? AND created_at <= ?${condition}`)} GROUP BY day`).all(...args) as Row[]) {
         runs += row.count as number; passedRuns += row.passed as number;
         Object.assign(day(date(row.day)), { runs: row.count as number, passedRuns: row.passed as number, practiceRuns: row.practiced as number });
