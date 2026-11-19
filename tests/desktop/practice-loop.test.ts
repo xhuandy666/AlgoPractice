@@ -4,6 +4,7 @@ import type { Adapter, DesignAdapter } from '../../src/runner/types.ts';
 import type { DesktopBridge } from '../../src/shared/bridge.ts';
 import type { SubmissionHistoryItem } from '../../src/shared/submission-history.ts';
 import { caseInputRows, CASE_INPUT_DISPLAY_LIMIT, firstFailedCase } from '../../src/renderer/case-input.ts';
+import { parseDisplayPreferences } from '../../src/renderer/display-preferences.ts';
 import { parsePracticeMemory, withOpenedProblem, withoutMissing } from '../../src/renderer/practice-memory.ts';
 import { resolveResume } from '../../src/renderer/practice-resume.ts';
 import { loadReviewReference, pickReferenceRecord, referenceRank } from '../../src/renderer/review-reference.ts';
@@ -178,4 +179,11 @@ test('loading a review reference prefers the current language, falls back to ano
   assert.equal((await loadReviewReference(api, 'two-sum', 'cpp')).code?.code, '// cpp-ac');
   histories.cpp = [];
   assert.equal((await loadReviewReference(api, 'two-sum', 'python')).code, null, 'no passing record in any language');
+});
+
+test('topic tags stay hidden unless the stored preference explicitly turns them on', () => {
+  assert.deepEqual(parseDisplayPreferences(null), { topicTags: false });
+  assert.deepEqual(parseDisplayPreferences('{"topicTags":true}'), { topicTags: true });
+  assert.deepEqual(parseDisplayPreferences('{"topicTags":"yes"}'), { topicTags: false });
+  assert.deepEqual(parseDisplayPreferences('{broken'), { topicTags: false });
 });

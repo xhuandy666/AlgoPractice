@@ -135,6 +135,13 @@ try {
   const count = async expected => { await page.waitForFunction(expected => document.querySelectorAll('.problem-table-row').length === expected && document.querySelector('.problem-table').getAttribute('aria-busy') === 'false', expected); };
   await count(3); assert.equal(await clear.count(), 0, 'no clear control without an active filter');
 
+  // Topic tags name the technique, so rows show them only when asked.
+  const meta = rows.first().locator('.problem-name p'), topics = page.getByLabel('显示专题', { exact: true });
+  assert.equal(await meta.textContent(), '自建样例', 'topic tags are hidden by default'); assert.equal(await topics.isChecked(), false);
+  await topics.check(); assert.equal(await meta.textContent(), '数组 · 自建样例');
+  await topics.uncheck(); assert.equal(await meta.textContent(), '自建样例');
+  pass('Library rows hide topic tags until "显示专题" is checked');
+
   await progress.selectOption('solved'); await count(0); await showAll.click(); await count(3);
   assert.equal(await progress.inputValue(), '', 'the progress filter is reset together with the list'); assert.equal(await clear.count(), 0);
   await language.selectOption('cpp'); await count(0); await showAll.click(); await count(3); assert.equal(await language.inputValue(), '');
