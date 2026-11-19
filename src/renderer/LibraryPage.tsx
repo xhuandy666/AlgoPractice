@@ -11,7 +11,7 @@ import { LANGUAGES, languageLabel, type Language } from '../shared/languages';
 import { readOnlyCandidates, refreshReadOnlyProblems, type BulkRefreshProgress } from './bulk-refresh';
 
 export function LibraryPage({ api, data, onOpen, onImport, onChanged, onError }: {
-  api: DesktopBridge | undefined; data: LibraryIndex; onOpen: (id: string, source?: PracticeNavigationSource) => void; onImport: (url?: string) => void; onChanged: () => Promise<void>; onError: (error: string) => void;
+  api: DesktopBridge | undefined; data: LibraryIndex; onOpen: (id: string, source?: PracticeNavigationSource, list?: { id: string; title: string }) => void; onImport: (url?: string) => void; onChanged: () => Promise<void>; onError: (error: string) => void;
 }) {
   const [query, setQuery] = useState(''); const [listId, setListId] = useState(''); const [chapterId, setChapterId] = useState('');
   const [difficulty, setDifficulty] = useState(''); const [support, setSupport] = useState(''); const [practiceState, setPracticeState] = useState<PracticeState | ''>('');
@@ -59,9 +59,11 @@ export function LibraryPage({ api, data, onOpen, onImport, onChanged, onError }:
   // Opening a problem starts its practice, which changes its practice state. With a state filter the order is fixed
   // before opening, so the opened problem cannot drop out of its own navigation sequence.
   const open = (id: string) => {
-    if (!practiceState || !resultSource || resultSource.kind !== 'library' || !api) { onOpen(id, resultSource ?? makeFrozenPracticeSource([id], '当前题目')); return; }
-    void resolvePracticeNavigation(resultSource, api).then(ids => onOpen(id, makeFrozenPracticeSource(ids.includes(id) ? ids : [id, ...ids], resultSource.label)))
-      .catch(() => onOpen(id, makeFrozenPracticeSource(result.items.map(item => item.id), resultSource.label)));
+    // The selected study list is what the learner is working through, whatever else narrows the view right now.
+    const from = list ? { id: list.id, title: list.title } : undefined;
+    if (!practiceState || !resultSource || resultSource.kind !== 'library' || !api) { onOpen(id, resultSource ?? makeFrozenPracticeSource([id], '当前题目'), from); return; }
+    void resolvePracticeNavigation(resultSource, api).then(ids => onOpen(id, makeFrozenPracticeSource(ids.includes(id) ? ids : [id, ...ids], resultSource.label), from))
+      .catch(() => onOpen(id, makeFrozenPracticeSource(result.items.map(item => item.id), resultSource.label), from));
   };
   const filtered = Boolean(query || listId || chapterId || difficulty || support || practiceState || language);
   // Clears every list control at once: a filter left behind keeps the list empty after "查看全部题目".

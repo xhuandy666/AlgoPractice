@@ -37,6 +37,12 @@
 .speech-line { margin-top: 2px; font-size: 19px; font-weight: 900; line-height: 1.4; color: var(--color-ink); }
 .center-date { margin-top: 4px; font-size: 12px; font-weight: 700; color: var(--color-muted); }
 .dash-hello .browse-practice { position: relative; flex: none; min-height: 54px; padding: 8px 26px; border-radius: 16px; font-size: var(--text-base); font-weight: 900; letter-spacing: 0.06em; }
+.hello-actions { position: relative; flex: 0 1 300px; min-width: 0; display: grid; gap: 4px; }
+.hello-actions .browse-practice { width: 100%; padding-inline: 18px; letter-spacing: 0; }
+.browse-practice .resume-kind { flex: none; padding: 2px 8px; border-radius: 999px; font-size: var(--text-xs); background: color-mix(in srgb, #fff 24%, transparent); }
+.browse-practice .resume-title { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.hello-actions .resume-note { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 2px 8px; font-size: var(--text-xs); color: var(--color-muted); }
+.hello-actions .resume-note .text-button { min-height: 28px; padding: 2px 4px; font-size: var(--text-xs); }
 .dash-hello .browse-practice svg { transition: transform var(--dur-short) var(--ease-spring); }
 @media (hover: hover) { .dash-hello .browse-practice:hover:not(:disabled) svg { transform: translateX(4px); } }
 
@@ -175,6 +181,7 @@
 @container (max-width: 700px) {
   .dash-hello { flex-wrap: wrap; }
   .dash-hello .browse-practice { width: 100%; }
+  .hello-actions { flex-basis: 100%; }
   .dash-rail { grid-template-columns: minmax(0, 1fr); }
   .starter-path { grid-template-columns: minmax(0, 1fr); }
   .center-review-summary { flex-wrap: wrap; }

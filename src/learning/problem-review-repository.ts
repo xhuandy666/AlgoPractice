@@ -10,6 +10,7 @@ import type {
   ReviewOpportunityFilter, ReviewPlanListItem, ReviewPlanQuery, ReviewPlanSnapshot, ReviewSession,
   StartReviewSessionInput, SubmitReviewOpportunityInput,
 } from '../shared/review-plan.ts';
+import { REVIEW_RATING_REQUIRED } from '../shared/review-plan.ts';
 import { advanceReviewCard, localDate, newReviewCard, PROBLEM_FSRS_PARAMETERS, PROBLEM_FSRS_VERSION } from './fsrs.ts';
 
 type Row = Record<string, string | number | null>;
@@ -566,7 +567,7 @@ export class ProblemReviewRepository {
       const index = session.problemIds.indexOf(input.problemId);
       if (index < 0 || index > session.position) throw new Error('会话位置已变化，请重新读取当前题目。');
       if (index < session.position) return this.refreshSession(session);
-      if (!input.skipped && !this.dayEvent(input.problemId, localDate(reviewTimestamp(), this.settings().timeZone))) throw new Error('请先自评，或明确跳过本题。');
+      if (!input.skipped && !this.dayEvent(input.problemId, localDate(reviewTimestamp(), this.settings().timeZone))) throw new Error(REVIEW_RATING_REQUIRED);
       const skipped = input.skipped ? [...new Set([...session.skippedProblemIds, input.problemId])] : session.skippedProblemIds;
       this.db.prepare('UPDATE review_sessions SET position=position+1,skipped_json=?,updated_at=? WHERE id=?').run(JSON.stringify(skipped), reviewTimestamp(), session.id);
       return this.refreshSession(this.session(this.db.prepare('SELECT * FROM review_sessions WHERE id=?').get(session.id) as Row));

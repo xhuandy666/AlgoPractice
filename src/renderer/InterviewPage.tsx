@@ -3,6 +3,7 @@ import { LANGUAGES, languageLabel } from '../shared/languages';
 import type { DesktopBridge, Page } from '../shared/bridge';
 import type { InterviewRules, InterviewPool, CompanyPreview } from '../shared/interview';
 import { defaultInterviewRules, RECENT_PRACTICE_EXCLUSION } from '../shared/interview';
+import { readPracticeMemory } from './practice-memory';
 import type { StudyList } from '../shared/library';
 import { dateTime, errorText, PageIntro } from './ui';
 import { flushPendingSaves, setEditsFrozen } from './pending-saves';
@@ -19,7 +20,7 @@ function exclusionGroups(pool: InterviewPool) {
 const NO_LISTS: StudyList[] = [];
 export function InterviewPage({api,lists=NO_LISTS,onError,onNavigate}:{api:DesktopBridge|undefined;lists?:StudyList[];onError:(message:string)=>void;onNavigate:(page:Page)=>void}) {
   const [state,setState]=useState<State>({active:null,history:[],datasets:[]});
-  const [rules,setRules]=useState<InterviewRules>(()=>({...defaultInterviewRules,counts:{...defaultInterviewRules.counts},seed:crypto.randomUUID()}));
+  const [rules,setRules]=useState<InterviewRules>(()=>({...defaultInterviewRules,language:readPracticeMemory().language,counts:{...defaultInterviewRules.counts},seed:crypto.randomUUID()}));
   const [tagText,setTagText]=useState(()=>defaultInterviewRules.tags.join(','));
   const [preview,setPreview]=useState<{id:string;pool:InterviewPool}|null>(null), [company,setCompany]=useState<{id:string;preview:CompanyPreview}|null>(null);
   const [selected,setSelected]=useState(''),[busy,setBusy]=useState(''),[message,setMessage]=useState('');

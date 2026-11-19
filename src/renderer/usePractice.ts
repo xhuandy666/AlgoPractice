@@ -5,11 +5,14 @@ import { previewProblems } from '../shared/presentation';
 import { defaultAcmTestConfig, validateAcmTestConfig, type AnswerFormat, type AcmTestConfig } from '../shared/answer-format';
 import { errorText } from './ui';
 import { editsFrozen, flushPendingSaves, registerPendingSave, setEditsFrozen } from './pending-saves';
+import { readPracticeMemory, SAMPLE_PROBLEM_ID, savePracticeMemory, withoutMissing } from './practice-memory';
 
 export interface PracticeTarget { id: string; language: Language; scope: string; answerFormat?: AnswerFormat; }
 const targetKey = (target: PracticeTarget) => `${target.id}:${target.language}:${target.scope}:${target.answerFormat ?? 'preferred'}`;
 export function usePractice(api: DesktopBridge | undefined, onError: (error: string) => void) {
-  const [target, setTarget] = useState<PracticeTarget>({ id: 'array-total', language: 'python', scope: 'practice' });
+  // A new launch continues with the remembered language and problem instead of the Python sample.
+  const [target, setTarget] = useState<PracticeTarget>(() => { const memory = readPracticeMemory(); return { id: memory.problemId ?? SAMPLE_PROBLEM_ID, language: memory.language, scope: 'practice' }; });
+  const restored = useRef(target.id !== SAMPLE_PROBLEM_ID);
   const key = targetKey(target);
   const [workspace, setWorkspace] = useState<WorkspaceData | null>(null);
   const [code, setCode] = useState('');
@@ -52,8 +55,13 @@ export function usePractice(api: DesktopBridge | undefined, onError: (error: str
         const next = state.draft?.code ?? (state.spec?.content ?? state.problem.content).starter[target.language] ?? '';
         const tests = format === 'acm' ? state.draft?.testConfig ?? defaultAcmTestConfig(state.problem.content) : undefined;
         current.current = { target, code: next, testConfig: tests, revision: state.draft?.revision ?? 0, generation: current.current.generation + 1 }; dirty.current = false;
-        setWorkspace(state); setCode(next); setTestConfig(tests); setSaving(api ? state.draft ? '已恢复本机草稿' : '尚未修改' : '浏览器仅预览'); setReady(true);
-      } catch (error) { if (alive) reportError.current(errorText(error)); }
+        setWorkspace(state); setCode(next); setTestConfig(tests); setSaving(api ? state.draft ? '已恢复本机草稿' : '尚未修改' : '浏览器仅预览'); setReady(true); restored.current = false;
+      } catch (error) {
+        if (!alive) return;
+        // The remembered problem was removed since the last launch: fall back to the sample without an error.
+        if (restored.current) { restored.current = false; savePracticeMemory(withoutMissing(readPracticeMemory(), { problem: true })); setTarget({ id: SAMPLE_PROBLEM_ID, language: target.language, scope: 'practice' }); }
+        else reportError.current(errorText(error));
+      }
     })();
     return () => { alive = false; };
   }, [api, key]);

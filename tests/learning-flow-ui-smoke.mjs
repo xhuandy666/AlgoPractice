@@ -100,7 +100,7 @@ try {
   const starter = page.getByRole('region', { name: '新手任务', exact: true });
   await starter.getByText('完成 0 / 3 · 先跑通一道样例，再导入自己的题单', { exact: true }).waitFor();
   assert.deepEqual(await starter.locator('.starter-path li strong').allTextContents(), ['运行一次代码', '解出第一道题', '导入自己的题单']);
-  await starter.getByText('自带样例「数组求和」已就绪，打开后按 ⌘ / Ctrl + Enter', { exact: true }).waitFor();
+  await starter.getByText(/^自带样例「数组求和」已就绪，打开后按 (⌘|Ctrl\+)Enter$/).waitFor();
   await shot('home-newcomer.png'); await starter.getByRole('button', { name: '试做「数组求和」', exact: true }).click();
   assert.deepEqual(await calls('open'), [['open', ['array-total'], '自带样例 · 数组求和']], 'the first step opens the sample itself, not the library');
   await starter.getByRole('button', { name: '导入题单', exact: true }).click(); assert.deepEqual((await calls('navigate')).at(-1), ['navigate', 'sources']);

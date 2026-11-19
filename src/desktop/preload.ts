@@ -117,6 +117,7 @@ const bridge: DesktopBridge = {
   loadDraft: (...args) => ipcRenderer.invoke('draft:load', ...args),
   saveDraft: (...args) => ipcRenderer.invoke('draft:save', ...args),
   run: (id, language, code, scope, requestId, version, options) => ipcRenderer.invoke('runner:run', id, language, code, scope, requestId, version, options),
+  selfTest: (id, language, code, scope, version, options) => ipcRenderer.invoke('runner:self-test', id, language, code, scope, version, options),
   prepareRun: (...args) => ipcRenderer.invoke('runner:prepare', ...args),
   cancelPreparedRun: token => ipcRenderer.invoke('runner:cancel-prepared', token),
   cancel: () => ipcRenderer.invoke('runner:cancel'),

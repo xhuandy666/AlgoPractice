@@ -92,3 +92,5 @@ export interface ReviewSession {
 }
 export interface StartReviewSessionInput { requestId: string; problemIds?: string[]; }
 export interface AdvanceReviewSessionInput { sessionId: string; problemId: string; skipped?: boolean; }
+/** Refusal to advance a review session past a problem that has no rating today and was not explicitly skipped. */
+export const REVIEW_RATING_REQUIRED = '请先自评，或明确跳过本题。';

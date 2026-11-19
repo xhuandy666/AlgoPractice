@@ -47,6 +47,8 @@ export interface BackupState { busy: boolean; backups: BackupSummary[]; lastErro
 export interface PreparedRestore { id: string; manifest: BackupManifest; bytes: number; }
 export interface RunPreparation { token: string; runtime: RuntimeState; autoInstall: boolean; }
 export interface RunOptions { answerFormat?: 'function' | 'acm'; preparationToken?: string; }
+/** One self-written input for a function problem: the arguments in signature order (see shared/self-test.ts). */
+export interface SelfTestOptions { args: import('../runner/types').WireValue[]; preparationToken?: string; requestId?: string; }
 export interface DraftOptions { answerFormat?: AnswerFormat; testConfig?: AcmTestConfig; expectedRevision?: number; }
 export interface DesktopBridge {
   submissionHistory(filter: SubmissionHistoryFilter): Promise<PageResult<SubmissionHistoryItem>>;
@@ -169,6 +171,8 @@ export interface DesktopBridge {
   loadDraft(problemId: string, language: Language, scopeId?: string, answerFormat?: AnswerFormat): Promise<Draft | null>;
   saveDraft(problemId: string, language: Language, code: string, scopeId?: string, options?: DraftOptions): Promise<{ revision: number }>;
   run(problemId: string, language: Language, code: string, scopeId?: string, requestId?: string, problemVersion?: string, options?: RunOptions): Promise<RunArchive>;
+  /** Runs the code on one self-written input and returns the outcome without recording a run, an attempt or any statistic. */
+  selfTest(problemId: string, language: Language, code: string, scopeId: string | undefined, problemVersion: string | undefined, options: SelfTestOptions): Promise<import('../runner/types').RunResult>;
   prepareRun(problemId: string, language: Language, code: string, scopeId?: string, problemVersion?: string, answerFormat?: 'function' | 'acm'): Promise<RunPreparation>;
   cancelPreparedRun(token: string): Promise<void>;
   cancel(): Promise<void>;

@@ -317,7 +317,7 @@ try {
   assert.deepEqual(reviewProgress(), beforeReview, 'neighbor browsing must not advance/skip/assess the active review queue');
   assert.equal((await api('loadDraft', fixture.reviewOrder[0], 'python', 'practice', 'function')).code, fixture.ordinaryCode);
   assert.ok(readRows("SELECT code FROM drafts WHERE problem_id=? AND scope_id LIKE 'review:%' AND answer_format='function'", [fixture.reviewOrder[0]]).some(row => row.code.includes(reviewMarker)));
-  const advance = page.getByRole('button', { name: '已自评，下一题', exact: true });
+  const advance = page.locator('.review-session-bar .review-next');
   assert.ok(await advance.count() === 0 || await advance.isDisabled(), 'browsing outside the current queue position cannot pretend to complete it');
   await previous().click(); await atProblem(fixture.reviewOrder[0]); assert.deepEqual(reviewProgress(), beforeReview);
   assert.deepEqual(await app.evaluate(() => globalThis.workbenchNavigationSmoke.queueMutationCalls), []);

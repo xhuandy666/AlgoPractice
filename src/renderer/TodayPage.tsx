@@ -3,7 +3,7 @@ import { TopicInsightsCard } from './TopicInsights';
 import type { Language } from '../shared/languages';
 import type { DesktopBridge, LibraryIndex, Page } from '../shared/bridge';
 import type { LearningDashboard, LearningDay } from '../shared/learning';
-import { errorText, Icon, type IconName } from './ui';
+import { errorText, Icon, type IconName, shortcut } from './ui';
 import type { RewardProfile } from './rewards';
 import { LevelRing } from './PlayerStats';
 import { Mascot } from './Mascot';
@@ -14,6 +14,8 @@ import { GrowthDetails, type GrowthFocus } from './GrowthDetails';
 import { useEditsFrozen } from './pending-saves';
 import { addDays, dateKey, isStudyDay, learningStreak } from './learning-calendar';
 import { HelpHint } from './HelpHint';
+import { readPracticeMemory, savePracticeMemory, withoutMissing } from './practice-memory';
+import { resolveResume, type ResumeChoice } from './practice-resume';
 
 const weekdays = ['一', '二', '三', '四', '五', '六', '日'];
 const FOCUS_QUEST_MINUTES = 30, XP_QUEST = 100;
@@ -71,7 +73,7 @@ function Starter({ profile, library, onBrowse, onNavigate, onOpenSample }: { pro
   const sample = onOpenSample ? starterSample(library) : undefined, openSample = sample ? () => onOpenSample!(sample.id, sample.content.title) : onBrowse;
   // Built-in samples are ready on first launch, so the first step is to run one; importing a list comes after the first win.
   const steps = [
-    { done: profile.totals.runs > 0, title: '运行一次代码', detail: sample ? `自带样例「${sample.content.title}」已就绪，打开后按 ⌘ / Ctrl + Enter` : '在练习工作台按 ⌘ / Ctrl + Enter', action: sample ? `试做「${sample.content.title}」` : '打开题库', go: openSample },
+    { done: profile.totals.runs > 0, title: '运行一次代码', detail: sample ? `自带样例「${sample.content.title}」已就绪，打开后按 ${shortcut('Enter')}` : `在练习工作台按 ${shortcut('Enter')}`, action: sample ? `试做「${sample.content.title}」` : '打开题库', go: openSample },
     { done: profile.totals.solvedProblems > 0, title: '解出第一道题', detail: '题目自带的用例全部通过或力扣官方 AC，解锁成就「初露锋芒」', action: sample ? '继续做样例' : '开始练习', go: openSample },
     { done: library.lists.length > 0 || library.totalProblems > demoProblems.length, title: '导入自己的题单', detail: '一键导入 Hot100，或粘贴力扣题单链接', action: '导入题单', go: () => onNavigate?.('sources') },
   ];
@@ -114,7 +116,7 @@ function AchievementWall({ profile, onOpen }: { profile: RewardProfile; onOpen: 
   </section>;
 }
 
-export function TodayPage({ api, library, profile = null, language, onOpenProblems, onRedoProblems, onReviewPlan, onStartReview, onSettings, onArchives, onBrowse, onNavigate, onError }: {
+export function TodayPage({ api, library, profile = null, language, onOpenProblems, onRedoProblems, onReviewPlan, onStartReview, onResume, onSettings, onArchives, onBrowse, onNavigate, onError }: {
   api: DesktopBridge | undefined; library: LibraryIndex; profile?: RewardProfile | null;
   language?: Language; onOpenProblems?: (problemIds: string[], label: string) => void;
   /** Reopens problems for a from-scratch rewrite in a separate draft scope; falls back to onOpenProblems. */
@@ -122,6 +124,8 @@ export function TodayPage({ api, library, profile = null, language, onOpenProble
   /** Opens the workbench on a review session's current problem; without it the summary only links to the plan. */
   onStartReview?: (problemId: string, session: ReviewSession, source: PracticeNavigationSource) => void | Promise<void>;
   onReviewPlan?: () => void; onSettings: () => void; onArchives: (date?: string) => void;
+  /** Opens the problem the learner should continue with; without it the hero button only opens the library. */
+  onResume?: (choice: ResumeChoice) => void;
   onBrowse: () => void; onNavigate?: (page: Page) => void; onError: (message: string) => void;
 }) {
   const [dashboard, setDashboard] = useState<LearningDashboard | null>(null);
@@ -135,8 +139,16 @@ export function TodayPage({ api, library, profile = null, language, onOpenProble
   const [message, setMessage] = useState(''), [failure, setFailure] = useState('');
   const [goalOpen, setGoalOpen] = useState(false), [goal, setGoal] = useState('3');
   const working = useRef(false), generation = useRef(0); const frozen = useEditsFrozen();
+  const [resume, setResume] = useState<ResumeChoice | null>(null);
+  const lists = useRef(library.lists); lists.current = library.lists;
   const load = useCallback(async () => {
     if (!api) { setLoading(false); return; } const current = ++generation.current;
+    // Optional: when it cannot be resolved the hero button simply opens the library.
+    if (onResume) void resolveResume(api, readPracticeMemory(), lists.current).then(result => {
+      if (current !== generation.current) return;
+      if (result.missing.problem || result.missing.list) savePracticeMemory(withoutMissing(readPracticeMemory(), result.missing));
+      setResume(result.choice);
+    }).catch(() => { if (current === generation.current) setResume(null); });
     try {
       const [result, plan, session] = await Promise.all([api.learningDashboard(), api.reviewPlan({ view: 'today', limit: 1 }), api.reviewSession()]);
       if (current === generation.current) { setDashboard(result); setReview(plan.summary); setOngoing(session?.status === 'active' && session.currentProblemId ? session : null); setFailure(''); setLoading(false); }
@@ -183,7 +195,10 @@ export function TodayPage({ api, library, profile = null, language, onOpenProble
             <p className="speech-line">{dashboard ? goalLine(day.completedProblems, target, profile) : '正在读取今日学习记录…'}</p>
             <p className="center-date">{new Intl.DateTimeFormat('zh-CN', { timeZone: 'UTC', month: 'long', day: 'numeric', weekday: 'long' }).format(new Date(`${today}T12:00:00Z`))}</p>
           </div>
-          <button className="button primary browse-practice" onClick={onBrowse}>开始练习<Icon name="arrow" size={20} /></button>
+          {resume && onResume ? <div className="hello-actions">
+            <button className="button primary browse-practice" title={resume.list ? `${resume.kind === 'continue' ? '继续' : '下一题'}：${resume.title} · ${resume.list.title}` : `继续：${resume.title}`} onClick={() => onResume(resume)}><span className="resume-kind">{resume.kind === 'continue' ? '继续' : '下一题'}</span><span className="resume-title">{resume.title}</span><Icon name="arrow" size={20} /></button>
+            <p className="resume-note">{resume.kind === 'continue' ? '上次没做完的题' : `《${resume.list!.title}》里还没做过的第一道`}<button type="button" className="text-button" onClick={onBrowse}>去题库选题</button></p>
+          </div> : <button className="button primary browse-practice" onClick={onBrowse}>开始练习<Icon name="arrow" size={20} /></button>}
         </section>
         <section className="quest-board dash-card" aria-label="学习进度">
           <div className="dash-card-heading"><div><p className="dash-eyebrow">每日任务</p><div className="heading-with-help"><h2>今日进度</h2><HelpHint label="完成题数说明">解出即计入（题目自带的用例全部通过，或力扣官方 AC）。本地无法判定对错的题，最终代码运行或提交后结束练习方可计入；最后一次运行或官方提交未通过、或最终代码未运行即结束的，不计入。同一道题当天只计一次。专注时长与经验任务仅作展示，不额外加分。</HelpHint></div></div><button className="text-button" aria-expanded={goalOpen} disabled={!api || !dashboard || busy || frozen} onClick={() => { setGoal(String(target)); setGoalOpen(!goalOpen); }}>调整目标</button></div>
