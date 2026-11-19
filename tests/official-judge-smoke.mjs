@@ -219,6 +219,11 @@ try {
   const autoHelp = coach.getByRole('button', { name: '提交后自动分析说明', exact: true });
   const autoControl = coach.getByRole('checkbox', { name: '提交后自动分析', exact: true });
   const autoTooltip = page.getByRole('tooltip').filter({ hasText: '仅力扣官方提交完成后分析；本地运行不会自动触发。' });
+  // The switch lives in the composer's more-actions menu, which closes when focus moves elsewhere in the workbench.
+  const coachMore = coach.getByRole('button', { name: '更多操作', exact: true });
+  const openCoachMenu = async () => { if (await coachMore.getAttribute('aria-expanded') !== 'true') await coachMore.click(); await coach.getByRole('group', { name: '更多操作', exact: true }).waitFor(); };
+  assert.equal(await autoControl.count(), 0, 'Auto analysis stays out of the fixed composer until the menu is opened');
+  await openCoachMenu();
   await until(async () => await autoControl.isEnabled(), 'synthetic provider is loaded by the coach');
   assert.equal(await autoTooltip.isVisible(), false, 'Explanation must not occupy the composer by default');
   assert.equal(await coach.getByText('一起读懂题目，沿着你的思路把代码改好。', { exact: true }).count(), 0);
@@ -289,7 +294,7 @@ try {
   await pasteCode(fixture.code);
 
   const auto = coach.getByRole('checkbox', { name: '提交后自动分析', exact: true });
-  assert.equal(await auto.isChecked(), false); await auto.check();
+  await openCoachMenu(); assert.equal(await auto.isChecked(), false); await auto.check();
   await until(async () => (await api('aiProvider')).autoAnalyzeOfficial === true, 'automatic official analysis opt-in saved');
   const providerCount = () => app.evaluate(() => globalThis.officialJudgeSmoke.providerRequests.length);
   const beforeLocal = await providerCount();
@@ -320,7 +325,7 @@ try {
   assert.equal(await providerCount(), beforeLocal + 2);
   assert.equal((await api('loadDraft', fixture.problem.id, 'python')).code, `${fixture.code}\n# later edit not submitted\n`);
   pass('Automatic failure analysis binds the exact submitted revision and cannot overwrite a later editor draft');
-  await auto.uncheck(); await until(async () => (await api('aiProvider')).autoAnalyzeOfficial === false, 'automatic analysis disabled again');
+  await openCoachMenu(); await auto.uncheck(); await until(async () => (await api('aiProvider')).autoAnalyzeOfficial === false, 'automatic analysis disabled again');
   await pasteCode(fixture.code);
 
   await state({ nextVerdict: 'accepted', failNextCheck: true }); await submit.click();

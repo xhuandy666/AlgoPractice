@@ -55,6 +55,12 @@ export function AiSettings({ api, onError }: { api: DesktopBridge | undefined; o
     try { const value = await api.clearAiKey(); setProvider(value); setKey(''); setConnection(null); setMessage('当前接口保存的 API Key 已清除。'); }
     catch (error) { onError(errorText(error)); } finally { working.current = false; setBusy(''); }
   }
+  // Saved at once and apart from the interface form: it changes when the coach runs, not which provider it calls.
+  async function saveAutoAnalysis(enabled: boolean) {
+    if (!api || !provider || working.current || frozen) return; working.current = true; setBusy('auto'); setMessage('');
+    try { setProvider(await api.saveAiAutoAnalysis(enabled)); setMessage(enabled ? '已开启官方提交后自动分析。' : '已关闭官方提交后自动分析。'); }
+    catch (error) { onError(errorText(error)); } finally { working.current = false; setBusy(''); }
+  }
   return <section className="settings-section" aria-labelledby="ai-settings-title"><div><div className="heading-with-help"><h3 id="ai-settings-title">AI 接口</h3><HelpHint label="AI 密钥存储说明">Key 由系统加密存储，不写入普通设置、日志或备份；界面只显示是否已配置。</HelpHint></div><p>提问或自动分析时，会向所选提供商发送题面、代码、运行结果与近期对话。</p></div>
     <form className="p3-form" onSubmit={event => { event.preventDefault(); void save(); }}>
       <label>模型提供商<select aria-label="模型提供商" value={selectedPreset?.id ?? 'custom'} disabled={locked} onChange={event => { setForm(event.target.value === 'custom' ? { ...form, compatibility: 'openai-compatible' } : createAiProviderPreset(event.target.value, crypto.randomUUID())); setConnection(null); setMessage(''); }}>
@@ -76,6 +82,10 @@ export function AiSettings({ api, onError }: { api: DesktopBridge | undefined; o
       <p className="local-status">{!provider ? '正在读取配置…' : provider.hasKey ? 'Key 已配置' : '尚未配置 Key'}{dirty ? ' · 有待保存的设置' : ''}</p>
       {message && <p role="status" className="success-text">{message}</p>}
       {connection && <div role={connection.status === 'passed' ? 'status' : 'alert'}><strong className={connection.status === 'passed' ? 'success-text' : 'error-text'}>{connection.status === 'passed' ? '连接正常' : connection.error?.message || '连接尚未通过'}</strong><p className="field-help">{dateTime(connection.testedAt)} · {connection.model} · 流式传输：{connection.streaming === null ? '未知' : connection.streaming ? '可用' : '未验证'} · 用量：{connection.usage?.totalTokens ?? '未知'}</p></div>}
+      <div className="ai-coach-behavior" aria-label="教练行为"><h4>教练行为</h4>
+        <div className="control-with-help"><label className="checkbox-field"><input type="checkbox" aria-label="官方提交后自动分析" checked={provider?.autoAnalyzeOfficial ?? false} disabled={!api || !provider?.hasKey || !provider.config || locked} onChange={event => { void saveAutoAnalysis(event.target.checked); }} />官方提交后自动分析</label><HelpHint label="官方提交后自动分析说明">仅在力扣官方提交完成后分析该次提交，本地运行不会触发。每次分析都会调用模型，按服务商规则计费。也可以在 AI 教练面板的“更多操作”里切换。</HelpHint></div>
+        <p className="field-help">{provider?.hasKey && provider.config ? '立即生效，不需要再点保存。' : '配置接口和 Key 后可以开启。'}</p>
+      </div>
       {usage && <AiUsagePanel usage={usage} />}
     </form>
   </section>;

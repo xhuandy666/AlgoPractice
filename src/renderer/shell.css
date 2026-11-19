@@ -140,6 +140,7 @@ summary { font-weight: 700; }
 .library-filters label.filter-pill, .list-context label.filter-pill { max-width: 260px; }
 .filter-pill select { min-height: 44px; border-radius: var(--radius-pill); padding-left: 16px; font-weight: 800; color: var(--color-ink-2); }
 .filter-pill[data-active=true] select { background-color: var(--color-blue-soft); border-color: var(--color-blue); color: var(--color-blue-deep); }
+.library-filters .clear-filters { min-height: 44px; padding-inline: 8px; font-size: var(--text-xs); }
 .library-filters .table-caption { margin-left: auto; padding: 0 4px; border: 0; font-size: var(--text-xs); font-weight: 800; color: var(--color-muted); }
 .list-context { margin-bottom: 16px; padding: 14px 18px; border: 2px solid var(--color-rule); border-radius: var(--radius-md); background: var(--color-surface); }
 .list-context h3 { font-size: var(--text-base); }
@@ -312,11 +313,6 @@ summary { font-weight: 700; }
 .history-pane .ai-request-list { border-top: 0; margin-top: 0; }
 .history-pane .ai-request:first-child { padding-top: 0; }
 .history-pane .ai-request h3 { margin-top: 12px; line-height: 1.6; }
-.history-pane .ai-composer { flex: 0 0 auto; max-height: 58%; overflow: auto; border-top: 2px solid var(--color-rule); padding-top: 16px; margin-top: 12px; }
-.ai-composer .p3-field { margin-top: 0; }
-.ai-composer textarea { font-family: var(--font-body); min-height: 92px; }
-.ai-composer-actions { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px; }
-.ai-composer-actions .button-row, .ai-composer-actions .compact-actions { margin: 0; }
 .ai-panel .empty-state { padding: 22px 4px; }
 
 @media (max-width: 1240px) {
@@ -328,7 +324,6 @@ summary { font-weight: 700; }
   .workbench-p2 .history-pane { margin-top: 12px; min-height: 240px; }
   .history-pane:has(.ai-panel) { overflow: visible; }
   .history-pane .ai-conversation { max-height: 420px; }
-  .history-pane .ai-composer { max-height: none; overflow: visible; }
   .app-shell[data-page=workbench] .stat-level strong { display: none; }
 }
 @media (max-width: 1080px) { .app-shell[data-page=workbench] .stat-bar { display: none; } }

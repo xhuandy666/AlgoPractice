@@ -241,6 +241,16 @@ try {
   const resultMax = await value(resultsSplit); await page.keyboard.press('ArrowDown'); assert.equal(await value(resultsSplit), resultMax - 24);
   await page.keyboard.press('Enter'); const beforeResult = await value(resultsSplit); await drag(resultsSplit, 0, -90);
   assert.ok(await value(resultsSplit) >= beforeResult + 70, 'dragging the results boundary up grows the test/result area');
+  // The grip in the middle of a divider drags like the line; only a still click opens its size menu.
+  const historyGrip = page.getByRole('button', { name: '调整记录宽度选项', exact: true }), historyMenu = page.getByRole('group', { name: '调整记录宽度操作', exact: true });
+  await historySplit.focus(); await page.keyboard.press('Enter'); const beforeGrip = await value(historySplit);
+  const gripBox = await historyGrip.boundingBox(); assert.ok(gripBox && gripBox.width > 0 && gripBox.height > 0);
+  const gripCenter = { x: gripBox.x + gripBox.width / 2, y: gripBox.y + gripBox.height / 2 };
+  await page.mouse.move(gripCenter.x, gripCenter.y); await page.mouse.down(); await page.mouse.move(gripCenter.x - 64, gripCenter.y, { steps: 8 }); await page.mouse.up();
+  await page.evaluate(() => new Promise(done => requestAnimationFrame(() => requestAnimationFrame(done))));
+  assert.ok(Math.abs(await value(historySplit) - beforeGrip - 64) <= 1, 'dragging the grip left widens the record and AI pane by the pointer travel');
+  assert.equal(await historyMenu.count(), 0, 'a drag from the grip does not open the size menu'); assert.equal(await page.locator('html[data-workbench-resizing]').count(), 0);
+  await historyGrip.click(); await historyMenu.waitFor(); await page.keyboard.press('Escape'); await historyMenu.waitFor({ state: 'detached' });
   await statementSplit.focus(); await page.keyboard.press('Home'); const statementMin = await value(statementSplit); await page.keyboard.press('ArrowRight'); assert.equal(await value(statementSplit), statementMin + 24);
   await historySplit.focus(); await page.keyboard.press('Home'); const historyMin = await value(historySplit); await page.keyboard.press('ArrowLeft'); assert.equal(await value(historySplit), historyMin + 24);
   await page.keyboard.press('End'); assert.equal(await value(historySplit), await value(historySplit, 'aria-valuemax'));
@@ -264,7 +274,7 @@ try {
   await page.getByRole('button', { name: '收起记录', exact: true }).click();
   const expandHistory = page.getByRole('button', { name: '展开记录', exact: true }); await expandHistory.focus(); await page.keyboard.press('Enter'); await historySplit.waitFor();
   await page.getByRole('button', { name: '运行记录', exact: true }).click();
-  pass('All dividers expose keyboard ranges; results pointer drag and Home/End/24px steps work, right panel exceeds 500px, resized layouts clamp and hidden panes remain keyboard-reachable');
+  pass('All dividers expose keyboard ranges; results pointer drag, grip drag and Home/End/24px steps work, a still grip click opens the size menu, right panel exceeds 500px, resized layouts clamp and hidden panes remain keyboard-reachable');
 
   await nav('题库'); await library().getByRole('button', { name: '查看 Hot100 题单', exact: true }).click();
   await until(async () => await library().locator('.problem-table-row').count() === 30, 'Hot100 page reload');

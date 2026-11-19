@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useId, useLayoutEffect, useRef, useState } from 'react';
 import type { DesktopBridge, RunArchive } from '../shared/bridge';
 import type { Attempt } from '../storage/practice-store';
 import type { AiEvent, AiKind, AiPatchApplication, AiProviderState, AiRequestRecord } from '../shared/ai';
@@ -49,6 +49,8 @@ export function AiPanel({ api, attempt, code, onApply, onNoteSaved, onSettings, 
   const [loadError, setLoadError] = useState('');
   const [settingError, setSettingError] = useState('');
   const [awayFromLatest, setAwayFromLatest] = useState(false);
+  const [menuOpen, setMenuOpen] = useState(false);
+  const menu = useRef<HTMLDivElement>(null), menuId = useId();
   const conversation = useRef<HTMLDivElement>(null);
   const pinnedToLatest = useRef(true);
   const composing = useRef(false);
@@ -80,7 +82,7 @@ export function AiPanel({ api, attempt, code, onApply, onNoteSaved, onSettings, 
     setRequests([]); setLocalTurns([]); setEvent(null); setActiveId(null);
     if (draftAttempt.current !== attempt?.id) { draftAttempt.current = attempt?.id; setQuestion(attempt ? inputDrafts.get(attempt.id) ?? '' : ''); }
     setBusy(''); setPatch(null); setMessage(''); setLoadError(''); setSettingError(''); setProvider(null);
-    setAutoSaving(false); setPendingAutoValue(null); setAwayFromLatest(false); pinnedToLatest.current = true;
+    setAutoSaving(false); setPendingAutoValue(null); setAwayFromLatest(false); setMenuOpen(false); pinnedToLatest.current = true;
     operation.current = null; actionWorking.current = false; settingWorking.current = false; composing.current = false;
     if (!active) return;
     const token = scope.current;
@@ -101,6 +103,14 @@ export function AiPanel({ api, attempt, code, onApply, onNoteSaved, onSettings, 
     });
     return () => { scope.current++; loadSequence.current++; remove?.(); unlisten?.(); };
   }, [api, load, attempt?.id, active, reviewMode, onError]);
+
+  // The menu stays open while its checkbox is briefly disabled during a save, so it closes on an outside press, not on every blur.
+  useEffect(() => {
+    if (!menuOpen) return;
+    const outside = (press: PointerEvent) => { if (press.target instanceof Node && !menu.current?.contains(press.target)) setMenuOpen(false); };
+    document.addEventListener('pointerdown', outside, true);
+    return () => document.removeEventListener('pointerdown', outside, true);
+  }, [menuOpen]);
 
   useLayoutEffect(() => {
     if (!active || !pinnedToLatest.current) return;
@@ -207,7 +217,7 @@ export function AiPanel({ api, attempt, code, onApply, onNoteSaved, onSettings, 
       {loadError ? <div className="ai-chat-notice" role="alert"><p className="error-text">{loadError}</p><button className="text-button" onClick={() => { void reload(); }}>重新加载对话</button></div> : !provider ? <p className="ai-status" role="status">正在加载 AI 设置与对话…</p> : !configured && <div className="ai-chat-notice"><p>请先配置模型接口与 API Key。</p><button className="button" onClick={onSettings}>配置 AI</button></div>}
       {strict ? <p className="ai-chat-notice">严格面试进行中，AI 教练暂不可用。</p> : !hasContext && <p className="ai-chat-notice">开始练习后可向 AI 教练提问。</p>}
       {message && <p role="status" className="success-text ai-chat-notice">{message}</p>}
-      {provider && configured && hasContext && !strict && turns.length === 0 && <div className="ai-chat-empty"><Mascot mood="happy" size={72} /><p>输入问题，或选择下方操作。</p></div>}
+      {provider && configured && hasContext && !strict && turns.length === 0 && <div className="ai-chat-empty"><Mascot mood="happy" size={72} /><p>输入问题，或点下方的“获取提示”“检查代码”。</p></div>}
       <div className="ai-request-list" role="log" aria-label="AI 对话记录" aria-live="polite" aria-relevant="additions">
         {turns.map(({ id, record, local }) => {
           const kind = record?.snapshot.kind ?? local!.kind, text = record?.snapshot.question ?? local!.question;
@@ -250,15 +260,26 @@ export function AiPanel({ api, attempt, code, onApply, onNoteSaved, onSettings, 
     </div>
     {awayFromLatest && <button className="ai-jump-latest text-button" onClick={() => { pinnedToLatest.current = true; setAwayFromLatest(false); const element = conversation.current; if (element) element.scrollTop = element.scrollHeight; }}>查看最新消息</button>}
     <form className="ai-composer" onSubmit={submit => { submit.preventDefault(); void ask('chat', question); }}>
-      <div className="ai-quick-actions"><button type="button" className="button" disabled={!canAsk} onClick={() => { void ask('hint'); }}>获取提示</button><button type="button" className="button" disabled={!canAsk} onClick={() => { void ask('diagnosis'); }}>检查代码</button></div>
-      <label className="p3-field ai-chat-input"><span>向 AI 教练提问</span><textarea aria-label="AI 提问" aria-describedby="ai-chat-keyboard-help" value={question} maxLength={4000} disabled={composerDisabled} placeholder="描述你的思路，或提出具体问题…" onChange={change => { setQuestion(change.target.value); rememberInput(attempt?.id, change.target.value); }} onCompositionStart={() => { composing.current = true; }} onCompositionEnd={() => { composing.current = false; }} onKeyDown={key => {
+      <div className="ai-chat-input"><textarea rows={1} aria-label="AI 提问" aria-describedby="ai-chat-keyboard-help" value={question} maxLength={4000} disabled={composerDisabled} placeholder="问这道题，或说说你卡在哪里…" onChange={change => { setQuestion(change.target.value); rememberInput(attempt?.id, change.target.value); }} onCompositionStart={() => { composing.current = true; }} onCompositionEnd={() => { composing.current = false; }} onKeyDown={key => {
         if (key.key !== 'Enter' || key.shiftKey || key.altKey || key.ctrlKey || key.metaKey || key.nativeEvent.isComposing || composing.current || key.keyCode === 229) return;
         key.preventDefault(); void ask('chat', question);
-      }} /></label>
-      <div className="ai-composer-actions"><span className="field-help" id="ai-chat-keyboard-help">Enter 发送 · Shift + Enter 换行</span>{activeId ? <button type="button" className="button" onClick={() => { void stop(); }}>停止 AI 请求</button> : <button type="submit" className="button primary" disabled={!canAsk || !question.trim()}>发送</button>}</div>
-      <div className="ai-composer-secondary"><button type="button" className="text-button" disabled={!canAsk} onClick={() => { void ask('note-draft'); }}>总结为笔记草稿</button></div>
-      <div className="control-with-help ai-auto-analysis"><label className="checkbox-field"><input type="checkbox" aria-label="提交后自动分析" aria-describedby="ai-auto-help" checked={pendingAutoValue ?? provider?.autoAnalyzeOfficial ?? false} disabled={!api || !configured || autoSaving || frozen || strict} onChange={change => { void saveAutoAnalysis(change.target.checked); }} />提交后自动分析{autoSaving && <span className="field-help" role="status">保存中…</span>}</label><HelpHint id="ai-auto-help" label="提交后自动分析说明">仅力扣官方提交完成后分析；本地运行不会自动触发。</HelpHint></div>
-      {settingError && <p role="alert" className="error-text">{settingError} 请重试开关。</p>}
+      }} /><span className="sr-only" id="ai-chat-keyboard-help">Enter 发送，Shift + Enter 换行</span></div>
+      <div className="ai-composer-bar">
+        <div className="ai-quick-actions"><button type="button" className="ai-chip" disabled={!canAsk} onClick={() => { void ask('hint'); }}>获取提示</button><button type="button" className="ai-chip" disabled={!canAsk} onClick={() => { void ask('diagnosis'); }}>检查代码</button></div>
+        <div className="ai-more" ref={menu} onBlur={blur => { const next = blur.relatedTarget; if (next instanceof Node && !blur.currentTarget.contains(next)) setMenuOpen(false); }} onKeyDown={key => {
+          if (key.key !== 'Escape' || !menuOpen) return;
+          key.preventDefault(); key.stopPropagation(); setMenuOpen(false); key.currentTarget.querySelector<HTMLButtonElement>('.ai-more-toggle')?.focus();
+        }}>
+          <button type="button" className="ai-chip ai-more-toggle" aria-label="更多操作" title="更多操作" aria-expanded={menuOpen} aria-controls={menuOpen ? menuId : undefined} onClick={() => setMenuOpen(!menuOpen)}><svg aria-hidden="true" viewBox="0 0 16 16" width="16" height="16"><circle cx="3" cy="8" r="1.5" fill="currentColor" /><circle cx="8" cy="8" r="1.5" fill="currentColor" /><circle cx="13" cy="8" r="1.5" fill="currentColor" /></svg></button>
+          {menuOpen && <div id={menuId} className="ai-more-menu" role="group" aria-label="更多操作">
+            <button type="button" className="ai-more-item" disabled={!canAsk} onClick={press => { press.currentTarget.closest('.ai-more')?.querySelector<HTMLButtonElement>('.ai-more-toggle')?.focus(); setMenuOpen(false); void ask('note-draft'); }}>总结为笔记草稿</button>
+            <div className="control-with-help ai-auto-analysis"><label className="checkbox-field"><input type="checkbox" aria-label="提交后自动分析" aria-describedby="ai-auto-help" checked={pendingAutoValue ?? provider?.autoAnalyzeOfficial ?? false} disabled={!api || !configured || autoSaving || frozen || strict} onChange={change => { void saveAutoAnalysis(change.target.checked); }} />提交后自动分析{autoSaving && <span className="field-help" role="status">保存中…</span>}</label><HelpHint id="ai-auto-help" label="提交后自动分析说明">仅力扣官方提交完成后分析；本地运行不会自动触发。</HelpHint></div>
+            {settingError && <p role="alert" className="error-text">{settingError} 请重试开关。</p>}
+            <p className="ai-more-note">Enter 发送 · Shift + Enter 换行</p>
+          </div>}
+        </div>
+        {activeId ? <button type="button" className="ai-send" data-state="stop" aria-label="停止 AI 请求" onClick={() => { void stop(); }}>停止</button> : <button type="submit" className="ai-send" title="Enter 发送 · Shift + Enter 换行" disabled={!canAsk || !question.trim()}>发送</button>}
+      </div>
     </form>
   </section>;
 }

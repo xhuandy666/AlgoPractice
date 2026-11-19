@@ -23,21 +23,18 @@
 .workbench.workbench-p2[data-layout] > .coding-pane > .historical-code-panel > .editor-host { flex: 1 0 140px; }
 .workbench.workbench-p2[data-layout=columns] .history-pane:has(.ai-panel) { overflow: hidden; }
 .workbench.workbench-p2[data-layout=columns] .history-pane .ai-conversation { min-width: 0; max-height: none; }
-.workbench.workbench-p2[data-layout=columns] .history-pane .ai-composer { max-height: 52%; overflow: auto; }
 .workbench.workbench-p2[data-layout] .ai-panel, .workbench.workbench-p2[data-layout] .ai-request, .workbench.workbench-p2[data-layout] .markdown { min-width: 0; overflow-wrap: anywhere; }
 .workbench.workbench-p2[data-layout] .history-pane .ai-chat-panel { min-height: 0; max-height: none; }
 .workbench.workbench-p2[data-layout=history-stacked] { grid-template-rows: minmax(380px, 1fr) minmax(300px, .8fr); row-gap: 10px; }
 .workbench.workbench-p2[data-layout=history-stacked] > .history-pane { grid-column: 1 / -1; grid-row: 2; margin: 0; min-height: 0; overflow: hidden; }
 .workbench.workbench-p2[data-layout=history-stacked] > .history-splitter { display: none; }
 .workbench.workbench-p2[data-layout=history-stacked] .history-pane .ai-conversation { max-height: none; }
-.workbench.workbench-p2[data-layout=history-stacked] .history-pane .ai-composer { max-height: 52%; overflow: auto; }
 .workbench.workbench-p2[data-layout=stacked] { display: flex; flex-direction: column; gap: 10px; }
 .workbench.workbench-p2[data-layout=stacked] > .statement { flex: 0 0 auto; min-height: 220px; max-height: 45dvh; }
 .workbench.workbench-p2[data-layout=stacked] > .coding-pane { flex: 0 0 620px; min-height: 620px; }
 .workbench.workbench-p2[data-layout=stacked] > .history-pane { flex: 0 0 460px; min-height: 460px; margin-top: 0; overflow: hidden; }
 .workbench.workbench-p2[data-layout=stacked] > .workbench-splitter-track { display: none; }
 .workbench.workbench-p2[data-layout=stacked] .history-pane .ai-conversation { max-height: none; }
-.workbench.workbench-p2[data-layout=stacked] .history-pane .ai-composer { max-height: 52%; overflow: auto; }
 
 .workbench-splitter-track { position: relative; min-width: 0; min-height: 0; z-index: 2; }
 .workbench.workbench-p2[data-layout] .workbench-splitter-track > .pane-splitter { display: block; position: absolute; inset: 0; width: 100%; height: 100%; min-height: 0; cursor: col-resize; touch-action: none; border: 0; background: transparent; }
@@ -47,11 +44,12 @@
 .workbench.workbench-p2[data-layout] .workbench-splitter-track[data-orientation=horizontal] > .pane-splitter { cursor: row-resize; }
 .workbench-splitter-track[data-orientation=horizontal] > .pane-splitter::before { inset: -6px 0; }
 .workbench-splitter-track[data-orientation=horizontal] > .pane-splitter::after { inset: calc(50% - 1px) 12px auto; height: 2px; width: auto; }
-.workbench-splitter-track > .pane-splitter:focus-visible, .workbench-splitter-track[data-dragging=true] > .pane-splitter { background: var(--color-accent-soft); }
-.workbench-splitter-track > .splitter-options { position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%); z-index: 1; display: grid; place-items: center; width: 24px; min-width: 24px; height: 32px; min-height: 32px; padding: 0; color: var(--color-muted); border: 1px solid var(--color-rule); border-radius: 6px; background: var(--color-paper); }
-.workbench-splitter-track[data-orientation=horizontal] > .splitter-options { width: 36px; min-width: 36px; height: 24px; min-height: 24px; }
-.workbench-splitter-track[data-dragging=true] > .splitter-options { visibility: hidden; }
-.workbench-splitter-track > .splitter-options:hover, .workbench-splitter-track > .splitter-options[aria-expanded=true] { color: var(--color-accent); border-color: var(--color-control-rule); }
+/* The line and its grip are one control: either one starts a drag, and both change color together. */
+.workbench.workbench-p2[data-layout] .workbench-splitter-track:is(:hover, [data-dragging=true]) > .pane-splitter, .workbench.workbench-p2[data-layout] .workbench-splitter-track > .pane-splitter:focus-visible { background: var(--color-blue-soft); }
+/* Centered by offsets, not a transform: the reduced-motion rule clears transforms on pressed buttons, which moved the grip from under the pointer. */
+.workbench-splitter-track > .splitter-options { position: absolute; left: calc(50% - 12px); top: calc(50% - 16px); z-index: 1; display: grid; place-items: center; width: 24px; min-width: 24px; height: 32px; min-height: 32px; padding: 0; color: var(--color-muted); border: 1px solid var(--color-rule); border-radius: 6px; background: var(--color-paper); cursor: col-resize; touch-action: none; }
+.workbench-splitter-track[data-orientation=horizontal] > .splitter-options { left: calc(50% - 18px); top: calc(50% - 12px); width: 36px; min-width: 36px; height: 24px; min-height: 24px; cursor: row-resize; }
+.workbench-splitter-track:is(:hover, [data-dragging=true]) > .splitter-options, .workbench-splitter-track > .splitter-options[aria-expanded=true] { color: var(--color-blue); border-color: var(--color-blue-line); }
 .splitter-controls { position: absolute; left: 50%; top: calc(50% + 22px); transform: translateX(-50%); display: grid; gap: 4px; min-width: 148px; padding: 6px; border: 2px solid var(--color-rule); border-radius: var(--radius-md); background: var(--color-surface); box-shadow: 0 4px 0 var(--color-rule), var(--shadow-dialog); z-index: 4; }
 .workbench-splitter-track[data-orientation=horizontal] > .splitter-controls { top: auto; bottom: calc(50% + 18px); }
 .splitter-controls > button { text-align: left; min-height: 36px; font-size: var(--text-xs); }

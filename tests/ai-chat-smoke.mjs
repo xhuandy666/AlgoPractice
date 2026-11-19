@@ -94,6 +94,9 @@ const pass = name => { report.assertions.push({ name, passed: true }); console.l
 const askCalls = () => page.evaluate(() => window.fixture.calls.filter(call => call[0] === 'ask'));
 const wait = predicate => page.waitForFunction(predicate);
 const input = page.getByRole('textbox', { name: 'AI 提问', exact: true });
+const moreToggle = page.getByRole('button', { name: '更多操作', exact: true });
+const moreMenu = page.getByRole('group', { name: '更多操作', exact: true });
+const openMenu = async () => { if (await moreToggle.getAttribute('aria-expanded') !== 'true') await moreToggle.click(); await moreMenu.waitFor(); };
 const finish = async (failed = false) => { await page.evaluate(failed => window.fixture.finish(failed), failed); await page.getByRole('button', { name: '发送', exact: true }).waitFor(); };
 try {
   await page.setContent('<!doctype html><html lang="zh-CN"><meta name="viewport" content="width=device-width, initial-scale=1"><body><main id="root"></main></body></html>');
@@ -104,9 +107,21 @@ try {
   await wait(() => !document.querySelector('.ai-quick-actions button').disabled);
   assert.equal(await page.getByText('本次发送的上下文', { exact: true }).count(), 0);
   assert.equal(await page.getByLabel('搜索引用笔记').count(), 0);
+  assert.equal(await page.getByLabel('提交后自动分析', { exact: true }).count(), 0, 'secondary settings stay out of the fixed composer');
+  assert.equal(await page.getByRole('button', { name: '总结为笔记草稿', exact: true }).count(), 0);
+  const idle = await page.evaluate(() => ({ composer: document.querySelector('.ai-composer').getBoundingClientRect().height, input: document.querySelector('.ai-chat-input textarea').getBoundingClientRect().height,
+    conversation: document.querySelector('.ai-conversation').clientHeight, panel: document.querySelector('.ai-chat-panel').clientHeight }));
+  assert.ok(idle.composer <= 120 && idle.input <= 44, JSON.stringify(idle)); assert.ok(idle.conversation >= idle.panel - 200, JSON.stringify(idle));
+  await openMenu();
   assert.equal(await page.getByLabel('提交后自动分析', { exact: true }).isChecked(), false);
+  assert.equal(await page.getByRole('button', { name: '总结为笔记草稿', exact: true }).isVisible(), true);
+  const menuBox = await moreMenu.boundingBox(), paneBox = await page.locator('.history-pane').boundingBox();
+  assert.ok(menuBox.y >= paneBox.y && menuBox.x >= paneBox.x && menuBox.x + menuBox.width <= paneBox.x + paneBox.width + 1 && menuBox.y + menuBox.height <= (await page.locator('.ai-composer-bar').boundingBox()).y, JSON.stringify({ menuBox, paneBox }));
+  await page.keyboard.press('Escape'); await moreMenu.waitFor({ state: 'detached' });
+  assert.equal(await moreToggle.evaluate(element => element === document.activeElement), true, 'Escape returns focus to the menu button');
+  await openMenu(); await page.locator('.ai-conversation').click({ position: { x: 5, y: 5 } }); await moreMenu.waitFor({ state: 'detached' });
   assert.equal((await askCalls()).length, 0);
-  pass('Natural chat mounts with two shortcuts, no context selectors, opt-in auto-analysis off, and no automatic request');
+  pass('Natural chat mounts with a one-line input, two shortcuts and a closed more-actions menu that holds note drafting and opt-in auto-analysis; nothing is requested automatically');
 
   await input.fill('先保留我的自由问题');
   await page.evaluate(() => { const button = document.querySelector('.ai-quick-actions button'); button.click(); button.click(); });
@@ -158,7 +173,7 @@ try {
   pass('Optimistic user/progress appears before draft flush, and stopping during flush prevents the backend call');
 
   const toggle = page.getByLabel('提交后自动分析', { exact: true });
-  await page.evaluate(() => window.fixture.delayAuto(true));
+  await openMenu(); await page.evaluate(() => window.fixture.delayAuto(true));
   const beforeToggle = (await askCalls()).length; await toggle.check(); await wait(() => window.fixture.calls.some(call => call[0] === 'auto' && call[1] === true));
   assert.equal(await toggle.isChecked(), true); assert.equal(await toggle.isDisabled(), true); assert.equal((await askCalls()).length, beforeToggle);
   await page.evaluate(() => window.fixture.releaseAuto()); await wait(() => !document.querySelector('.ai-auto-analysis input').disabled);
@@ -167,9 +182,11 @@ try {
   await page.evaluate(() => window.fixture.releaseAuto());
   await page.getByRole('alert').filter({ hasText: '设置保存失败' }).waitFor(); assert.equal(await toggle.isChecked(), true);
   await page.evaluate(() => { window.fixture.autoFail(false); window.fixture.delayAuto(false); }); await toggle.uncheck(); await wait(() => !document.querySelector('.ai-auto-analysis input').checked);
+  assert.equal(await moreMenu.isVisible(), true, 'the menu stays open while its checkbox saves');
   pass('Delayed auto-analysis saving shows optimistic state and disables the checkbox; failure rolls back, and toggling never starts analysis');
 
-  await page.getByRole('button', { name: '总结为笔记草稿', exact: true }).click(); await wait(() => window.fixture.pending.size === 1); await finish();
+  await openMenu(); await page.getByRole('button', { name: '总结为笔记草稿', exact: true }).click(); await wait(() => window.fixture.pending.size === 1);
+  assert.equal(await moreMenu.count(), 0, 'choosing a menu action closes the menu'); await finish();
   await page.getByText('笔记草稿', { exact: true }).click(); await page.getByRole('button', { name: '保存为笔记草稿', exact: true }).click();
   await wait(() => window.fixture.calls.some(call => call[0] === 'note-saved'));
   pass('Note-draft generation and explicit saving remain available as secondary actions');
@@ -218,6 +235,16 @@ try {
   await page.getByRole('button', { name: '查看最新消息', exact: true }).click();
   assert.ok(await page.locator('.ai-conversation').evaluate(element => element.scrollHeight - element.scrollTop - element.clientHeight < 4));
   pass('History loads chronologically and at the bottom; new responses do not interrupt reading history, and the composer stays fixed');
+  const measure = () => page.evaluate(() => { const element = document.querySelector('.ai-chat-input textarea'), send = document.querySelector('.ai-send').getBoundingClientRect(), pane = document.querySelector('.history-pane').getBoundingClientRect();
+    return { height: element.getBoundingClientRect().height, scrolls: element.scrollHeight > element.clientHeight + 1, line: parseFloat(getComputedStyle(element).lineHeight),
+      composer: document.querySelector('.ai-composer').getBoundingClientRect().height, conversation: document.querySelector('.ai-conversation').clientHeight, sendVisible: send.bottom <= pane.bottom && send.top >= pane.top }; });
+  const oneLine = await measure(); assert.ok(oneLine.composer <= 120 && !oneLine.scrolls && oneLine.sendVisible, JSON.stringify(oneLine));
+  await input.fill('第一行\n第二行\n第三行'); const threeLines = await measure();
+  assert.ok(threeLines.height >= oneLine.height + threeLines.line * 1.5 && !threeLines.scrolls, JSON.stringify({ oneLine, threeLines }));
+  await input.fill(Array.from({ length: 12 }, (_, index) => '长问题第 ' + (index + 1) + ' 行').join('\n')); const manyLines = await measure();
+  assert.ok(manyLines.height <= manyLines.line * 4 + 20 && manyLines.scrolls && manyLines.sendVisible && manyLines.conversation >= 300, JSON.stringify(manyLines));
+  await input.fill(''); const cleared = await measure(); assert.ok(Math.abs(cleared.height - oneLine.height) < 1, JSON.stringify({ oneLine, cleared }));
+  pass('The input starts at one line, grows with the question up to four lines and then scrolls inside; the send button stays visible and the conversation keeps its height');
   await page.screenshot({ path: join(output, 'ai-chat-desktop.png'), fullPage: true }); report.screenshots.push('ai-chat-desktop.png');
 
   await page.evaluate(() => window.fixture.show('review-attempt', { ended: true, strict: true, review: true }));
@@ -238,8 +265,11 @@ try {
     assert.ok(dimensions.root <= width && dimensions.body <= width, JSON.stringify(dimensions));
     await input.focus(); const focus = await input.evaluate(element => ({ outline: getComputedStyle(element).outlineStyle, width: getComputedStyle(element).outlineWidth }));
     assert.equal(focus.outline, 'solid'); assert.equal(focus.width, '2px');
+    await openMenu(); const box = await moreMenu.boundingBox(), pane = await page.locator('.history-pane').boundingBox();
+    assert.ok(box.x >= pane.x && box.x + box.width <= pane.x + pane.width + 1 && box.y >= pane.y, JSON.stringify({ width, box, pane }));
+    await page.keyboard.press('Escape'); await moreMenu.waitFor({ state: 'detached' });
   }
-  pass('Chat has no horizontal overflow at 1440/820/375/320 px and exposes visible keyboard focus with reduced motion');
+  pass('Chat has no horizontal overflow at 1440/820/375/320 px, keeps the more-actions menu inside the pane, and exposes visible keyboard focus with reduced motion');
   assert.equal(report.externalRequests.length, 0); assert.deepEqual(report.rendererErrors, []); report.result = 'passed';
 } catch (error) {
   report.result = 'failed'; report.failure = String(error.stack || error); process.exitCode = 1; console.error(error);
