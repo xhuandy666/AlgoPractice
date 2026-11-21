@@ -25,7 +25,8 @@ export const RANKS: readonly RankTier[] = [
 ];
 
 export type AchievementIcon = 'check' | 'bolt' | 'trophy' | 'calendar' | 'flame' | 'target' | 'star' | 'sparkle';
-type Metric = 'solvedProblems' | 'officialSolvedProblems' | 'reviewedItems' | 'bestStreak' | 'bestDayMinutes' | 'activeHours' | 'activeDays';
+export type AchievementMetric = 'solvedProblems' | 'officialSolvedProblems' | 'reviewedItems' | 'bestStreak' | 'bestDayMinutes' | 'activeHours' | 'activeDays';
+type Metric = AchievementMetric;
 /** Solving counts distinct problems (the problem's own cases all passed locally, or an official Accepted), so re-running one
  * problem cannot farm it and cases the user typed in cannot fake it. */
 const ACHIEVEMENTS: readonly { id: string; title: string; description: string; icon: AchievementIcon; metric: Metric; target: number }[] = [
@@ -42,25 +43,39 @@ const ACHIEVEMENTS: readonly { id: string; title: string; description: string; i
 ];
 export const STREAK_MILESTONES = [3, 7, 14, 30, 60, 100, 365] as const;
 
-export interface Achievement { id: string; title: string; description: string; icon: AchievementIcon; unlocked: boolean; progress: number; target: number }
+/** `metric` names what the badge counts, so the interface can say what to do next for it. */
+export interface Achievement { id: string; title: string; description: string; icon: AchievementIcon; metric: AchievementMetric; unlocked: boolean; progress: number; target: number }
+export type XpSourceId = 'officialAccepted' | 'passedRun' | 'practiceRun' | 'completedProblem' | 'review' | 'activeMinute';
+/** One line of a day's experience: `count` happened, `counted` of them fit under the daily cap, each worth `unit`. */
+export interface XpSource { id: XpSourceId; label: string; unit: number; cap: number; count: number; counted: number; xp: number }
 export interface RewardProfile {
   xp: number; todayXp: number;
   level: number; levelStartXp: number; nextLevelXp: number; levelProgress: number;
   rank: RankTier; nextRank: RankTier | null;
   streak: number; bestStreak: number; activeToday: boolean;
   achievements: Achievement[];
+  /** Today's experience by source, in the order the rules list them. */
+  todaySources: XpSource[];
   totals: { solvedProblems: number; officialSolvedProblems: number; passedRuns: number; runs: number; reviewedItems: number; activeMinutes: number; activeDays: number };
 }
 
 const minutes = (ms: number) => Math.floor(Math.max(0, ms) / 60000);
-export function dayXp(day: ActivityDay): number {
-  return Math.min(day.officialAccepted, XP_RULES.officialAcceptedDailyCap) * XP_RULES.officialAccepted
-    + Math.min(day.passedRuns, XP_RULES.passedRunDailyCap) * XP_RULES.passedRun
-    + Math.min(day.practiceRuns, XP_RULES.practiceRunDailyCap) * XP_RULES.practiceRun
-    + Math.min(day.completedProblems, XP_RULES.completedProblemDailyCap) * XP_RULES.completedProblem
-    + Math.min(day.reviewCount, XP_RULES.reviewDailyCap) * XP_RULES.review
-    + Math.min(minutes(day.activeMs), XP_RULES.activeMinuteDailyCap) * XP_RULES.activeMinute;
+const XP_SOURCES: readonly { id: XpSourceId; label: string; unit: number; cap: number; count: (day: ActivityDay) => number }[] = [
+  { id: 'officialAccepted', label: '力扣官方 AC 的题目', unit: XP_RULES.officialAccepted, cap: XP_RULES.officialAcceptedDailyCap, count: day => day.officialAccepted },
+  { id: 'passedRun', label: '题目自带用例全部通过的运行', unit: XP_RULES.passedRun, cap: XP_RULES.passedRunDailyCap, count: day => day.passedRuns },
+  { id: 'practiceRun', label: '其他练习运行', unit: XP_RULES.practiceRun, cap: XP_RULES.practiceRunDailyCap, count: day => day.practiceRuns },
+  { id: 'completedProblem', label: '完成的题目', unit: XP_RULES.completedProblem, cap: XP_RULES.completedProblemDailyCap, count: day => day.completedProblems },
+  { id: 'review', label: '复习自评的题目（首次评估不计）', unit: XP_RULES.review, cap: XP_RULES.reviewDailyCap, count: day => day.reviewCount },
+  { id: 'activeMinute', label: '专注学习的分钟', unit: XP_RULES.activeMinute, cap: XP_RULES.activeMinuteDailyCap, count: day => minutes(day.activeMs) },
+];
+/** The single definition of a day's experience; dayXp is its sum, so the breakdown shown to the user cannot drift from the total. */
+export function xpSources(day?: ActivityDay): XpSource[] {
+  return XP_SOURCES.map(({ count: read, ...source }) => {
+    const count = day ? Math.max(0, read(day)) : 0, counted = Math.min(count, source.cap);
+    return { ...source, count, counted, xp: counted * source.unit };
+  });
 }
+export function dayXp(day: ActivityDay): number { return xpSources(day).reduce((sum, source) => sum + source.xp, 0); }
 
 /** Total XP needed to reach a level; each next level costs 100 more than the previous one. */
 export function levelStartXp(level: number): number { return 50 * (level - 1) * (level + 2); }
@@ -106,7 +121,8 @@ export function rewardProfile(stats: ArchiveStatistics, today: string): RewardPr
     xp, todayXp: todayRow ? dayXp(todayRow) : 0,
     level, levelStartXp: start, nextLevelXp: next, levelProgress: (xp - start) / (next - start),
     rank, nextRank, streak, bestStreak, activeToday: Boolean(todayRow && isActive(todayRow)),
-    achievements: ACHIEVEMENTS.map(({ metric, ...item }) => ({ ...item, progress: Math.min(metrics[metric], item.target), unlocked: metrics[metric] >= item.target })),
+    achievements: ACHIEVEMENTS.map(item => ({ ...item, progress: Math.min(metrics[item.metric], item.target), unlocked: metrics[item.metric] >= item.target })),
+    todaySources: xpSources(todayRow),
     totals: { solvedProblems: stats.solvedProblems, officialSolvedProblems: stats.officialSolvedProblems, passedRuns: stats.passedRuns, runs: stats.runs,
       reviewedItems: stats.reviewedItems, activeMinutes: minutes(stats.activeMs), activeDays },
   };

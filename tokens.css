@@ -39,11 +39,33 @@
   --color-code-keyword: #7b3fc9;
   --color-code-string: #2c8200;
   --color-code-number: #a84f00;
+  /* accent/blue/purple double as text colors and are lightened in the dark theme; these stay saturated behind white text. */
+  --color-accent-hover: #339600;
+  --color-blue-fill: #1170c4;
+  --color-blue-fill-deep: #0b5596;
+  --color-purple-fill: #7b3fc9;
+
+  /* Tinted surfaces and their borders: pale in the light theme, deep in the dark one. Text on them uses the ink tokens. */
+  --tint-green: #d7ffb8;
+  --tint-green-line: #a5ed6e;
+  --tint-green-soft-line: #c8f5a0;
+  --tint-red: #ffdfe0;
+  --tint-red-line: #ffb2b5;
+  --tint-orange: #ffe3bf;
+  --tint-orange-soft: #fff0db;
+  --tint-orange-line: #ffd59e;
+  --tint-orange-ink: #8a4100;
+  --tint-gold: #fff8dc;
+  --tint-gold-line: #ffe8a3;
+  --tint-purple: #fbf7ff;
+  --tint-purple-line: #eedcff;
 
   /* Reward palette: decorative fills only; text on them uses the matching -ink token. */
   --color-gold: #ffc800;
   --color-gold-deep: #e5a400;
   --color-gold-ink: #7a4d00;
+  /* Gold-toned text on a surface (gold-ink is for text on gold fills). */
+  --color-gold-text: #7a4d00;
   --color-flame: #ff9600;
   --color-flame-deep: #e07800;
   --color-xp: #ce82ff;
@@ -74,4 +96,58 @@
   --ease-in-out: cubic-bezier(0.65, 0, 0.35, 1);
   --ease-spring: cubic-bezier(0.34, 1.56, 0.64, 1);
   --dur-micro: 120ms; --dur-short: 220ms; --dur-long: 420ms; --dur-reward: 900ms;
+}
+
+/* Dark theme: the same structure on dark paper. Saturated fills keep their color; text-colored tokens are lightened,
+ * and the accent button carries dark ink instead of white. Chosen with "学习设置 → 外观", or by following the system. */
+:root[data-theme=dark] {
+  color-scheme: dark;
+  --color-paper: #17181a;
+  --color-surface: #1f2023;
+  --color-paper-2: #27292d;
+  --color-paper-3: #33363b;
+  --color-ink: #ececec;
+  --color-ink-2: #d6d6d6;
+  --color-muted: #a3a6ab;
+  --color-rule: #36393e;
+  --color-control-rule: #7c8087;
+  --color-accent: #7ed63a;
+  --color-accent-strong: #5cab22;
+  --color-accent-hover: #93e04f;
+  --color-accent-soft: #1d2f14;
+  --color-accent-ink: #0f2406;
+  --color-focus: #58b5ff;
+  --color-blue: #58b5ff;
+  --color-blue-deep: #8fd0ff;
+  --color-blue-soft: #16293a;
+  --color-blue-line: #2f6f99;
+  --color-error: #ff8080;
+  --color-error-deep: #ffabab;
+  --color-error-soft: #3a1c1e;
+  --color-success: #7ed63a;
+  --color-success-soft: #1d2f14;
+  --color-warning: #ffb057;
+  --color-warning-soft: #35260f;
+  --color-purple: #c79bff;
+  --color-purple-soft: #2a1f3d;
+  --color-backdrop: rgb(0 0 0 / 0.62);
+  --color-transparent: rgb(31 32 35 / 0);
+  --color-code-keyword: #c79bff;
+  --color-code-string: #8fdc5a;
+  --color-code-number: #ffb057;
+  --color-gold-text: #ffd75e;
+  --tint-green: #21381a;
+  --tint-green-line: #3d6b24;
+  --tint-green-soft-line: #2f5220;
+  --tint-red: #3d1f22;
+  --tint-red-line: #7a3338;
+  --tint-orange: #3b2a14;
+  --tint-orange-soft: #33261a;
+  --tint-orange-line: #6e4c1d;
+  --tint-orange-ink: #ffb86b;
+  --tint-gold: #332c14;
+  --tint-gold-line: #6b5a1f;
+  --tint-purple: #261f33;
+  --tint-purple-line: #4a3a66;
+  --shadow-dialog: 0 24px 60px -12px rgb(0 0 0 / 0.7);
 }

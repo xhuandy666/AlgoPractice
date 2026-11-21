@@ -417,6 +417,9 @@ summary { cursor: pointer; padding: var(--space-sm) 0; color: var(--color-ink-2)
 .learning-settings { max-width: 1000px; }
 .settings-section { display: grid; grid-template-columns: minmax(170px, .35fr) minmax(0, 1fr); gap: var(--space-xl); padding: var(--space-xl) 0; border-top: var(--rule-thin) solid var(--color-rule); }
 .settings-section h3 { font-size: var(--text-base); }
+.ai-coach-behavior { display: grid; gap: var(--space-2xs); padding-top: var(--space-sm); border-top: 1px solid var(--color-rule); }
+.ai-coach-behavior h4 { font-size: var(--text-sm); }
+.ai-coach-behavior .field-help { margin-top: 0; }
 .ai-usage { display: grid; gap: var(--space-xs); padding-top: var(--space-sm); border-top: 1px solid var(--color-rule); }
 .ai-usage h4 { font-size: var(--text-sm); }
 .ai-usage dl { display: grid; gap: 2px; margin: 0; font-size: var(--text-sm); font-variant-numeric: tabular-nums; }
@@ -426,8 +429,6 @@ summary { cursor: pointer; padding: var(--space-sm) 0; color: var(--color-ink-2)
 .settings-section > div > p { color: var(--color-muted); font-size: var(--text-xs); line-height: 1.8; margin-top: var(--space-xs); }
 .ai-panel { min-width: 0; font-size: var(--text-sm); }
 .ai-panel h3 { font-size: var(--text-base); margin-bottom: var(--space-xs); }
-.ai-panel .p3-field { margin: var(--space-md) 0; }
-.ai-panel textarea { min-height: 100px; }
 .ai-panel .compact-actions { margin-bottom: var(--space-md); }
 .ai-request-list { border-top: var(--rule-thin) solid var(--color-rule); margin-top: var(--space-lg); }
 .ai-request { padding: var(--space-md) 0; border-bottom: var(--rule-thin) solid var(--color-rule); }

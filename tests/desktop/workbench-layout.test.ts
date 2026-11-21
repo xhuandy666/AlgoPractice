@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { calculateResultLayout, calculateWorkbenchLayout, clampPaneSize, preferenceFromSize, readWorkbenchPreferences, saveWorkbenchPreferences, splitterKeySize, SPLITTER_SIZE, WORKBENCH_DEFAULTS, WORKBENCH_LAYOUT_KEY } from '../../src/renderer/workbench-layout.ts';
+import { calculateResultLayout, calculateWorkbenchLayout, clampPaneSize, preferenceFromSize, readWorkbenchPreferences, saveWorkbenchPreferences, splitterDragEngaged, splitterDragSize, splitterKeySize, SPLITTER_DRAG_THRESHOLD, SPLITTER_SIZE, WORKBENCH_DEFAULTS, WORKBENCH_LAYOUT_KEY } from '../../src/renderer/workbench-layout.ts';
 
 test('wide workbench permits the AI/history pane to grow far beyond the old 320 px limit while preserving usable editor and statement', () => {
   const layout = calculateWorkbenchLayout(1600, true, true, { ...WORKBENCH_DEFAULTS, history: 60 });
@@ -80,4 +80,22 @@ test('separator keys follow physical handle movement, honor bounds and offer Hom
     assert.equal(splitterKeySize(side, 'Enter', 300, range, 270), 270);
     assert.equal(splitterKeySize(side, 'Tab', 300, range, 270), null);
   }
+});
+
+test('a press becomes a resize only after the pointer travels the drag threshold, in either direction', () => {
+  assert.equal(SPLITTER_DRAG_THRESHOLD, 4);
+  for (const travel of [0, 1, 3, -3, 3.9]) assert.equal(splitterDragEngaged(500, 500 + travel), false, `${travel}px stays a click`);
+  for (const travel of [4, -4, 5, -64, 200]) assert.equal(splitterDragEngaged(500, 500 + travel), true, `${travel}px is a drag`);
+});
+
+test('a dragged edge follows the pointer from where it was pressed and stops at the pane limits', () => {
+  const range = { min: 280, max: 600 };
+  // The right pane grows as its left edge moves left; the statement grows as its right edge moves right; results grow upwards.
+  assert.equal(splitterDragSize('history', 429, 900, 964, range), 365);
+  assert.equal(splitterDragSize('history', 429, 900, 836, range), 493);
+  assert.equal(splitterDragSize('statement', 300, 400, 464, range), 364);
+  assert.equal(splitterDragSize('results', 300, 500, 450, range), 350);
+  assert.equal(splitterDragSize('history', 429, 900, 2000, range), 280);
+  assert.equal(splitterDragSize('history', 429, 900, -2000, range), 600);
+  assert.equal(splitterDragSize('history', 429, 900, Number.NaN, range), 280);
 });

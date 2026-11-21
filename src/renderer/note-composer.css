@@ -1,12 +1,12 @@
 .workbench-note-dialog { width: min(860px, calc(100vw - 48px)); max-height: calc(100dvh - 64px); padding: 0; border: 2px solid var(--color-rule); border-radius: 24px; color: var(--color-ink); background: var(--color-surface); box-shadow: 0 6px 0 var(--color-rule), var(--shadow-dialog); overflow: hidden; }
 .workbench-note-dialog[open] { display: flex; flex-direction: column; }
 .workbench-note-dialog::backdrop { background: var(--color-backdrop); }
-.workbench-note-header { position: relative; display: flex; align-items: flex-start; justify-content: space-between; gap: 20px; padding: 22px 28px 16px 92px; border-bottom: 2px solid #ffe8a3; background: #fff8dc; }
+.workbench-note-header { position: relative; display: flex; align-items: flex-start; justify-content: space-between; gap: 20px; padding: 22px 28px 16px 92px; border-bottom: 2px solid var(--tint-gold-line); background: var(--tint-gold); }
 .workbench-note-header::before { content: ''; position: absolute; left: 28px; top: 22px; width: 48px; height: 48px; border-radius: 15px; background: var(--color-gold) url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='24' height='24' viewBox='0 0 24 24' fill='none' stroke='%235c3a00' stroke-width='2.4' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M4.5 19.5h4l10-10a2.83 2.83 0 0 0-4-4l-10 10zm9-12.5 3.5 3.5'/%3E%3C/svg%3E") center / 24px no-repeat; box-shadow: 0 3px 0 var(--color-gold-deep); }
-.workbench-note-eyebrow { color: var(--color-gold-ink); font-size: var(--text-xs); font-weight: 900; }
+.workbench-note-eyebrow { color: var(--color-gold-text); font-size: var(--text-xs); font-weight: 900; }
 .workbench-note-header h2 { font-size: 24px; font-weight: 900; margin-top: 2px; }
 .workbench-note-subject { margin-top: 4px; color: var(--color-ink-2); font-size: var(--text-xs); font-weight: 700; overflow-wrap: anywhere; }
-.workbench-note-close { min-width: 40px; padding: 0; border-radius: 12px; font-size: 26px; color: var(--color-gold-ink); }
+.workbench-note-close { min-width: 40px; padding: 0; border-radius: 12px; font-size: 26px; color: var(--color-gold-text); }
 .workbench-note-close:hover { background: rgb(255 200 0 / 0.25); }
 .workbench-note-content { padding: 20px 28px; overflow: auto; min-height: 0; }
 .workbench-note-title { display: block; font-weight: 900; font-size: var(--text-xs); margin-bottom: 18px; }

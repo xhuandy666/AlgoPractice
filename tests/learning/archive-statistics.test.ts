@@ -49,6 +49,11 @@ test('archive statistics separate practice runs, count official Accepted per dis
 
   const all = store.getArchiveStatistics(), today = all.days.find(row => row.date === '2026-11-12')!;
   assert.deepEqual([today.runs, today.passedRuns, today.practiceRuns], [8, 1, 4], 'only completed, wrong-answer and compile-error outcomes count as practice runs here');
+  // A pass against expected outputs the user typed in proves nothing about the problem, but it is practice: it must not earn less than a wrong answer.
+  unsolved.run('passed', 'user');
+  const withSelfTest = store.getArchiveStatistics(), selfTestDay = withSelfTest.days.find(row => row.date === '2026-11-12')!;
+  assert.deepEqual([selfTestDay.runs, selfTestDay.passedRuns, selfTestDay.practiceRuns], [9, 1, 5]);
+  assert.equal(withSelfTest.solvedProblems, all.solvedProblems, 'a self-made expectation still never solves a problem');
   assert.equal(today.officialAccepted, 2, 'two Accepted submissions of one problem on one day count once');
   assert.deepEqual([all.solvedProblems, all.officialSolvedProblems], [2, 2], 'a local pass and an official Accepted of one problem solve it once; output-only runs solve nothing');
 

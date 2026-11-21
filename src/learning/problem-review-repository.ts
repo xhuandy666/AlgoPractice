@@ -10,6 +10,7 @@ import type {
   ReviewOpportunityFilter, ReviewPlanListItem, ReviewPlanQuery, ReviewPlanSnapshot, ReviewSession,
   StartReviewSessionInput, SubmitReviewOpportunityInput,
 } from '../shared/review-plan.ts';
+import { REVIEW_RATING_REQUIRED } from '../shared/review-plan.ts';
 import { advanceReviewCard, localDate, newReviewCard, PROBLEM_FSRS_PARAMETERS, PROBLEM_FSRS_VERSION } from './fsrs.ts';
 
 type Row = Record<string, string | number | null>;
@@ -497,8 +498,14 @@ export class ProblemReviewRepository {
   }
   private session(row: Row): ReviewSession {
     const problems = JSON.parse(String(row.problem_ids_json)) as string[], position = Number(row.position);
+    // A recovered draft can retain an earlier observation time: count when the assessment was actually committed.
+    // This also reconstructs existing rounds without a migration. Scope the indexed history lookup to the queue's plans.
+    const rated = new Set((this.db.prepare(`SELECT p.problem_id FROM problem_review_plans p
+      WHERE p.problem_id IN (SELECT value FROM json_each(?)) AND EXISTS (
+        SELECT 1 FROM problem_review_events e WHERE e.plan_id=p.id AND e.kind='review' AND e.created_at>=? AND e.created_at<=?)`)
+      .all(JSON.stringify(problems), String(row.created_at), row.ended_at ?? reviewTimestamp()) as Row[]).map(item => String(item.problem_id)));
     return { id: String(row.id), problemIds: problems, position, currentProblemId: row.status === 'active' ? problems[position] ?? null : null,
-      status: row.status as ReviewSession['status'], skippedProblemIds: JSON.parse(String(row.skipped_json)), createdAt: String(row.created_at),
+      status: row.status as ReviewSession['status'], skippedProblemIds: JSON.parse(String(row.skipped_json)), ratedProblemIds: problems.filter(id => rated.has(id)), createdAt: String(row.created_at),
       updatedAt: String(row.updated_at), endedAt: row.ended_at as string | null };
   }
   private refreshSession(session: ReviewSession): ReviewSession {
@@ -566,7 +573,7 @@ export class ProblemReviewRepository {
       const index = session.problemIds.indexOf(input.problemId);
       if (index < 0 || index > session.position) throw new Error('会话位置已变化，请重新读取当前题目。');
       if (index < session.position) return this.refreshSession(session);
-      if (!input.skipped && !this.dayEvent(input.problemId, localDate(reviewTimestamp(), this.settings().timeZone))) throw new Error('请先自评，或明确跳过本题。');
+      if (!input.skipped && !this.dayEvent(input.problemId, localDate(reviewTimestamp(), this.settings().timeZone))) throw new Error(REVIEW_RATING_REQUIRED);
       const skipped = input.skipped ? [...new Set([...session.skippedProblemIds, input.problemId])] : session.skippedProblemIds;
       this.db.prepare('UPDATE review_sessions SET position=position+1,skipped_json=?,updated_at=? WHERE id=?').run(JSON.stringify(skipped), reviewTimestamp(), session.id);
       return this.refreshSession(this.session(this.db.prepare('SELECT * FROM review_sessions WHERE id=?').get(session.id) as Row));

@@ -355,9 +355,9 @@ try {
       sendBottom: send.getBoundingClientRect().bottom, composerBottom: composer.getBoundingClientRect().bottom, viewportHeight: innerHeight };
   });
   assert.ok(coachLayout.conversationScroll > coachLayout.conversationHeight, 'Long answers scroll inside the conversation');
-  assert.ok(coachLayout.composerHeight >= 160 && coachLayout.inputBottom <= coachLayout.composerBottom && coachLayout.sendBottom <= coachLayout.composerBottom && coachLayout.composerBottom < coachLayout.viewportHeight, JSON.stringify(coachLayout));
+  assert.ok(coachLayout.composerHeight >= 70 && coachLayout.composerHeight <= 140 && coachLayout.conversationHeight > coachLayout.composerHeight && coachLayout.inputBottom <= coachLayout.composerBottom && coachLayout.sendBottom <= coachLayout.composerBottom && coachLayout.composerBottom < coachLayout.viewportHeight, JSON.stringify(coachLayout));
   await shot('ai-coach-long-answer.png');
-  pass('A long AI answer keeps the question and send controls visible in the desktop composer');
+  pass('A long AI answer keeps the question and send controls visible in a compact composer that leaves the height to the conversation');
 
   await page.getByRole('button', { name: '运行', exact: true }).click();
   await until(async () => (await api('history', fixture.problem.id, 'python')).some(run => run.attemptId === fixture.active.id && run.result.status === 'passed'), 'real Python run succeeds', 60000);

@@ -1,7 +1,7 @@
 {
   "name": "algopractice",
   "productName": "题炼",
-  "version": "0.96.0",
+  "version": "0.98.0",
   "private": true,
   "description": "题炼：算法练习、力扣官方提交、AI 教练与间隔复习",
   "author": "xhuandy666",
@@ -22,6 +22,7 @@
     "test:official": "node tests/official-judge-smoke.mjs",
     "test:workbench": "node tests/workbench-notes-history-smoke.mjs",
     "test:workbench-navigation": "node tests/workbench-navigation-desktop-smoke.mjs",
+    "test:self-test": "node tests/self-test-desktop-smoke.mjs",
     "test:onboarding": "node tests/onboarding-acm-smoke.mjs",
     "test:acm": "node tests/acm-execution-smoke.mjs",
     "test:hot100": "node tests/hot100-desktop-smoke.mjs",
@@ -32,7 +33,7 @@
     "test:learning-center": "node tests/learning-center-smoke.mjs",
     "test:reviews": "node tests/review-plan-desktop-smoke.mjs",
     "test:editor-performance": "node tests/editor-performance-smoke.mjs",
-    "test:ui": "node tests/ai-chat-smoke.mjs && node tests/runtime-ui-smoke.mjs && node tests/hot100-ui-smoke.mjs && node tests/runtime-gate-smoke.mjs && node tests/app-update-ui-smoke.mjs",
+    "test:ui": "node tests/ai-chat-smoke.mjs && node tests/runtime-ui-smoke.mjs && node tests/hot100-ui-smoke.mjs && node tests/runtime-gate-smoke.mjs && node tests/app-update-ui-smoke.mjs && node tests/workbench-controls-ui-smoke.mjs && node tests/learning-flow-ui-smoke.mjs && node tests/practice-loop-ui-smoke.mjs && node --import tsx tests/practice-loading-ui-smoke.mjs",
     "test:updates": "node tests/app-update-desktop-smoke.mjs"
   },
   "devDependencies": {

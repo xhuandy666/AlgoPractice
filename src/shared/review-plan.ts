@@ -88,7 +88,12 @@ export interface ReviewAssessmentDraft {
 export interface ReviewSession {
   id: string; problemIds: string[]; position: number; currentProblemId: string | null;
   status: 'active' | 'ended'; skippedProblemIds: string[];
+  /** Queue problems with a new assessment committed during this round, derived from actual events for existing sessions too.
+   * Automatically passing paused/postponed or previously rated items is not a new assessment; corrections add none. */
+  ratedProblemIds: string[];
   createdAt: string; updatedAt: string; endedAt: string | null;
 }
 export interface StartReviewSessionInput { requestId: string; problemIds?: string[]; }
 export interface AdvanceReviewSessionInput { sessionId: string; problemId: string; skipped?: boolean; }
+/** Refusal to advance a review session past a problem that has no rating today and was not explicitly skipped. */
+export const REVIEW_RATING_REQUIRED = '请先自评，或明确跳过本题。';

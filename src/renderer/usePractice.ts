@@ -5,16 +5,21 @@ import { previewProblems } from '../shared/presentation';
 import { defaultAcmTestConfig, validateAcmTestConfig, type AnswerFormat, type AcmTestConfig } from '../shared/answer-format';
 import { errorText } from './ui';
 import { editsFrozen, flushPendingSaves, registerPendingSave, setEditsFrozen } from './pending-saves';
+import { readPracticeMemory, SAMPLE_PROBLEM_ID, savePracticeMemory, withoutMissing } from './practice-memory';
 
 export interface PracticeTarget { id: string; language: Language; scope: string; answerFormat?: AnswerFormat; }
 const targetKey = (target: PracticeTarget) => `${target.id}:${target.language}:${target.scope}:${target.answerFormat ?? 'preferred'}`;
 export function usePractice(api: DesktopBridge | undefined, onError: (error: string) => void) {
-  const [target, setTarget] = useState<PracticeTarget>({ id: 'array-total', language: 'python', scope: 'practice' });
+  // A new launch continues with the remembered language and problem instead of the Python sample.
+  const [target, setTarget] = useState<PracticeTarget>(() => { const memory = readPracticeMemory(); return { id: memory.problemId ?? SAMPLE_PROBLEM_ID, language: memory.language, scope: 'practice' }; });
+  const restored = useRef(target.id !== SAMPLE_PROBLEM_ID);
   const key = targetKey(target);
   const [workspace, setWorkspace] = useState<WorkspaceData | null>(null);
   const [code, setCode] = useState('');
   const [testConfig, setTestConfig] = useState<AcmTestConfig | undefined>();
   const [ready, setReady] = useState(false);
+  const [loadError, setLoadError] = useState<string | null>(null);
+  const [loadAttempt, setLoadAttempt] = useState(0);
   const [switching, setSwitching] = useState(false);
   const [saving, setSaving] = useState('正在读取草稿');
   const dirty = useRef(false); const queue = useRef(Promise.resolve()); const navigating = useRef(false);
@@ -42,7 +47,7 @@ export function usePractice(api: DesktopBridge | undefined, onError: (error: str
   useEffect(() => registerPendingSave('code-draft', flush), [flush]);
 
   useEffect(() => {
-    let alive = true; setReady(false);
+    let alive = true; setReady(false); setLoadError(null);
     (async () => {
       try {
         const state: WorkspaceData = api ? await api.workspace(target.id, target.language, target.scope, target.answerFormat) : { problem: previewProblems.find(p => p.id === target.id) || previewProblems[0], latestVersion: 'preview', draft: null, attempt: null, history: [] };
@@ -52,11 +57,31 @@ export function usePractice(api: DesktopBridge | undefined, onError: (error: str
         const next = state.draft?.code ?? (state.spec?.content ?? state.problem.content).starter[target.language] ?? '';
         const tests = format === 'acm' ? state.draft?.testConfig ?? defaultAcmTestConfig(state.problem.content) : undefined;
         current.current = { target, code: next, testConfig: tests, revision: state.draft?.revision ?? 0, generation: current.current.generation + 1 }; dirty.current = false;
-        setWorkspace(state); setCode(next); setTestConfig(tests); setSaving(api ? state.draft ? '已恢复本机草稿' : '尚未修改' : '浏览器仅预览'); setReady(true);
-      } catch (error) { if (alive) reportError.current(errorText(error)); }
+        setWorkspace(state); setCode(next); setTestConfig(tests); setSaving(api ? state.draft ? '已恢复本机草稿' : '尚未修改' : '浏览器仅预览'); setReady(true); restored.current = false;
+      } catch (error) {
+        if (!alive) return;
+        // A failed workspace read can be temporary. Only a separate, successful identity lookup may
+        // discard the remembered problem; a failed lookup is not evidence that the problem is gone.
+        if (api && restored.current) {
+          try {
+            const page = await api.problemPage({ ids: [target.id], limit: 1 });
+            if (!alive) return;
+            if (restored.current && currentKey.current === key && page.items.length === 0 && page.total === 0 && page.offset === 0 && !page.hasMore) {
+              restored.current = false;
+              const memory = readPracticeMemory();
+              if (memory.problemId === target.id) savePracticeMemory(withoutMissing(memory, { problem: true }));
+              setTarget({ id: SAMPLE_PROBLEM_ID, language: target.language, scope: 'practice' });
+              return;
+            }
+          } catch { /* Preserve the target and memory until reading or confirming its identity succeeds. */ }
+        }
+        if (!alive) return;
+        setSaving('读取失败'); setLoadError(errorText(error));
+      }
     })();
     return () => { alive = false; };
-  }, [api, key]);
+  }, [api, key, loadAttempt]);
+  const retryLoading = useCallback(() => { if (!navigating.current && !editsFrozen()) setLoadAttempt(value => value + 1); }, []);
   useEffect(() => api?.onClosing(() => {
     navigating.current = true; setSwitching(true); setEditsFrozen(true);
     void (async () => { try { await flushPendingSaves(); while (dirty.current) await flush(); api.closeReady(); }
@@ -86,10 +111,17 @@ export function usePractice(api: DesktopBridge | undefined, onError: (error: str
     finally { navigating.current = false; setSwitching(false); }
   };
   const open = (next: PracticeTarget, start = true) => guarded(async () => {
+    restored.current = false;
     if (api && start) await api.startPractice(next.id, next.language, next.scope, next.answerFormat);
-    if (targetKey(next) === targetKey(target)) {
+    setLoadError(null);
+    if (targetKey(next) === targetKey(target) && ready) {
       if (api) setWorkspace(await api.workspace(next.id, next.language, next.scope, next.answerFormat));
-    } else { setReady(false); setWorkspace(null); setTarget(next); }
+    } else {
+      // A failed initial read still needs full draft/readiness initialization when the same target is opened again.
+      setReady(false); setWorkspace(null);
+      if (targetKey(next) === targetKey(target)) setLoadAttempt(value => value + 1);
+      else setTarget(next);
+    }
     return true;
   });
   const refresh = async (expectedKey = key) => {
@@ -109,5 +141,5 @@ export function usePractice(api: DesktopBridge | undefined, onError: (error: str
   const snapshot = () => ({ ...current.current, target: { ...current.current.target } });
   const acceptDraft = (nextCode: string, expectedKey: string) => { if (currentKey.current !== expectedKey) return; current.current = { ...current.current, code: nextCode }; dirty.current = false; setCode(nextCode); setSaving('已保存到本机'); };
   const acceptRun = (run: RunArchive, expectedKey: string) => { if (currentKey.current === expectedKey) setWorkspace(state => state ? { ...state, history: [run, ...state.history.filter(previous => previous.id !== run.id)] } : state); };
-  return { key, target, workspace, code, testConfig, ready, switching, saving, edit, editTests, flush, open, refresh, finish, snapshot, acceptDraft, acceptRun, currentKey };
+  return { key, target, workspace, code, testConfig, ready, loadError, retryLoading, switching, saving, edit, editTests, flush, open, refresh, finish, snapshot, acceptDraft, acceptRun, currentKey };
 }

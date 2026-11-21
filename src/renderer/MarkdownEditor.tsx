@@ -1,14 +1,15 @@
 import { useId, useRef, useState } from 'react';
 import { Markdown } from './Markdown';
 import { applyMarkdownCommand, type MarkdownCommand } from './markdown-editing';
+import { shortcut } from './ui';
 import './note-composer.css';
 
 const tools: { command: MarkdownCommand; label: string; text: string; shortcut?: string }[] = [
   { command: 'h1', label: '一级标题', text: 'H1' }, { command: 'h2', label: '二级标题', text: 'H2' }, { command: 'h3', label: '三级标题', text: 'H3' },
-  { command: 'bold', label: '加粗', text: 'B', shortcut: '⌘/Ctrl B' }, { command: 'italic', label: '斜体', text: 'I', shortcut: '⌘/Ctrl I' },
+  { command: 'bold', label: '加粗', text: 'B', shortcut: shortcut('B') }, { command: 'italic', label: '斜体', text: 'I', shortcut: shortcut('I') },
   { command: 'bullet', label: '无序列表', text: '• 列表' }, { command: 'numbered', label: '有序列表', text: '1. 列表' },
   { command: 'inline-code', label: '行内代码', text: '< >' }, { command: 'code-block', label: '代码块', text: '{ }' },
-  { command: 'quote', label: '引用', text: '❝' }, { command: 'link', label: '链接', text: '链接', shortcut: '⌘/Ctrl K' },
+  { command: 'quote', label: '引用', text: '❝' }, { command: 'link', label: '链接', text: '链接', shortcut: shortcut('K') },
 ];
 
 export function MarkdownEditor({ value, onChange, disabled = false, onOpenLink, onAttachment, rows = 14 }: {

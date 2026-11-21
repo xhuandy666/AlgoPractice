@@ -10,6 +10,9 @@ export const statusText: Record<RunArchive['result']['status'], string> = {
 };
 export const statusClass = (status: RunArchive['result']['status']) => status === 'passed' ? 'success-text' : ['completed', 'cancelled', 'interrupted'].includes(status) ? 'muted' : 'error-text';
 export function errorText(error: unknown) { return error instanceof Error ? error.message.replace(/^Error invoking remote method '[^']+': Error: /, '') : String(error); }
+/** A command shortcut as the current platform prints it: ⌘K on macOS, Ctrl+K elsewhere. */
+export const IS_MAC = typeof navigator !== 'undefined' && /Mac|iPhone|iPad/i.test(navigator.platform ?? '');
+export const shortcut = (key: string) => IS_MAC ? `⌘${key}` : `Ctrl+${key}`;
 export const formatValue = (value: unknown) => value === undefined ? '—' : typeof value === 'string' ? value : JSON.stringify(value);
 export const dateTime = (value: string) => new Date(value).toLocaleString('zh-CN', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' });
 const iconPaths = {

@@ -61,6 +61,18 @@ export function calculateResultLayout(height: number, toolbarHeight: number, pre
   return { span, range, size: clampPaneSize(span * preference / 100, range), defaultValue: clampPaneSize(span * WORKBENCH_DEFAULTS.results / 100, range) };
 }
 
+/** Pointer travel in CSS pixels that turns a press on a divider or its grip into a resize. A shorter press stays a click. */
+export const SPLITTER_DRAG_THRESHOLD = 4;
+
+export function splitterDragEngaged(origin: number, position: number) {
+  return Math.abs(position - origin) >= SPLITTER_DRAG_THRESHOLD;
+}
+
+/** The pane edge follows the pointer from where it was pressed: the statement grows rightwards, history leftwards, results upwards. */
+export function splitterDragSize(side: WorkbenchPane, startSize: number, origin: number, position: number, range: PaneRange) {
+  return clampPaneSize(startSize + (position - origin) * (side === 'statement' ? 1 : -1), range);
+}
+
 export function splitterKeySize(side: WorkbenchPane, key: string, value: number, range: PaneRange, defaultValue: number, largeStep = false): number | null {
   if (key === 'Home') return range.min;
   if (key === 'End') return range.max;

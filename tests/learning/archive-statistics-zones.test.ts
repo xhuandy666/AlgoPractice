@@ -51,7 +51,7 @@ function reference(path: string, timeZone: string, attemptId?: string): Map<stri
       WHERE started_at >= ? AND started_at <= ?${attemptId ? ' AND id = ?' : ''} GROUP BY date`).all(...args) as Record<string, number | string>[]) day(row.date as string).attempts = row.count as number;
     for (const row of db.prepare(`SELECT practice_local_date(completed_at) AS date, COUNT(DISTINCT problem_id) AS count
       FROM (${attemptCompletionsSql(attemptId ? 'a.id = ?' : '')}) WHERE completed_at IS NOT NULL GROUP BY date`).all(...(attemptId ? [attemptId] : [])) as Record<string, number | string>[]) day(row.date as string).completedProblems = row.count as number;
-    for (const row of db.prepare(`SELECT practice_local_date(created_at) AS date, COUNT(*) AS count, SUM(status = 'passed' AND expected_output_source = 'native-samples') AS passed, SUM(status IN (${PRACTICE})) AS practiced
+    for (const row of db.prepare(`SELECT practice_local_date(created_at) AS date, COUNT(*) AS count, SUM(status = 'passed' AND expected_output_source = 'native-samples') AS passed, SUM(status IN (${PRACTICE}) OR (status = 'passed' AND expected_output_source <> 'native-samples')) AS practiced
       FROM runs WHERE created_at >= ? AND created_at <= ?${condition} GROUP BY date`).all(...args) as Record<string, number | string>[]) {
       Object.assign(day(row.date as string), { runs: row.count, passedRuns: row.passed, practiceRuns: row.practiced });
     }

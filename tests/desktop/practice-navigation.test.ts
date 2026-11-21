@@ -65,7 +65,7 @@ test('single, empty, missing and end positions have explicit non-wrapping bounda
 
 test('a captured review session preserves all queue positions without advancing or completing it', async () => {
   const session: ReviewSession = { id: 'session-one', problemIds: ['already-seen', 'current', 'next'], position: 1, currentProblemId: 'current',
-    status: 'active', skippedProblemIds: ['already-seen'], createdAt: '2026-10-01T10:00:00Z', updatedAt: '2026-10-01T10:00:00Z', endedAt: null };
+    status: 'active', skippedProblemIds: ['already-seen'], ratedProblemIds: [], createdAt: '2026-10-01T10:00:00Z', updatedAt: '2026-10-01T10:00:00Z', endedAt: null };
   const before = structuredClone(session); const source = makeReviewSessionPracticeSource(session);
   assert.deepEqual(await resolvePracticeNavigation(source, noReader()), session.problemIds);
   assert.deepEqual(practiceNavigationPosition(source.kind === 'frozen' ? source.problemIds : [], 'current'), { index: 1, total: 3, previousId: 'already-seen', nextId: 'next' });

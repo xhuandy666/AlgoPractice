@@ -30,7 +30,8 @@ import { MaintenanceGate, SAVE_CHANNELS } from './maintenance-gate';
 import type { SaveSubmissionRemarkInput, SubmissionHistoryFilter, SubmissionHistorySource } from '../shared/submission-history';
 import { recoverInterruptedRestore } from './backup-service';
 import type { ProblemPageFilter, NotePageFilter, AttemptPageFilter, RunPageFilter } from '../shared/learning';
-import type { Page, DraftOptions, RunOptions } from '../shared/bridge';
+import type { Page, DraftOptions, RunOptions, SelfTestOptions } from '../shared/bridge';
+import { selfTestAdapter, validateSelfTestArguments } from '../shared/self-test';
 import { ImportService } from './import-service';
 import { cachedMediaType } from './media-cache';
 import { SourceSession } from './source-session';
@@ -79,7 +80,7 @@ let rendererNotice: string | null = null;
 let reloadWhenIdleTimer: ReturnType<typeof setInterval> | null = null;
 let crashPromptOpen = false;
 let unresponsivePrompt: AbortController | null = null;
-let activeRun: { id: string; identity: { problemId: string; language: Language; code: string; scopeId: string; version: string | undefined; optionsKey?: string }; controller: AbortController; promise: Promise<RunArchive> } | null = null;
+let activeRun: { id: string; identity: { problemId: string; language: Language; code: string; scopeId: string; version: string | undefined; optionsKey?: string }; controller: AbortController; promise: Promise<RunArchive | RunResult> } | null = null;
 let runtimes: RuntimeManager;
 const preparations = new RunPreparations();
 const runtimeStates = new Map<Language, RuntimeState>();
@@ -715,6 +716,39 @@ else {
         log('run.finished', { result: result.status, language, durationMs: result.durationMs }); changed(); return archive;
       })().finally(() => { release(); if (options.preparationToken) preparations.cancel(options.preparationToken); if (activeRun?.id === runId) activeRun = null; });
       activeRun = { id: runId, identity: { problemId, language, code, scopeId, version: requestedVersion, optionsKey }, controller, promise }; return promise;
+    });
+    // A self-test shares the single run slot (so "stop" cancels it) but writes nothing: no attempt, run, archive or statistic.
+    handle('runner:self-test', (id, lang, text, scope, expectedVersion, input) => {
+      const problemId = idValue(id), language = languageValue(lang), code = codeValue(text), scopeId = scopeValue(scope);
+      if (!input || typeof input !== 'object' || Array.isArray(input)) throw new Error('自测输入无效。');
+      const options = input as SelfTestOptions, runId = options.requestId === undefined ? randomUUID() : idValue(options.requestId);
+      const token = options.preparationToken === undefined ? undefined : idValue(options.preparationToken);
+      if (interviews.starting || interviews.active()) throw new Error('面试进行中不能使用自测输入。');
+      if (activeRun) throw new Error('已有运行任务，请等待完成或停止。');
+      if (runtimes.state(language).busy) throw new Error('此语言环境正在准备，请等待完成。');
+      const available = workspace(problemId, language, scopeId, 'function');
+      if (expectedVersion !== undefined && expectedVersion !== available.problem.version) throw new Error('题面版本已变化，请重新打开后运行。');
+      const problem = available.spec!.content, adapter = selfTestAdapter(problem.mode, problem.adapter);
+      if (!adapter) throw new Error('此题暂不支持自测输入。');
+      const support = capability(problem, language); if (!support.canRun) throw new Error(support.reason);
+      const args = validateSelfTestArguments(options.args, adapter);
+      if (token) preparations.assertCurrent(token, preparationIdentity(available, language, code, scopeId));
+      const controller = new AbortController(), release = runtimes.retain(language, 'run');
+      const promise = (async () => {
+        const inspection = await inspectSelectedRuntime(language, controller.signal);
+        if (controller.signal.aborted) throw new Error('运行已取消。');
+        if (inspection.status !== 'ready') { invalidateRuntimeState(language); throw new Error('本地语言环境未就绪，请安装或重新选择环境后运行。'); }
+        if (maintenance.phase !== 'idle' || quitting || interviews.starting || interviews.active()) throw new Error('当前会话已变化，请重新运行。');
+        if (token) preparations.consume(token, preparationIdentity(workspace(problemId, language, scopeId, 'function'), language, code, scopeId));
+        let result: RunResult;
+        try {
+          result = await runCode({ language, code, mode: 'function', adapter, cases: [{ args }], runtimePath: inspection.executable, timeoutMs: 10000, outputLimitBytes: 1048576 },
+            { signal: controller.signal, runId, runtimeRoot: compilationRootFor(language, inspection.executable), onEvent: event => { if (!win.isDestroyed()) win.webContents.send('runner:event', event); } });
+        } catch { result = runnerFailure('运行器未正常返回结果。', inspection.runtimeVersion); }
+        if (result.status === 'environment_error') invalidateRuntimeState(language);
+        log('run.self-test', { result: result.status, language, durationMs: result.durationMs }); return result;
+      })().finally(() => { release(); if (token) preparations.cancel(token); if (activeRun?.id === runId) activeRun = null; });
+      activeRun = { id: runId, identity: { problemId, language, code, scopeId, version: expectedVersion === undefined ? undefined : idValue(expectedVersion), optionsKey: 'self-test' }, controller, promise }; return promise;
     });
     handle('runner:cancel', () => { activeRun?.controller.abort(); });
     handle('runtime:cancel-install', value => { preparations.cancel(); if (value === undefined) runtimes.cancelAll(); else runtimes.cancel(languageValue(value)); });
