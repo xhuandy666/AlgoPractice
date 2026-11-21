@@ -88,6 +88,9 @@ export interface ReviewAssessmentDraft {
 export interface ReviewSession {
   id: string; problemIds: string[]; position: number; currentProblemId: string | null;
   status: 'active' | 'ended'; skippedProblemIds: string[];
+  /** Queue problems with a new assessment committed during this round, derived from actual events for existing sessions too.
+   * Automatically passing paused/postponed or previously rated items is not a new assessment; corrections add none. */
+  ratedProblemIds: string[];
   createdAt: string; updatedAt: string; endedAt: string | null;
 }
 export interface StartReviewSessionInput { requestId: string; problemIds?: string[]; }

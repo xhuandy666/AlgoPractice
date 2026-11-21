@@ -1,11 +1,12 @@
 import type { ReviewSession } from '../shared/review-plan.ts';
 
-/** One line on what a review round came to, read from the session itself. A problem leaves the queue only after a
- * self-rating that day or an explicit skip, so the problems before `position` minus the skipped ones were rated. */
-export function reviewSessionSummary(session: Pick<ReviewSession, 'problemIds' | 'position' | 'skippedProblemIds'>, finished: boolean): string {
-  const total = session.problemIds.length, handled = finished ? total : Math.max(0, Math.min(session.position, total));
-  const skipped = Math.min(session.skippedProblemIds.length, handled), rated = handled - skipped, remaining = total - handled;
-  const counts = `自评 ${rated} 题${skipped ? `，跳过 ${skipped} 题` : ''}`;
-  if (remaining > 0) return `本轮复习已结束：${counts}，还有 ${remaining} 题没有复习。没复习和跳过的题目仍按原计划安排。`;
-  return `本轮复习完成：${counts}。${skipped ? '跳过的题目仍按原计划安排；' : ''}下一次安排见复习计划。`;
+/** Queue position also advances past paused, postponed or already-rated problems. Neither new assessments nor
+ * outstanding work can be inferred from it; storage supplies the actual assessments committed during the round. */
+export function reviewSessionSummary(session: Pick<ReviewSession, 'problemIds' | 'position' | 'skippedProblemIds' | 'ratedProblemIds'>, finished: boolean): string {
+  const problems = new Set(session.problemIds), rated = new Set((session.ratedProblemIds ?? []).filter(id => problems.has(id)));
+  const skipped = new Set(session.skippedProblemIds.filter(id => problems.has(id) && !rated.has(id))).size;
+  const other = problems.size - rated.size - skipped;
+  const counts = `新增自评 ${rated.size} 题${skipped ? `，跳过 ${skipped} 题` : ''}`;
+  if (other > 0) return `本轮复习已结束：${counts}，另有 ${other} 题未在本轮新增自评。题目当前安排与状态请查看复习计划。`;
+  return `${finished ? '本轮复习完成' : '本轮复习已结束'}：${counts}。题目当前安排与状态请查看复习计划。`;
 }

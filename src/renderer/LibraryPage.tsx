@@ -47,22 +47,29 @@ export function LibraryPage({ api, data, onOpen, onImport, onChanged, onError }:
       const refreshedList = listId; void readOnlyCandidates(api, refreshedList).then(found => { if (refreshedList === currentList.current) setReadOnly(found); }).catch(() => {});
     }
   }
-  const [result, setResult] = useState<PageResult<ProblemListItem>>({ items: [], total: 0, offset: 0, limit: 30, hasMore: false });
-  const [resultSource, setResultSource] = useState<PracticeNavigationSource | null>(null);
+  // Rows and their entry context belong to the same response. Controls may already describe the next query
+  // while these rows are still visible, so row actions must never read the live controls for their source.
+  const [batch, setBatch] = useState<{
+    result: PageResult<ProblemListItem>; source: PracticeNavigationSource | null;
+    list?: Pick<LibraryIndex['lists'][number], 'id' | 'title' | 'revision'>;
+  }>({ result: { items: [], total: 0, offset: 0, limit: 30, hasMore: false }, source: null });
+  const { result, source: resultSource, list: resultList } = batch;
   const [loading, setLoading] = useState(true);
   useEffect(() => { let alive = true; setLoading(true); const timer = setTimeout(() => {
     const filter: ProblemPageFilter = { search: query, listId: listId || undefined, chapterId: chapterId || undefined, difficulty: difficulty || undefined, language: language || undefined, support: support as 'runnable' | 'reading' || undefined, practice: practiceState || undefined, offset: page * 30, limit: 30 };
     const label = `${list?.title ?? '全部题库'}${query || chapterId || difficulty || support || language || practiceState ? ' · 当前筛选' : ''}`;
     const request = api ? api.problemPage(filter) : Promise.resolve({ items: data.problems.filter(p => !query || p.content.title.includes(query)), total: data.totalProblems, offset: 0, limit: 30, hasMore: false });
-    void request.then(value => { if (alive) { setResult(value); setResultSource(api ? makeLibraryPracticeSource(filter, label) : makeFrozenPracticeSource(value.items.map(item => item.id), '预览题库')); if (page > 0 && !value.items.length) setPage(Math.max(0, Math.ceil(value.total / 30) - 1)); } }).catch(error => { if (alive) onError(errorText(error)); }).finally(() => { if (alive) setLoading(false); });
+    void request.then(value => { if (alive) { setBatch({ result: value,
+      source: api ? makeLibraryPracticeSource(filter, label) : makeFrozenPracticeSource(value.items.map(item => item.id), '预览题库'),
+      ...(list ? { list: { id: list.id, title: list.title, revision: list.revision } } : {}) });
+      if (page > 0 && !value.items.length) setPage(Math.max(0, Math.ceil(value.total / 30) - 1)); } }).catch(error => { if (alive) onError(errorText(error)); }).finally(() => { if (alive) setLoading(false); });
   }, query ? 150 : 0); return () => { alive = false; clearTimeout(timer); }; }, [api, data, query, listId, chapterId, difficulty, support, language, practiceState, page]);
-  const totalPages = Math.max(1, Math.ceil(result.total / 30)); const safePage = page;
+  const totalPages = Math.max(1, Math.ceil(result.total / 30)); const safePage = Math.floor(result.offset / result.limit);
   // Opening a problem starts its practice, which changes its practice state. With a state filter the order is fixed
   // before opening, so the opened problem cannot drop out of its own navigation sequence.
   const open = (id: string) => {
-    // The selected study list is what the learner is working through, whatever else narrows the view right now.
-    const from = list ? { id: list.id, title: list.title } : undefined;
-    if (!practiceState || !resultSource || resultSource.kind !== 'library' || !api) { onOpen(id, resultSource ?? makeFrozenPracticeSource([id], '当前题目'), from); return; }
+    const from = resultList ? { id: resultList.id, title: resultList.title } : undefined;
+    if (!resultSource || resultSource.kind !== 'library' || !resultSource.filter.practice || !api) { onOpen(id, resultSource ?? makeFrozenPracticeSource([id], '当前题目'), from); return; }
     void resolvePracticeNavigation(resultSource, api).then(ids => onOpen(id, makeFrozenPracticeSource(ids.includes(id) ? ids : [id, ...ids], resultSource.label), from))
       .catch(() => onOpen(id, makeFrozenPracticeSource(result.items.map(item => item.id), resultSource.label), from));
   };
@@ -97,7 +104,7 @@ export function LibraryPage({ api, data, onOpen, onImport, onChanged, onError }:
           <div role="cell" className="problem-name"><span className="row-index" aria-hidden="true">{safePage * 30 + index + 1}</span><div><button className="title-button" onClick={() => open(problem.id)}>{content.title}</button>{problem.practice?.solved ? <span className="practice-chip" data-state="solved">已解出</span> : problem.practice?.practiced ? <span className="practice-chip" data-state="practiced">练过</span> : null}{problem.practice?.reviewDue && <span className="practice-chip" data-state="due">待复习</span>}<p>{display.topicTags ? <>{content.tags.slice(0, 3).join(' · ') || sourceLabel(content.source)}{content.source === 'local' && content.tags.length > 0 ? ' · 自建样例' : ''}</> : sourceLabel(content.source)}</p></div></div>
           <span role="cell" className="difficulty-text" data-difficulty={difficultyId}>{difficultyLabel(content.difficulty)}</span>
           <span role="cell" className={available.canRun ? 'availability success-text' : 'availability muted'}><span className="availability-label">{available.canRun && <Icon name="check" size={14} strokeWidth={3} />}{available.label}</span><small>{LANGUAGES.filter(id => id === 'cpp' ? hasCppTemplate : problem.capabilities[id]).map(languageLabel).join(' / ') || '暂无语言模板'}</small>{content.media?.complete === false && <small>图示未完整缓存</small>}</span>
-          <div role="cell" className="row-actions"><button className={available.canRun ? 'button primary row-start' : 'button row-start'} onClick={() => open(problem.id)}>{available.canRun ? '练习' : '读题'}</button>{(content.sourceUrl || (content.source === 'local' && missingNewTemplates)) && <button className="text-button" disabled={!api || !!busy} title={content.sourceUrl ? '主动读取线上题面和语言模板，确认后保存新版本；不覆盖旧练习或个人代码。' : '从随应用提供的本地演示补全模板，不联网。'} onClick={() => operation(problem.id, async () => setRefresh(await api!.previewProblemRefresh(problem.id)))}>{busy === problem.id ? '正在读取…' : missingNewTemplates ? '补全语言模板' : '刷新题面'}</button>}{list && item && <button className="text-button" disabled={!api || !!busy} onClick={() => operation(item.key, async () => { await api!.detachListItem(list.id, item.key, list.revision); await onChanged(); })}>移出题单</button>}</div>
+          <div role="cell" className="row-actions"><button className={available.canRun ? 'button primary row-start' : 'button row-start'} onClick={() => open(problem.id)}>{available.canRun ? '练习' : '读题'}</button>{(content.sourceUrl || (content.source === 'local' && missingNewTemplates)) && <button className="text-button" disabled={!api || !!busy} title={content.sourceUrl ? '主动读取线上题面和语言模板，确认后保存新版本；不覆盖旧练习或个人代码。' : '从随应用提供的本地演示补全模板，不联网。'} onClick={() => operation(problem.id, async () => setRefresh(await api!.previewProblemRefresh(problem.id)))}>{busy === problem.id ? '正在读取…' : missingNewTemplates ? '补全语言模板' : '刷新题面'}</button>}{resultList && item && <button className="text-button" disabled={!api || !!busy} onClick={() => operation(item.key, async () => { await api!.detachListItem(resultList.id, item.key, resultList.revision); await onChanged(); })}>移出题单</button>}</div>
         </div>;
       })}
     </div>

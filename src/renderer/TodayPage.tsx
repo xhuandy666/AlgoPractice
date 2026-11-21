@@ -16,6 +16,7 @@ import { addDays, dateKey, isStudyDay, learningStreak } from './learning-calenda
 import { HelpHint } from './HelpHint';
 import { readPracticeMemory, savePracticeMemory, withoutMissing } from './practice-memory';
 import { resolveResume, type ResumeChoice } from './practice-resume';
+import { starterProgress } from './starter-progress';
 
 const weekdays = ['一', '二', '三', '四', '五', '六', '日'];
 const FOCUS_QUEST_MINUTES = 30, XP_QUEST = 100;
@@ -71,11 +72,12 @@ export function starterSample(library: LibraryIndex) {
 }
 function Starter({ profile, library, onBrowse, onNavigate, onOpenSample }: { profile: RewardProfile; library: LibraryIndex; onBrowse: () => void; onNavigate?: (page: Page) => void; onOpenSample?: (problemId: string, title: string) => void }) {
   const sample = onOpenSample ? starterSample(library) : undefined, openSample = sample ? () => onOpenSample!(sample.id, sample.content.title) : onBrowse;
+  const progress = starterProgress(profile, library);
   // Built-in samples are ready on first launch, so the first step is to run one; importing a list comes after the first win.
   const steps = [
-    { done: profile.totals.runs > 0, title: '运行一次代码', detail: sample ? `自带样例「${sample.content.title}」已就绪，打开后按 ${shortcut('Enter')}` : `在练习工作台按 ${shortcut('Enter')}`, action: sample ? `试做「${sample.content.title}」` : '打开题库', go: openSample },
-    { done: profile.totals.solvedProblems > 0, title: '解出第一道题', detail: '题目自带的用例全部通过或力扣官方 AC，解锁成就「初露锋芒」', action: sample ? '继续做样例' : '开始练习', go: openSample },
-    { done: library.lists.length > 0 || library.totalProblems > demoProblems.length, title: '导入自己的题单', detail: '一键导入 Hot100，或粘贴力扣题单链接', action: '导入题单', go: () => onNavigate?.('sources') },
+    { done: progress.ran, title: '运行一次代码', detail: sample ? `自带样例「${sample.content.title}」已就绪，打开后按 ${shortcut('Enter')}` : `在练习工作台按 ${shortcut('Enter')}`, action: sample ? `试做「${sample.content.title}」` : '打开题库', go: openSample },
+    { done: progress.solved, title: '解出第一道题', detail: '题目自带的用例全部通过或力扣官方 AC，解锁成就「初露锋芒」', action: sample ? '继续做样例' : '开始练习', go: openSample },
+    { done: progress.imported, title: '导入自己的题单', detail: '一键导入 Hot100，或粘贴力扣题单链接', action: '导入题单', go: () => onNavigate?.('sources') },
   ];
   return <section className="starter-card dash-card" aria-label="新手任务">
     <div className="dash-card-heading"><span className="dash-tile" data-tone="purple" aria-hidden="true"><Icon name="sparkle" size={20} /></span><div><h3>新手任务</h3><p>完成 {steps.filter(step => step.done).length} / {steps.length} · 先跑通一道样例，再导入自己的题单</p></div><button className="text-button" onClick={() => onNavigate?.('environment')}>检查运行环境</button></div>
@@ -116,8 +118,8 @@ function AchievementWall({ profile, onOpen }: { profile: RewardProfile; onOpen: 
   </section>;
 }
 
-export function TodayPage({ api, library, profile = null, language, onOpenProblems, onRedoProblems, onReviewPlan, onStartReview, onResume, onSettings, onArchives, onBrowse, onNavigate, onError }: {
-  api: DesktopBridge | undefined; library: LibraryIndex; profile?: RewardProfile | null;
+export function TodayPage({ api, library, libraryReady = true, profile = null, language, onOpenProblems, onRedoProblems, onReviewPlan, onStartReview, onResume, onSettings, onArchives, onBrowse, onNavigate, onError }: {
+  api: DesktopBridge | undefined; library: LibraryIndex; libraryReady?: boolean; profile?: RewardProfile | null;
   language?: Language; onOpenProblems?: (problemIds: string[], label: string) => void;
   /** Reopens problems for a from-scratch rewrite in a separate draft scope; falls back to onOpenProblems. */
   onRedoProblems?: (problemIds: string[], label: string) => void;
@@ -140,15 +142,21 @@ export function TodayPage({ api, library, profile = null, language, onOpenProble
   const [goalOpen, setGoalOpen] = useState(false), [goal, setGoal] = useState('3');
   const working = useRef(false), generation = useRef(0); const frozen = useEditsFrozen();
   const [resume, setResume] = useState<ResumeChoice | null>(null);
-  const lists = useRef(library.lists); lists.current = library.lists;
+  const canResume = Boolean(onResume);
+  useEffect(() => {
+    if (!api || !canResume || !libraryReady) return;
+    // Only a loaded index can establish that a remembered list has been removed.
+    let active = true;
+    const memory = readPracticeMemory();
+    void resolveResume(api, memory, library.lists).then(({ choice, missing }) => {
+      if (!active || readPracticeMemory() !== memory) return;
+      if (missing.problem || missing.list) savePracticeMemory(withoutMissing(memory, missing));
+      setResume(choice);
+    }).catch(() => { if (active) setResume(null); });
+    return () => { active = false; };
+  }, [api, canResume, libraryReady, library.lists, dashboard]);
   const load = useCallback(async () => {
     if (!api) { setLoading(false); return; } const current = ++generation.current;
-    // Optional: when it cannot be resolved the hero button simply opens the library.
-    if (onResume) void resolveResume(api, readPracticeMemory(), lists.current).then(result => {
-      if (current !== generation.current) return;
-      if (result.missing.problem || result.missing.list) savePracticeMemory(withoutMissing(readPracticeMemory(), result.missing));
-      setResume(result.choice);
-    }).catch(() => { if (current === generation.current) setResume(null); });
     try {
       const [result, plan, session] = await Promise.all([api.learningDashboard(), api.reviewPlan({ view: 'today', limit: 1 }), api.reviewSession()]);
       if (current === generation.current) { setDashboard(result); setReview(plan.summary); setOngoing(session?.status === 'active' && session.currentProblemId ? session : null); setFailure(''); setLoading(false); }
@@ -211,7 +219,7 @@ export function TodayPage({ api, library, profile = null, language, onOpenProble
             {profile && <Quest icon="bolt" tone="gold" title={<>获得 {XP_QUEST} 经验<button className="text-button quest-link" onClick={() => setGrowth({ section: 'xp' })}>经验明细</button></>} value={profile.todayXp} max={XP_QUEST} caption={`${Math.min(profile.todayXp, XP_QUEST)} / ${XP_QUEST}`} />}
           </ol>
         </section>
-        {profile && profile.totals.solvedProblems === 0 && profile.level <= 2 && <Starter profile={profile} library={library} onBrowse={onBrowse} onNavigate={onNavigate} onOpenSample={onOpenProblems ? (id, title) => onOpenProblems([id], `自带样例 · ${title}`) : undefined} />}
+        {libraryReady && profile && !starterProgress(profile, library).complete && <Starter profile={profile} library={library} onBrowse={onBrowse} onNavigate={onNavigate} onOpenSample={onOpenProblems ? (id, title) => onOpenProblems([id], `自带样例 · ${title}`) : undefined} />}
         {message && <p role="status" className="center-message">{message}</p>}
         {failure && <div className="center-load-error" role="alert"><p>学习记录读取失败：{failure}</p><button className="button" onClick={() => { setLoading(true); void load(); }}>重试读取</button></div>}
         <section className="center-review-summary dash-card" aria-label="复习计划摘要"><span className="dash-tile" data-tone="orange" aria-hidden="true"><Icon name="calendar" size={22} /></span><div><p className="dash-eyebrow">复习计划</p><h3>{ongoing && onStartReview ? `本轮复习进行到第 ${ongoing.position + 1} / ${ongoing.problemIds.length} 题` : review ? review.plannedCount > 0 ? `今天推荐复习 ${review.plannedCount} 题` : '今天暂无推荐复习' : failure ? '复习摘要暂不可用' : '正在读取复习摘要…'}</h3>{review && <p>已复习 {review.reviewedToday} 题 · {review.budget === null ? '不限量' : `每日量 ${review.budget} 题`}{review.extraDueCount > 0 && ` · 另有 ${review.extraDueCount} 题到期`}{review.pendingAssessmentCount > 0 && ` · ${review.pendingAssessmentCount} 题待补自评`}</p>}{reviewFailure && <p role="alert" className="error-text">没能开始复习：{reviewFailure}</p>}</div>{canStartReview && <button className="button primary" disabled={busy || frozen} onClick={() => { void startReview(); }}>{ongoing ? '继续本轮复习' : `开始今日 ${review!.plannedCount} 题`}</button>}<button className={canStartReview ? 'text-button' : 'button'} disabled={!api || frozen} onClick={onReviewPlan ?? onSettings}>查看复习计划</button></section>

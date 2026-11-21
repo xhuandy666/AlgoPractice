@@ -22,11 +22,24 @@ export function pickReferenceRecord<T extends Pick<SubmissionHistoryItem, 'sourc
 }
 
 type Reader = Pick<DesktopBridge, 'submissionHistory' | 'submissionHistoryDetail' | 'notePage' | 'note'>;
+/** An older page can hold the only pass, or an official AC that outranks a recent local pass. Once the newest official
+ * AC is found, older pages cannot improve it. Ties keep the newer record from the earlier page. */
+async function readReferenceRecord(api: Reader, problemId: string, language: Language): Promise<SubmissionHistoryItem | null> {
+  let offset = 0, best: SubmissionHistoryItem | null = null;
+  while (true) {
+    const page = await api.submissionHistory({ problemId, language, limit: 50, offset });
+    const candidate = pickReferenceRecord(page.items);
+    if (candidate && (!best || referenceRank(candidate) > referenceRank(best))) best = candidate;
+    if ((best && referenceRank(best) === 3) || !page.hasMore) return best;
+    if (!page.items.length) throw new Error('历史记录分页不完整，请关闭后重试。');
+    offset += page.items.length;
+  }
+}
 /** The language being written now comes first; another language's solution is still better than none. */
 export async function loadReviewReference(api: Reader, problemId: string, language: Language): Promise<ReviewReference> {
   let code: ReviewReferenceCode | null = null;
   for (const candidate of [language, ...LANGUAGES.filter(item => item !== language)]) {
-    const record = pickReferenceRecord((await api.submissionHistory({ problemId, language: candidate, limit: 50 })).items);
+    const record = await readReferenceRecord(api, problemId, candidate);
     if (!record) continue;
     const detail = await api.submissionHistoryDetail(record.source, record.id);
     code = { source: detail.source, language: detail.language, answerFormat: detail.answerFormat, createdAt: detail.finishedAt ?? detail.createdAt, code: detail.code };

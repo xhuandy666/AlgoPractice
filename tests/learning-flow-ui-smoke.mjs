@@ -69,12 +69,12 @@ const compiled = await build({
     let view = { kind: 'today', profile: 'newcomer' };
     function render() {
       if (view.kind === 'interview') { app.render(<InterviewPage api={api} lists={lists} onError={record('error')} onNavigate={record('navigate')} />); return; }
-      app.render(<TodayPage key={view.profile + ':' + view.generation} api={api} profile={profiles[view.profile]} library={{ problems: view.sampleHidden ? [] : [sample], totalProblems: 3, lists: [], jobs: [] }}
+      app.render(<TodayPage key={view.profile + ':' + view.generation} api={api} profile={profiles[view.profile]} library={{ problems: view.sampleHidden ? [] : [sample], totalProblems: 3, lists: view.imported ? [{ id: 'imported', title: '我的练习', items: [] }] : [], jobs: [] }}
         onOpenProblems={record('open')} onReviewPlan={record('plan')} onStartReview={record('review')} onSettings={record('settings')} onArchives={record('archives')} onBrowse={record('browse')} onNavigate={record('navigate')} onError={record('error')} />);
     }
     let generation = 0;
     window.fixture = { calls, profiles,
-      today(profile, options = {}) { ongoing = options.ongoing ? { ...session, position: 1, currentProblemId: 'r2' } : null; planned = options.planned ?? 2; failStart = false; view = { kind: 'today', profile, sampleHidden: options.sampleHidden, generation: ++generation }; render(); },
+      today(profile, options = {}) { ongoing = options.ongoing ? { ...session, position: 1, currentProblemId: 'r2' } : null; planned = options.planned ?? 2; failStart = false; view = { kind: 'today', profile, sampleHidden: options.sampleHidden, imported: options.imported ?? (profile === 'learner'), generation: ++generation }; render(); },
       failStart(next) { failStart = next; },
       interview(next) { lists = next; view = { kind: 'interview' }; render(); },
     };
@@ -111,10 +111,16 @@ try {
   await starter.getByRole('button', { name: '打开题库', exact: true }).click(); assert.equal((await calls('browse')).length, 1, 'without a ready sample the step falls back to the library');
   pass('The newcomer path starts with running the built-in sample directly and leaves importing a list as the third step');
 
+  await page.evaluate(() => window.fixture.today('learner', { imported: false }));
+  await starter.getByText(/^完成 2 \/ 3/).waitFor();
+  const navigationsBeforeImport = (await calls('navigate')).length;
+  await starter.getByRole('button', { name: '导入题单', exact: true }).click();
+  assert.deepEqual((await calls('navigate')).slice(navigationsBeforeImport), [['navigate', 'sources']]);
+
   await page.evaluate(() => window.fixture.today('learner'));
+  await starter.waitFor({ state: 'detached' });
   const reviewCard = page.getByRole('region', { name: '复习计划摘要', exact: true });
   await reviewCard.getByRole('heading', { name: '今天推荐复习 2 题', exact: true }).waitFor();
-  assert.equal(await page.getByRole('region', { name: '新手任务', exact: true }).count(), 0);
   await page.evaluate(() => window.fixture.failStart(true));
   await reviewCard.getByRole('button', { name: '开始今日 2 题', exact: true }).click();
   await reviewCard.getByRole('alert').filter({ hasText: '没能开始复习：复习会话暂时无法开始。' }).waitFor(); assert.equal((await calls('review')).length, 0);

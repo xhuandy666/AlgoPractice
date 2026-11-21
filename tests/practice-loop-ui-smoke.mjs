@@ -57,7 +57,7 @@ const compiled = await build({
     function SelfTest() {
       const [outcome, setOutcome] = useState(null);
       return <SelfTestPanel problemId="two-sum" adapter={adapter} names={['nums', 'target']} sample={content.cases[0].args} disabled={false} outcome={outcome}
-        onRun={args => { calls.push(['self-test', args]); setOutcome({ stale: false, result: { status: 'completed', durationMs: 12, diagnostics: [], stdout: '', stderr: '', caseResults: [{ index: 0, status: 'completed', actual: [args[0].length, args[1]], stdout: 'debug line\\n', stderr: '', durationMs: 12 }] } }); }} />;
+        onRun={(args, input) => { calls.push(['self-test', args]); setOutcome({ input, stale: false, result: { status: 'completed', durationMs: 12, diagnostics: [], stdout: '', stderr: '', caseResults: [{ index: 0, status: 'completed', actual: [args[0].length, args[1]], stdout: 'debug line\\n', stderr: '', durationMs: 12 }] } }); }} />;
     }
     const session = (position, total = 3) => ({ id: 's1', problemIds: Array.from({ length: total }, (_, index) => 'r' + (index + 1)), position, currentProblemId: 'r' + (position + 1), status: 'active', skippedProblemIds: [], createdAt: TODAY, updatedAt: TODAY, endedAt: null });
     const app = createRoot(document.getElementById('root'));
@@ -65,8 +65,8 @@ const compiled = await build({
     window.fixture = { calls,
       memory: value => value === undefined ? readPracticeMemory() : savePracticeMemory(value),
       library: next => { library = next(library, item); },
-      today(lists = [{ id: 'hot100', title: '热题 100' }]) {
-        app.render(<TodayPage key={++generation} api={api} profile={profile} library={{ problems: [], totalProblems: 2, lists, jobs: [] }} onOpenProblems={record('open')} onResume={record('resume')}
+      today(lists = [{ id: 'hot100', title: '热题 100' }], ready = true) {
+        app.render(<TodayPage api={api} libraryReady={ready} profile={profile} library={{ problems: [], totalProblems: 2, lists, jobs: [] }} onOpenProblems={record('open')} onResume={record('resume')}
           onReviewPlan={record('plan')} onSettings={record('settings')} onArchives={record('archives')} onBrowse={record('browse')} onNavigate={record('navigate')} onError={record('error')} />);
       },
       cases(name) { app.render(<div className="results-pane"><CaseResults key={name} cases={runs[name]} inputOf={index => caseInputRows(content, index)} verdicts={new Map()} exampleOf={() => undefined} designRowsOf={() => null} /></div>); },
@@ -115,7 +115,9 @@ try {
   pass('Without a remembered practice the home button opens the library');
 
   // An unsolved remembered problem is continued in one step, with its list for previous / next.
-  await page.evaluate(() => { window.fixture.memory({ language: 'java', problemId: 'two-sum', listId: 'hot100', listTitle: '热题 100' }); window.fixture.today(); });
+  await page.evaluate(() => { window.fixture.memory({ language: 'java', problemId: 'two-sum', listId: 'hot100', listTitle: '热题 100' }); window.fixture.today([], false); });
+  await hero.getByRole('button', { name: '开始练习', exact: true }).waitFor();
+  await page.evaluate(() => window.fixture.today());
   const resume = hero.locator('.browse-practice');
   await hero.getByText('上次没做完的题', { exact: false }).waitFor();
   assert.equal(await resume.locator('.resume-kind').textContent(), '继续'); assert.equal(await resume.locator('.resume-title').textContent(), '两数之和');
@@ -144,6 +146,7 @@ try {
   // A wrong answer opens its first failed case with the input in the statement's notation.
   await page.evaluate(() => window.fixture.cases('wrong'));
   const details = page.locator('.case-detail');
+  await details.nth(1).and(page.locator('[data-status=wrong_answer]')).waitFor();
   assert.deepEqual(await details.evaluateAll(nodes => nodes.map(node => node.open)), [false, true, false], 'only the first failed case is open');
   const opened = details.nth(1);
   assert.deepEqual(await opened.locator('.case-input pre').allTextContents(), ['nums = [3,2,4]', 'target = 6']);
@@ -153,6 +156,7 @@ try {
   await shot('failed-case'); await details.nth(2).locator('summary').click();
   assert.deepEqual(await details.nth(2).locator('.case-input pre').allTextContents(), ['nums = [3,3]', 'target = 6'], 'other cases show their input once opened');
   await page.evaluate(() => window.fixture.cases('passed'));
+  await details.nth(1).and(page.locator('[data-status=passed]')).waitFor();
   assert.deepEqual(await details.evaluateAll(nodes => nodes.map(node => node.open)), [false, false, false], 'a passing run keeps every case folded');
   pass('The first failed case opens with input, actual, expected and printed output; a pass stays folded');
 
@@ -172,8 +176,8 @@ try {
   assert.deepEqual((await calls('self-test')).at(-1)[1], [[], 0]);
   const outcome = panel.getByRole('status');
   await outcome.getByText('运行完成', { exact: true }).waitFor();
-  assert.deepEqual(await outcome.locator('dt').allTextContents(), ['输出', '标准输出']);
-  assert.deepEqual(await outcome.locator('dd pre').allTextContents(), ['[0,0]', 'debug line\n']);
+  assert.deepEqual(await outcome.locator('dt').allTextContents(), ['本次输入', '输出', '标准输出']);
+  assert.deepEqual(await outcome.locator('dd pre').allTextContents(), ['[]\n0', '[0,0]', 'debug line\n']);
   assert.equal(await panel.getByText('不判对错', { exact: false }).count(), 1);
   await shot('self-test'); await panel.getByRole('button', { name: '填入示例 1', exact: true }).click(); assert.equal(await input.inputValue(), '[2,7,11,15]\n9');
   pass('A self-test explains a malformed line, sends typed arguments and shows the output without a verdict');
@@ -190,14 +194,16 @@ try {
   await page.evaluate(() => window.fixture.review(2, false)); await bar.getByRole('button', { name: '自评并完成本轮', exact: true }).waitFor();
   await page.evaluate(() => window.fixture.review(2, true)); await bar.getByRole('button', { name: '完成本轮', exact: true }).waitFor();
   await page.evaluate(() => window.fixture.review(1, null));
+  await bar.getByText('复习 · 第 2 / 3 题', { exact: true }).waitFor();
   assert.equal(await bar.locator('.review-next').isDisabled(), true, 'the main button waits until the rating state is known');
   await page.evaluate(() => window.fixture.review(1, false, false));
-  assert.deepEqual(await bar.getByRole('button').allTextContents(), ['记录本题自评', '回到队列当前题', '退出并保留进度', '结束本轮']);
   await bar.getByText('浏览邻题 · 队列进度保留 · 第 2 / 3 题', { exact: true }).waitFor();
+  assert.deepEqual(await bar.getByRole('button').allTextContents(), ['记录本题自评', '回到队列当前题', '退出并保留进度', '结束本轮']);
   pass('The review bar offers one rate-and-advance step, a plain next once rated, and the finishing wording on the last problem');
 
   // Recall review: comparing with the earlier solution is an explicit, optional step that leads into the rating.
   await page.evaluate(() => window.fixture.review(0, false, true, 3, 'offered'));
+  await bar.getByRole('button', { name: '对照上次的解法', exact: true }).waitFor();
   assert.deepEqual(await bar.getByRole('button').allTextContents(), ['对照上次的解法', '自评并下一题', '跳过本题', '退出并保留进度', '结束本轮']);
   await bar.getByRole('button', { name: '对照上次的解法', exact: true }).click(); assert.equal((await calls('reference')).length, 1);
   await page.evaluate(() => window.fixture.review(0, false, true, 3, 'opened')); await bar.getByText('复习 · 第 1 / 3 题 · 已对照', { exact: true }).waitFor();

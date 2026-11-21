@@ -55,10 +55,11 @@ test('a locked badge says what is missing and offers the action that moves it', 
 });
 
 test('the end of a review round reports rated, skipped and remaining problems from the session', () => {
-  const session = (position: number, skipped: string[]) => ({ problemIds: ['a', 'b', 'c', 'd'], position, skippedProblemIds: skipped });
-  assert.equal(reviewSessionSummary(session(4, []), true), '本轮复习完成：自评 4 题。下一次安排见复习计划。');
-  assert.equal(reviewSessionSummary(session(4, ['b']), true), '本轮复习完成：自评 3 题，跳过 1 题。跳过的题目仍按原计划安排；下一次安排见复习计划。');
-  assert.equal(reviewSessionSummary(session(2, ['a']), false), '本轮复习已结束：自评 1 题，跳过 1 题，还有 2 题没有复习。没复习和跳过的题目仍按原计划安排。');
-  assert.equal(reviewSessionSummary(session(0, []), false), '本轮复习已结束：自评 0 题，还有 4 题没有复习。没复习和跳过的题目仍按原计划安排。');
-  assert.equal(reviewSessionSummary(session(9, []), false), '本轮复习完成：自评 4 题。下一次安排见复习计划。');
+  const session = (position: number, skipped: string[], rated: string[]) => ({ problemIds: ['a', 'b', 'c', 'd'], position, skippedProblemIds: skipped, ratedProblemIds: rated });
+  assert.equal(reviewSessionSummary(session(4, [], ['a', 'b', 'c', 'd']), true), '本轮复习完成：新增自评 4 题。题目当前安排与状态请查看复习计划。');
+  assert.equal(reviewSessionSummary(session(4, ['b'], ['a', 'c', 'd']), true), '本轮复习完成：新增自评 3 题，跳过 1 题。题目当前安排与状态请查看复习计划。');
+  assert.equal(reviewSessionSummary(session(2, ['a'], ['b']), false), '本轮复习已结束：新增自评 1 题，跳过 1 题，另有 2 题未在本轮新增自评。题目当前安排与状态请查看复习计划。');
+  assert.equal(reviewSessionSummary(session(0, [], []), false), '本轮复习已结束：新增自评 0 题，另有 4 题未在本轮新增自评。题目当前安排与状态请查看复习计划。');
+  assert.match(reviewSessionSummary(session(4, ['a'], []), true), /新增自评 0 题，跳过 1 题，另有 3 题未在本轮新增自评/, 'automatically bypassed items are neither ratings nor a claim that they are still due');
+  assert.match(reviewSessionSummary(session(0, [], ['a']), false), /新增自评 1 题/, 'a rating committed before ending counts even if the queue was not manually advanced');
 });

@@ -247,6 +247,7 @@ test('review sessions persist a frozen recommended queue, revalidate paused or a
   const finished = f.store.advanceReviewSession({ sessionId: session.id, problemId: 's0', skipped: true });
   assert.equal(finished.status, 'ended'); assert.equal(finished.currentProblemId, null);
   assert.deepEqual(finished.skippedProblemIds, ['s0']);
+  assert.deepEqual(finished.ratedProblemIds, [], 'automatically bypassing a paused item is not a self-rating');
   assert.equal(f.store.getProblemReview('s0')!.observationCount, 1); assert.equal(f.store.getReviewPlanSnapshot().summary.reviewedToday, 0);
   assert.deepEqual(f.store.advanceReviewSession({ sessionId: session.id, problemId: 's0', skipped: true }), finished);
   assert.deepEqual(f.store.startReviewSession({ requestId: 'session-first' }), finished, 'retrying start does not create a second session');
@@ -255,6 +256,56 @@ test('review sessions persist a frozen recommended queue, revalidate paused or a
   f.assess('s2', 'session-rating', 1);
   const done = f.store.getReviewSession(extra.id)!; assert.equal(done.status, 'ended');
   assert.equal(f.store.getReviewPlanSnapshot().summary.reviewedToday, 1);
+});
+
+test('session ratings come from actual observations within the round, including existing rows after reopening', t => {
+  const f = fixture(t, '2026-09-01T12:00:00.000Z');
+  for (const id of ['rated', 'paused', 'postponed', 'after-end']) { f.enroll(id); f.assess(id, `initial-${id}`); }
+  f.clock('2026-10-01T12:00:00.000Z');
+  const session = f.store.startReviewSession({ requestId: 'actual-session-ratings', problemIds: ['rated', 'paused', 'postponed', 'after-end'] });
+  f.clock('2026-10-01T12:01:00.000Z');
+  const result = f.assess('rated', 'actual-in-round', 3);
+  f.store.correctProblemReview({ requestId: 'correct-in-round', eventId: result.event.id, rating: 4 });
+  f.store.updateProblemReviews({ problemIds: ['paused'], suspended: true });
+  f.store.updateProblemReviews({ problemIds: ['postponed'], scheduledAt: '2026-10-03T12:00:00.000Z' });
+  const advanced = f.store.advanceReviewSession({ sessionId: session.id, problemId: 'rated' });
+  assert.equal(advanced.currentProblemId, 'after-end');
+  assert.deepEqual(advanced.ratedProblemIds, ['rated']);
+  const ended = f.store.endReviewSession(session.id);
+  f.clock('2026-10-01T12:02:00.000Z'); f.assess('after-end', 'outside-round', 3);
+  f.reopen();
+  assert.deepEqual(f.store.getReviewSession(session.id)!.ratedProblemIds, ['rated'], 'old table rows need no new persisted counter, and later ratings do not change an ended round');
+  assert.equal(f.store.getReviewPlanSnapshot().summary.reviewedToday, 2);
+  assert.equal(ended.position, 3);
+});
+
+test('a rating made earlier on the same day is not new work of a later session', t => {
+  const f = fixture(t, '2026-09-01T12:00:00.000Z');
+  f.enroll('already-rated'); f.assess('already-rated', 'initial-already-rated');
+  f.clock('2026-10-01T10:00:00.000Z'); f.assess('already-rated', 'before-session', 1);
+  // A persisted queue from an earlier client can contain an item now automatically bypassed.
+  const db = new DatabaseSync(f.path);
+  db.prepare(`INSERT INTO review_sessions (id,request_id,input_hash,problem_ids_json,position,status,skipped_json,created_at,updated_at,ended_at,queue_policy,scheduled_dates_json)
+    VALUES ('legacy-round','legacy-request','legacy-hash','["already-rated"]',0,'active','[]','2026-10-01T11:00:00.000Z','2026-10-01T11:00:00.000Z',NULL,'selected','{}')`).run();
+  db.close();
+  f.clock('2026-10-01T12:00:00.000Z');
+  const ended = f.store.getReviewSession('legacy-round')!;
+  assert.equal(ended.status, 'ended');
+  assert.deepEqual(ended.ratedProblemIds, [], 'same-day observations before the session do not belong to it');
+});
+
+test('a recovered assessment belongs to the round in which it was committed, not its frozen observation day', t => {
+  const f = fixture(t, '2026-09-01T12:00:00.000Z');
+  f.enroll('recovered'); f.assess('recovered', 'initial-recovered');
+  f.clock('2026-10-01T23:59:00.000Z');
+  f.store.saveReviewAssessmentDraft({ key: 'manual:recovered', problemId: 'recovered', source: 'manual', rating: 3, requestId: 'recovered-in-round', submitted: true });
+  f.clock('2026-10-02T08:00:00.000Z');
+  const session = f.store.startReviewSession({ requestId: 'recovered-round', problemIds: ['recovered'] });
+  f.clock('2026-10-02T08:01:00.000Z');
+  const result = f.assess('recovered', 'recovered-in-round', 3);
+  assert.ok(result.event.observedAt < session.createdAt);
+  assert.ok(result.event.createdAt > session.createdAt);
+  assert.deepEqual(f.store.endReviewSession(session.id).ratedProblemIds, ['recovered']);
 });
 
 test('explicit validation rejects source fabrication, unknown query fields and invalid dates without enrolling or writing', t => {

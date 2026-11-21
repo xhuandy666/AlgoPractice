@@ -183,6 +183,25 @@ test('loading a review reference prefers the current language, falls back to ano
   assert.equal((await loadReviewReference(api, 'two-sum', 'python')).code, null, 'no passing record in any language');
 });
 
+test('review reference searches all history pages before falling back to another language', async () => {
+  const failed = Array.from({ length: 50 }, (_, index) => record(`failed-${index}`, 'local', 'wrong_answer'));
+  const histories = { python: [...failed, record('py-pass', 'local', 'passed')], java: [record('java-ac', 'official', 'completed', 'accepted')], go: [], cpp: [] };
+  const calls: string[] = [];
+  const api = {
+    submissionHistory: async ({ language, offset = 0, limit = 50 }: { language: keyof typeof histories; offset?: number; limit?: number }) => {
+      calls.push(`${language}:${offset}`); const all = histories[language];
+      return { items: all.slice(offset, offset + limit), offset, limit, total: all.length, hasMore: offset + limit < all.length };
+    },
+    submissionHistoryDetail: async (source: string, id: string) => ({ source, language: 'python', answerFormat: 'function', createdAt: '2026-11-01T00:00:00Z', finishedAt: null, code: id }),
+    notePage: async () => ({ items: [], total: 0, offset: 0, limit: 5, hasMore: false }), note: async () => null,
+  } as unknown as Parameters<typeof loadReviewReference>[0];
+  assert.equal((await loadReviewReference(api, 'two-sum', 'python')).code?.code, 'py-pass');
+  assert.deepEqual(calls, ['python:0', 'python:50'], 'a passing record in the current language still wins over other languages');
+  histories.python = [record('new-local', 'local', 'passed'), ...failed, ...failed, record('older-ac', 'official', 'completed', 'accepted')]; calls.length = 0;
+  assert.equal((await loadReviewReference(api, 'two-sum', 'python')).code?.code, 'older-ac', 'an older official AC on a later page wins over a newer local pass');
+  assert.deepEqual(calls, ['python:0', 'python:50', 'python:100']);
+});
+
 test('display preferences default to the light theme with topic tags hidden, and ignore unknown values', () => {
   assert.deepEqual(parseDisplayPreferences(null), { topicTags: false, theme: 'light' });
   assert.deepEqual(parseDisplayPreferences('{"topicTags":true,"theme":"dark"}'), { topicTags: true, theme: 'dark' });
